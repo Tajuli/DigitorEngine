@@ -37,7 +37,9 @@ bool compare(std::string_view backend, std::string_view operation, std::uint32_t
     std::size_t first = 0;
     const auto pixels = std::min(expected.size(), actual.size()) / 4;
     for (std::size_t i = 0; i < pixels; ++i) {
-        if (!std::equal_n(expected.data() + i * 4, 4, actual.data() + i * 4)) {
+        const auto* expected_pixel = expected.data() + i * 4;
+        const auto* actual_pixel = actual.data() + i * 4;
+        if (!std::equal(expected_pixel, expected_pixel + 4, actual_pixel)) {
             if (mismatches++ == 0) first = i;
         }
     }
