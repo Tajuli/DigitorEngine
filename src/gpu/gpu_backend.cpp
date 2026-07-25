@@ -32,6 +32,8 @@ namespace digitor {
 DigitorResult IRenderBackend::create_texture(const DigitorTextureDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
 DigitorResult IRenderBackend::create_buffer(const DigitorBufferDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
 DigitorResult IRenderBackend::create_sampler(const DigitorSamplerDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
+DigitorResult IRenderBackend::map_buffer(void*, uint64_t, uint64_t, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
+void IRenderBackend::unmap_buffer(void*) noexcept {}
 void IRenderBackend::destroy_texture(void*) noexcept {}
 void IRenderBackend::destroy_buffer(void*) noexcept {}
 void IRenderBackend::destroy_sampler(void*) noexcept {}

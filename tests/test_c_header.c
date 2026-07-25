@@ -37,6 +37,10 @@ int main(void) {
                              DIGITOR_TEXTURE_USAGE_TRANSFER_DESTINATION));
     assert(buffer.size == UINT64_C(4096));
     assert(buffer.usage == (DIGITOR_BUFFER_USAGE_STORAGE | DIGITOR_BUFFER_USAGE_UPLOAD));
+    DigitorResult (*map_buffer)(DigitorBuffer*, uint64_t, uint64_t, void**) = digitor_map_buffer;
+    DigitorResult (*unmap_buffer)(DigitorBuffer*) = digitor_unmap_buffer;
+    (void)map_buffer;
+    (void)unmap_buffer;
 
     /* Referencing these values verifies that the public enums remain available to C. */
     assert(DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT);

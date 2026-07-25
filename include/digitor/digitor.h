@@ -153,6 +153,18 @@ DIGITOR_API DigitorResult digitor_create_buffer(
 
 DIGITOR_API DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer);
 
+/* Upload and staging buffers are host-visible. A buffer may only be mapped once;
+ * offset + size must be within the allocation. Passing size == 0 maps the
+ * remainder of the buffer. The returned pointer remains valid until unmap. */
+DIGITOR_API DigitorResult digitor_map_buffer(
+    DigitorBuffer* buffer,
+    uint64_t offset,
+    uint64_t size,
+    void** out_data
+);
+
+DIGITOR_API DigitorResult digitor_unmap_buffer(DigitorBuffer* buffer);
+
 DIGITOR_API DigitorResult digitor_create_sampler(
     DigitorRenderContext* context,
     const DigitorSamplerDesc* desc,

@@ -19,6 +19,8 @@ public:
     virtual DigitorResult create_texture(const DigitorTextureDesc&, void** out) noexcept;
     virtual DigitorResult create_buffer(const DigitorBufferDesc&, void** out) noexcept;
     virtual DigitorResult create_sampler(const DigitorSamplerDesc&, void** out) noexcept;
+    virtual DigitorResult map_buffer(void*, uint64_t offset, uint64_t size, void** out) noexcept;
+    virtual void unmap_buffer(void*) noexcept;
     virtual void destroy_texture(void*) noexcept;
     virtual void destroy_buffer(void*) noexcept;
     virtual void destroy_sampler(void*) noexcept;

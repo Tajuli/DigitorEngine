@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <mutex>
 
 #include "digitor/digitor.h"
 
@@ -31,11 +32,16 @@ public:
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
 
+    DigitorResult map(uint64_t offset, uint64_t size, void** out_data) noexcept;
+    DigitorResult unmap() noexcept;
+
 private:
     RenderContext& owner_;
     DigitorBufferDesc desc_;
     std::vector<std::byte> storage_;
     void* native_{};
+    std::mutex map_mutex_;
+    bool mapped_{false};
 };
 
 class Sampler final {
