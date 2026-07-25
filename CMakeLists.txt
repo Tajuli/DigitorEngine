@@ -90,6 +90,11 @@ if (DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_tests COMMAND digitor_tests)
 
     add_executable(digitor_c_header_test tests/test_c_header.c)
+    set_target_properties(digitor_c_header_test PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
     target_link_libraries(digitor_c_header_test PRIVATE Digitor::Engine)
     add_test(NAME digitor_c_header_test COMMAND digitor_c_header_test)
 endif()
