@@ -1,8 +1,10 @@
 #pragma once
 
 #include <memory>
+#include <functional>
 
 #include "digitor/digitor.h"
+#include "platform/platform.hpp"
 
 namespace digitor {
 
@@ -18,5 +20,13 @@ public:
 std::unique_ptr<IRenderBackend> create_gpu_backend(
     DigitorRendererBackend preferred
 );
+
+using BackendFactory = std::function<std::unique_ptr<IRenderBackend>(DigitorRendererBackend)>;
+
+// Internal selection seam used to test platform policy without requiring GPU hardware.
+std::unique_ptr<IRenderBackend> select_gpu_backend(
+    HostPlatform platform,
+    DigitorRendererBackend preferred,
+    const BackendFactory& factory);
 
 }  // namespace digitor

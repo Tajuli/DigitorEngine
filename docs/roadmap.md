@@ -12,12 +12,14 @@
 
 ## v0.2.0 — GPU device layer
 
-- Vulkan device discovery
-- Metal device discovery
-- D3D12 device discovery
-- OpenGL ES fallback
-- Command queues
-- GPU capability reporting
+- [x] Vulkan device discovery (Windows and Android)
+- [x] Metal device discovery (macOS and iOS)
+- [x] D3D12 device discovery fallback (Windows)
+- [x] OpenGL ES discovery fallback (Android)
+- [x] Platform backend priority and CPU fallback
+- [x] GPU capability reporting
+
+Rendering, command queues, and shader execution begin in later milestones; v0.2.0 performs discovery only.
 
 ## v0.3.0 — Resource layer
 

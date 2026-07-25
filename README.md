@@ -21,7 +21,7 @@ DigitorEngine is being developed as the rendering core for **Digitor**, with a l
 
 # Current Status
 
-Current version: **v0.1.0 Foundation**
+Current version: **v0.2.0 GPU Device Layer**
 
 Implemented:
 
@@ -30,7 +30,8 @@ Implemented:
 - Stable C API
 - Backend abstraction
 - CPU reference backend
-- GPU backend abstraction (foundation)
+- Native GPU device discovery and capability reporting
+- Platform priority selection (Vulkan/D3D12 on Windows, Vulkan/OpenGL ES on Android, Metal on Apple)
 - CMake build system
 - Unit test framework
 - GitHub Actions CI
@@ -38,10 +39,7 @@ Implemented:
 
 Not implemented yet:
 
-- Vulkan renderer
-- Metal renderer
-- Direct3D 12 renderer
-- OpenGL ES backend
+- GPU rendering and command submission (discovery only is implemented)
 - Video decoding
 - Video encoding
 - Timeline
@@ -59,10 +57,10 @@ Not implemented yet:
 
 | Platform | Status |
 |----------|--------|
-| Windows | Planned |
-| Android | Planned |
-| iOS | Planned |
-| macOS | Planned |
+| Windows | Device discovery (Vulkan, D3D12) |
+| Android | Device discovery (Vulkan, OpenGL ES) |
+| iOS | Device discovery (Metal) |
+| macOS | Device discovery (Metal) |
 
 ---
 

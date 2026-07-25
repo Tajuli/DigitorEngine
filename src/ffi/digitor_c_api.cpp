@@ -9,7 +9,7 @@ struct DigitorRenderContext {
 };
 
 const char* digitor_get_version(void) {
-    return "0.1.0";
+    return "0.2.0";
 }
 
 DigitorResult digitor_initialize(const DigitorEngineConfig* config) {
