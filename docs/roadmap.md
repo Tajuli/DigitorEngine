@@ -81,3 +81,11 @@ Rendering, command queues, and shader execution begin in later milestones; v0.2.
 - Vulkan resources are optional at build time; D3D12 is Windows-only, Metal is Apple-only Objective-C++, and GLES is Android-only.
 - CPU fallback remains available without GPU SDKs.
 - No shaders, rendering passes, command submission, decoding/encoding, timeline, preview, or export are part of this milestone.
+
+## v0.5.0–v0.8.0 — Compute foundations (complete)
+
+- Backend-neutral command recording, synchronization, barriers, and triple-buffered frame contexts.
+- GLSL, HLSL, MSL and SPIR-V validation/reflection with deterministic shader and pipeline caches.
+- Compiled render graphs with dependencies, transient aliasing and barrier scheduling.
+- Linear 32-bit floating-point CPU/GPU-command color grading with exposure, contrast, gamma, lift, gain, offset, temperature, tint, saturation, vibrance and hue.
+- Rendering and timeline functionality remain out of scope.
