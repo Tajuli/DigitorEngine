@@ -76,6 +76,17 @@ Rendering, command queues, and shader execution begin in later milestones; v0.2.
 - GPU-first with CPU fallback
 - Cross-platform production API
 
+## v0.9.0–v1.1.0 — Editing pipeline (complete)
+
+- FFmpeg feature detection, video/audio decoder contracts, platform hardware selection
+  (DXVA, VideoToolbox, and MediaCodec), CPU fallback, and bounded LRU frame caches.
+- Frame-number-based timeline tracks with overwrite/insert, ripple, roll, slip, slide,
+  keyframe interpolation, undo, and redo.
+- Cached preview with zoom, pan, and transform state. Preview and export both invoke the
+  same `SharedRenderer` render graph, ensuring frame-identical graph execution.
+- MP4, MOV, MKV, and image-sequence export targets. Container encoding remains delegated
+  to FFmpeg-enabled integrations; the portable target emits a deterministic interchange stream.
+
 ## v0.4.0 — Native GPU Resource Layer (complete)
 - Backend-neutral validated textures, buffers, upload/staging memory, and samplers.
 - Vulkan resources are optional at build time; D3D12 is Windows-only, Metal is Apple-only Objective-C++, and GLES is Android-only.
