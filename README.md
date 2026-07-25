@@ -1,42 +1,98 @@
 # DigitorEngine
 
-DigitorEngine is a GPU-first, CPU-fallback, cross-platform native rendering-engine foundation written in C++20.
+A GPU-first, CPU-fallback, cross-platform native rendering engine for professional video editing applications.
 
-## Current milestone
+DigitorEngine is being developed as the rendering core for **Digitor**, with a long-term goal of providing identical rendering behavior across Windows, Android, iOS, and macOS.
 
-Version `0.1.0` provides:
+---
 
-- Stable public C API
-- Engine lifecycle
-- Render-context lifecycle
-- Renderer backend selection
-- GPU-first backend probing
+# Goals
+
+- GPU-first rendering
 - CPU fallback
+- Cross-platform architecture
+- Shared preview and export pipeline
+- Deterministic rendering
+- Stable public C API
+- Flutter FFI integration
+- Modular design
+
+---
+
+# Current Status
+
+Current version: **v0.1.0 Foundation**
+
+Implemented:
+
+- Engine lifecycle
+- Render context lifecycle
+- Stable C API
+- Backend abstraction
+- CPU reference backend
+- GPU backend abstraction (foundation)
 - CMake build system
-- Basic tests
-- Example executable
-- Platform-ready project structure
+- Unit test framework
+- GitHub Actions CI
+- Cross-platform project layout
 
-This milestone does **not** yet implement video decoding, shaders, timeline rendering, export, or Flutter FFI bindings beyond the C ABI foundation.
+Not implemented yet:
 
-## Target platforms
+- Vulkan renderer
+- Metal renderer
+- Direct3D 12 renderer
+- OpenGL ES backend
+- Video decoding
+- Video encoding
+- Timeline
+- Shader graph
+- GPU shaders
+- Color engine
+- Node system
+- LUT engine
+- Export pipeline
+- Flutter integration
 
-- Windows
-- Android
-- iOS
-- macOS
+---
 
-## Planned renderer order
+# Target Platforms
 
-- Windows: Vulkan → Direct3D 12 → CPU
-- Android: Vulkan → OpenGL ES → CPU
-- iOS/macOS: Metal → CPU
+| Platform | Status |
+|----------|--------|
+| Windows | Planned |
+| Android | Planned |
+| iOS | Planned |
+| macOS | Planned |
 
-The current implementation uses capability stubs so the repository compiles before native GPU backends are added.
+---
 
-## Build
+# Planned Graphics Backends
 
-### Windows
+| Platform | Primary | Fallback |
+|----------|----------|----------|
+| Windows | Vulkan | Direct3D12 → CPU |
+| Android | Vulkan | OpenGL ES → CPU |
+| iOS | Metal | CPU |
+| macOS | Metal | CPU |
+
+---
+
+# Repository Structure
+
+```text
+docs/
+examples/
+include/
+src/
+tests/
+third_party/
+```
+
+---
+
+# Build
+
+## Windows
 
 ```powershell
 cmake -S . -B build -A x64
@@ -44,32 +100,44 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### macOS
+## macOS / Linux
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-### Linux development host
+---
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-ctest --test-dir build --output-on-failure
+# Public API
+
+The stable public API is located at:
+
+```
+include/digitor/digitor.h
 ```
 
-## Example
+Future language bindings:
 
-```bash
-./build/digitor_info
+- Flutter (FFI)
+- C#
+- Rust
+- Swift
+- Kotlin
+
+---
+
+# Roadmap
+
+See:
+
+```
+docs/roadmap.md
 ```
 
-## Public API
+---
 
-See `include/digitor/digitor.h`.
+# License
 
-## Roadmap
-
-See `docs/roadmap.md`.
+MIT License
