@@ -22,6 +22,8 @@ public:
 
     DigitorResult create_context(RenderContext** out_context);
     DigitorResult destroy_context(RenderContext* context);
+    DigitorResult render_preview_rgba8(uint32_t, uint32_t, std::span<const uint8_t>,
+        std::vector<uint8_t>&);
 
 private:
     Engine() = default;

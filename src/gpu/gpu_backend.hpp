@@ -3,6 +3,9 @@
 #include <memory>
 #include <functional>
 #include <cstddef>
+#include <cstdint>
+#include <span>
+#include <vector>
 
 #include "digitor/digitor.h"
 #include "platform/platform.hpp"
@@ -24,6 +27,12 @@ public:
     virtual void destroy_texture(void*) noexcept;
     virtual void destroy_buffer(void*) noexcept;
     virtual void destroy_sampler(void*) noexcept;
+
+    // Records and submits the backend's native clear/copy pass, then reads the
+    // RGBA8 render target back for preview.  Keeping this operation internal
+    // preserves the v2 C ABI while allowing preview to consume GPU pixels.
+    virtual DigitorResult render_rgba8(uint32_t width, uint32_t height,
+        std::span<const uint8_t> source, std::vector<uint8_t>& destination) noexcept;
 };
 
 std::unique_ptr<IRenderBackend> create_gpu_backend(

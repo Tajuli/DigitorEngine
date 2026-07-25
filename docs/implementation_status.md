@@ -1,7 +1,8 @@
 # Implementation status audit
 
-**Audit baseline:** commit `4ae03d4` (the repository HEAD supplied for this audit), reporting
-`2.0.0`. This is a source audit plus a Linux CPU build/test run; no Windows, Android, Apple, or
+**Audit baseline:** v2 audit commit `4ae03d4`, formerly reporting `2.0.0`.
+The v3 scoped native-preview changes are documented in `docs/native_gpu_pipeline.md`.
+This is a source audit plus a Linux CPU build/test run; no Windows, Android, Apple, or
 native GPU device was available. Status vocabulary is limited to the requested five labels.
 
 ## Executive conclusion
