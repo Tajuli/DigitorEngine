@@ -81,6 +81,10 @@ target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
 # __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.
 if (NOT BUILD_SHARED_LIBS)
     target_compile_definitions(digitor_engine PUBLIC DIGITOR_ENGINE_STATIC)
+elseif (WIN32)
+    # Internal C++ test seams are not part of the public C ABI, but must be exported
+    # so the shared-library test executables can link on Windows.
+    set_target_properties(digitor_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
 if (WIN32)
@@ -128,7 +132,11 @@ if (DIGITOR_BUILD_TESTS)
             target_compile_options(digitor_native_gpu_tests PRIVATE -UNDEBUG)
         endif()
         add_test(NAME digitor_native_gpu_tests COMMAND digitor_native_gpu_tests)
-        set_tests_properties(digitor_native_gpu_tests PROPERTIES ENVIRONMENT "DIGITOR_GPU_VALIDATION=1")
+        set_tests_properties(digitor_native_gpu_tests PROPERTIES
+            ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
+            LABELS "native-gpu;hardware"
+            SKIP_RETURN_CODE 77
+        )
     endif()
 
     add_executable(digitor_c_header_test tests/test_c_header.c)
