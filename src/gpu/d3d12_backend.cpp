@@ -87,6 +87,22 @@ DigitorResult result(HRESULT hr) noexcept {
                                : (FAILED(hr) ? DIGITOR_RESULT_BACKEND_UNAVAILABLE : DIGITOR_RESULT_OK);
 }
 
+void copy_tight_rgba_row(DXGI_FORMAT source_format, const std::uint8_t* source,
+                         std::uint8_t* destination, std::uint32_t width) noexcept {
+    if (source_format == DXGI_FORMAT_R8G8B8A8_UNORM) {
+        std::memcpy(destination, source, std::size_t(width) * 4);
+        return;
+    }
+    if (source_format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+        for (std::uint32_t x = 0; x < width; ++x) {
+            destination[x * 4] = source[x * 4 + 2];
+            destination[x * 4 + 1] = source[x * 4 + 1];
+            destination[x * 4 + 2] = source[x * 4];
+            destination[x * 4 + 3] = source[x * 4 + 3];
+        }
+    }
+}
+
 class D3DBackend final : public IRenderBackend {
 public:
     explicit D3DBackend(ComPtr<ID3D12Device> device) : device_(std::move(device)) {
@@ -137,6 +153,7 @@ public:
 
     DigitorResult render_rgba8(uint32_t width, uint32_t height, std::span<const uint8_t> source,
                                std::vector<uint8_t>& destination) noexcept override {
+        constexpr DXGI_FORMAT texture_format = DXGI_FORMAT_R8G8B8A8_UNORM;
         const std::size_t pixel_bytes = std::size_t(width) * height * 4;
         if (!width || !height || (!source.empty() && source.size() != pixel_bytes))
             return DIGITOR_RESULT_INVALID_ARGUMENT;
@@ -145,22 +162,27 @@ public:
         texture_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         texture_desc.Width = width; texture_desc.Height = height;
         texture_desc.DepthOrArraySize = 1; texture_desc.MipLevels = 1;
-        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        texture_desc.Format = texture_format;
         texture_desc.SampleDesc.Count = 1;
         texture_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         texture_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
         D3D12_HEAP_PROPERTIES heap{};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        const auto initial_state = source.empty() ? D3D12_RESOURCE_STATE_RENDER_TARGET
+                                                   : D3D12_RESOURCE_STATE_COPY_DEST;
         ComPtr<ID3D12Resource> target;
         HRESULT hr = device_->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &texture_desc,
-            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&target));
+            initial_state, nullptr, IID_PPV_ARGS(&target));
         if (FAILED(hr)) return result(hr);
 
         UINT64 total_bytes = 0;
-        UINT64 row_bytes = 0;
+        UINT64 unpadded_row_bytes = 0;
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
-        device_->GetCopyableFootprints(&texture_desc, 0, 1, 0, &footprint, nullptr, &row_bytes,
-                                       &total_bytes);
+        device_->GetCopyableFootprints(&texture_desc, 0, 1, 0, &footprint, nullptr,
+                                       &unpadded_row_bytes, &total_bytes);
+        const UINT row_pitch = footprint.Footprint.RowPitch;
+        if (unpadded_row_bytes != UINT64(width) * 4 || row_pitch < unpadded_row_bytes)
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         D3D12_RESOURCE_DESC buffer_desc{};
         buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
         buffer_desc.Width = total_bytes; buffer_desc.Height = 1;
@@ -184,7 +206,7 @@ public:
         hr = upload_map.map(upload.Get(), &no_read);
         if (FAILED(hr)) return result(hr);
         for (UINT y = 0; y < height; ++y) {
-            auto* row = upload_map.bytes() + y * row_bytes;
+            auto* row = upload_map.bytes() + std::size_t(y) * row_pitch;
             if (!source.empty()) std::memcpy(row, source.data() + std::size_t(y) * width * 4,
                                               std::size_t(width) * 4);
             else for (UINT x = 0; x < width; ++x) {
@@ -198,19 +220,27 @@ public:
         if (FAILED(hr)) return result(hr);
         hr = list_->Reset(allocator_.Get(), nullptr);
         if (FAILED(hr)) return result(hr);
-        D3D12_TEXTURE_COPY_LOCATION upload_location{};
-        upload_location.pResource = upload.Get();
-        upload_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        upload_location.PlacedFootprint = footprint;
         D3D12_TEXTURE_COPY_LOCATION target_location{};
         target_location.pResource = target.Get();
         target_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        list_->CopyTextureRegion(&target_location, 0, 0, 0, &upload_location, nullptr);
+        if (source.empty()) {
+            const auto rtv = rtv_heap_->GetCPUDescriptorHandleForHeapStart();
+            device_->CreateRenderTargetView(target.Get(), nullptr, rtv);
+            constexpr float clear_color[4]{0.0f, 0.0f, 0.0f, 1.0f};
+            list_->ClearRenderTargetView(rtv, clear_color, 0, nullptr);
+        } else {
+            D3D12_TEXTURE_COPY_LOCATION upload_location{};
+            upload_location.pResource = upload.Get();
+            upload_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            upload_location.PlacedFootprint = footprint;
+            list_->CopyTextureRegion(&target_location, 0, 0, 0, &upload_location, nullptr);
+        }
         D3D12_RESOURCE_BARRIER barrier{};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barrier.Transition.pResource = target.Get();
         barrier.Transition.Subresource = 0;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateBefore = source.empty() ? D3D12_RESOURCE_STATE_RENDER_TARGET
+                                                        : D3D12_RESOURCE_STATE_COPY_DEST;
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
         list_->ResourceBarrier(1, &barrier);
         D3D12_TEXTURE_COPY_LOCATION readback_location{};
@@ -233,8 +263,9 @@ public:
         hr = readback_map.map(readback.Get(), &read_range);
         if (FAILED(hr)) return result(hr);
         for (UINT y = 0; y < height; ++y)
-            std::memcpy(destination.data() + std::size_t(y) * width * 4,
-                        readback_map.bytes() + y * row_bytes, std::size_t(width) * 4);
+            copy_tight_rgba_row(texture_format,
+                readback_map.bytes() + std::size_t(y) * row_pitch,
+                destination.data() + std::size_t(y) * width * 4, width);
         D3D12_RANGE no_write{0, 0};
         readback_map.reset(&no_write);
         return DIGITOR_RESULT_OK;

@@ -135,7 +135,6 @@ if (DIGITOR_BUILD_TESTS)
         set_tests_properties(digitor_native_gpu_tests PROPERTIES
             ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
             LABELS "native-gpu;hardware"
-            SKIP_RETURN_CODE 77
         )
     endif()
 
