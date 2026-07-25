@@ -1,0 +1,23 @@
+#include "digitor/lut.hpp"
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+
+namespace digitor { namespace {
+float mix(float a,float b,float t){return a+(b-a)*t;}
+Color mixc(Color a,Color b,float t){return{mix(a.r,b.r,t),mix(a.g,b.g,t),mix(a.b,b.b,t),mix(a.a,b.a,t)};}
+Color add(Color a,Color b){return{a.r+b.r,a.g+b.g,a.b+b.b,a.a+b.a};} Color scale(Color a,float s){return{a.r*s,a.g*s,a.b*s,a.a*s};}
+float channel(const Color& c,int n){return n==0?c.r:n==1?c.g:c.b;}
+}
+Lut1D::Lut1D(std::vector<Color> v):values_(std::move(v)){if(values_.size()<2)throw std::invalid_argument("1D LUT requires at least two entries");}
+Color Lut1D::sample(Color c,LutInterpolation interpolation)const{Color o=c;for(int k=0;k<3;++k){float x=std::clamp(channel(c,k),0.f,1.f)*(values_.size()-1);std::size_t lo=static_cast<std::size_t>(x),hi=std::min(lo+1,values_.size()-1);float t=interpolation==LutInterpolation::nearest?(x-lo>=.5f?1.f:0.f):x-lo;float v=mix(channel(values_[lo],k),channel(values_[hi],k),t);if(k==0)o.r=v;else if(k==1)o.g=v;else o.b=v;}return o;}
+Lut3D::Lut3D(std::size_t n,std::vector<Color> v):size_(n),values_(std::move(v)){if(n<2||n>256||values_.size()!=n*n*n)throw std::invalid_argument("invalid 3D LUT");}
+Lut3D Lut3D::load_cube(std::istream& in){std::string line;std::size_t n=0;std::vector<Color> v;Color mn{0,0,0,1},mx{1,1,1,1};while(std::getline(in,line)){auto hash=line.find('#');if(hash!=std::string::npos)line.resize(hash);std::istringstream s(line);std::string word;if(!(s>>word))continue;if(word=="TITLE")continue;if(word=="LUT_3D_SIZE"){if(!(s>>n))throw std::runtime_error("invalid LUT_3D_SIZE");}else if(word=="DOMAIN_MIN"){if(!(s>>mn.r>>mn.g>>mn.b))throw std::runtime_error("invalid DOMAIN_MIN");}else if(word=="DOMAIN_MAX"){if(!(s>>mx.r>>mx.g>>mx.b))throw std::runtime_error("invalid DOMAIN_MAX");}else{Color c;std::istringstream row(line);if(!(row>>c.r>>c.g>>c.b))throw std::runtime_error("invalid cube row");v.push_back(c);}}Lut3D out(n,std::move(v));out.domain_min_=mn;out.domain_max_=mx;return out;}
+Lut3D Lut3D::load_cube_file(const std::string&p){std::ifstream f(p);if(!f)throw std::runtime_error("cannot open cube file");return load_cube(f);}
+Color Lut3D::sample(Color c,LutInterpolation mode)const{float p[3];for(int k=0;k<3;++k){float range=channel(domain_max_,k)-channel(domain_min_,k);if(range<=0)throw std::logic_error("invalid LUT domain");p[k]=std::clamp((channel(c,k)-channel(domain_min_,k))/range,0.f,1.f)*(size_-1);}std::size_t l[3],h[3];float t[3];for(int k=0;k<3;++k){l[k]=static_cast<std::size_t>(p[k]);h[k]=std::min(l[k]+1,size_-1);t[k]=p[k]-l[k];if(mode==LutInterpolation::nearest)l[k]=h[k]=(t[k]>=.5f?h[k]:l[k]),t[k]=0;}auto at=[&](std::size_t r,std::size_t g,std::size_t b){return values_[r+size_*(g+size_*b)];};if(mode==LutInterpolation::tetrahedral){Color c000=at(l[0],l[1],l[2]),c100=at(h[0],l[1],l[2]),c010=at(l[0],h[1],l[2]),c001=at(l[0],l[1],h[2]),c110=at(h[0],h[1],l[2]),c101=at(h[0],l[1],h[2]),c011=at(l[0],h[1],h[2]),c111=at(h[0],h[1],h[2]);Color out;if(t[0]>=t[1]){if(t[1]>=t[2])out=add(add(scale(c000,1-t[0]),scale(c100,t[0]-t[1])),add(scale(c110,t[1]-t[2]),scale(c111,t[2])));else if(t[0]>=t[2])out=add(add(scale(c000,1-t[0]),scale(c100,t[0]-t[2])),add(scale(c101,t[2]-t[1]),scale(c111,t[1])));else out=add(add(scale(c000,1-t[2]),scale(c001,t[2]-t[0])),add(scale(c101,t[0]-t[1]),scale(c111,t[1])));}else{if(t[2]>=t[1])out=add(add(scale(c000,1-t[2]),scale(c001,t[2]-t[1])),add(scale(c011,t[1]-t[0]),scale(c111,t[0])));else if(t[2]>=t[0])out=add(add(scale(c000,1-t[1]),scale(c010,t[1]-t[2])),add(scale(c011,t[2]-t[0]),scale(c111,t[0])));else out=add(add(scale(c000,1-t[1]),scale(c010,t[1]-t[0])),add(scale(c110,t[0]-t[2]),scale(c111,t[2])));}out.a=c.a;return out;}
+Color low=mixc(mixc(at(l[0],l[1],l[2]),at(h[0],l[1],l[2]),t[0]),mixc(at(l[0],h[1],l[2]),at(h[0],h[1],l[2]),t[0]),t[1]);Color high=mixc(mixc(at(l[0],l[1],h[2]),at(h[0],l[1],h[2]),t[0]),mixc(at(l[0],h[1],h[2]),at(h[0],h[1],h[2]),t[0]),t[1]);Color out=mixc(low,high,t[2]);out.a=c.a;return out;}
+void apply_lut_cpu(const Color*i,Color*o,std::size_t n,const Lut1D&l,LutInterpolation m){for(std::size_t k=0;k<n;++k)o[k]=l.sample(i[k],m);}void apply_lut_cpu(const Color*i,Color*o,std::size_t n,const Lut3D&l,LutInterpolation m){for(std::size_t k=0;k<n;++k)o[k]=l.sample(i[k],m);}
+void apply_lut_gpu(CommandEncoder&e,const Color*i,Color*o,std::size_t n,const Lut1D&l,LutInterpolation m){e.dispatch([=,&l]{apply_lut_cpu(i,o,n,l,m);});}void apply_lut_gpu(CommandEncoder&e,const Color*i,Color*o,std::size_t n,const Lut3D&l,LutInterpolation m){e.dispatch([=,&l]{apply_lut_cpu(i,o,n,l,m);});}
+}

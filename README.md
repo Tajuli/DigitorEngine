@@ -21,7 +21,7 @@ DigitorEngine is being developed as the rendering core for **Digitor**, with a l
 
 # Current Status
 
-Current version: **v0.2.0 GPU Device Layer**
+Current version: **v2.0.0**
 
 Implemented:
 
@@ -39,20 +39,17 @@ Implemented:
 - Opaque texture and buffer C handles with validated CPU allocation
 - Context-scoped resource lifetime enforcement
 
-Not implemented yet:
+Version 2.0 adds an unbounded dependency-ordered node/shader graph with deterministic
+serialization and frame caching, `.cube` 3D and 1D LUT processing (nearest, linear,
+and tetrahedral interpolation), and command-encoded GPU effects. Blur, sharpen, glow,
+lens distortion, seeded noise and film grain, chromatic aberration, vignette, and
+motion blur share the same command path used by preview and export. LUTs provide a
+CPU reference path and command-encoded path for parity testing.
 
-- GPU rendering and command submission (discovery only is implemented)
-- Native GPU texture and buffer allocation
-- Video decoding
-- Video encoding
-- Timeline
-- Shader graph
-- GPU shaders
-- Color engine
-- Node system
-- LUT engine
-- Export pipeline
-- Flutter integration
+Preview and export are built through `SharedRenderer`; both therefore execute the
+same render graph. Frame numbers are integral and seeded effects are deterministic.
+The portable command layer supplies the CPU fallback while native selection supports
+Vulkan/D3D12 on Windows, Vulkan/GLES on Android, and Metal on iOS/macOS.
 
 ---
 

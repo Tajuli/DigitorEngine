@@ -1,0 +1,17 @@
+#include "digitor/node_graph.hpp"
+#include <algorithm>
+#include <iomanip>
+#include <stdexcept>
+#include <unordered_set>
+namespace digitor {
+std::size_t NodeGraph::Hash::operator()(const Key&k)const noexcept{std::size_t h=std::hash<NodeId>{}(k.node);h^=std::hash<std::int64_t>{}(k.frame)+0x9e3779b9+(h<<6)+(h>>2);h^=std::size_t(k.width)<<32|k.height;return h;}
+NodeId NodeGraph::add_node(std::string n,NodeProcessor p,std::string s){if(n.empty())throw std::invalid_argument("empty node name");NodeId id=next_++;nodes_.emplace(id,Node{id,std::move(n),std::move(s),{},std::move(p)});clear_cache();return id;}
+const Node&NodeGraph::node(NodeId id)const{auto i=nodes_.find(id);if(i==nodes_.end())throw std::out_of_range("node");return i->second;}
+void NodeGraph::connect(NodeId src,NodeId dst){node(src);auto i=nodes_.find(dst);if(i==nodes_.end()||src==dst)throw std::invalid_argument("invalid connection");i->second.inputs.push_back(src);try{execution_order(dst);}catch(...){i->second.inputs.pop_back();throw;}clear_cache();}
+void NodeGraph::remove_node(NodeId id){if(!nodes_.erase(id))throw std::out_of_range("node");for(auto&[_,n]:nodes_)n.inputs.erase(std::remove(n.inputs.begin(),n.inputs.end(),id),n.inputs.end());clear_cache();}
+void NodeGraph::clear_cache(){cache_.clear();}
+std::vector<NodeId>NodeGraph::execution_order(NodeId out)const{node(out);std::vector<NodeId>order;std::unordered_set<NodeId>visiting,done;std::function<void(NodeId)>visit=[&](NodeId id){if(visiting.contains(id))throw std::logic_error("node graph cycle");if(done.contains(id))return;visiting.insert(id);for(auto input:node(id).inputs)visit(input);visiting.erase(id);done.insert(id);order.push_back(id);};visit(out);return order;}
+NodeValue NodeGraph::evaluate(NodeId out,const NodeContext&ctx){auto order=execution_order(out);std::unordered_map<NodeId,NodeValue>values;for(auto id:order){Key key{id,ctx.frame,ctx.width,ctx.height};if(auto c=cache_.find(key);c!=cache_.end()){values[id]=c->second;continue;}const auto&n=node(id);if(!n.process)throw std::logic_error("node has no processor: "+n.name);std::vector<NodeValue>inputs;inputs.reserve(n.inputs.size());for(auto input:n.inputs)inputs.push_back(values.at(input));auto value=n.process(ctx,inputs);cache_[key]=value;values[id]=std::move(value);}return values.at(out);}
+void NodeGraph::serialize(std::ostream&o)const{o<<"DIGITOR_NODE_GRAPH 1\n"<<nodes_.size()<<' '<<next_<<'\n';std::vector<NodeId>ids;for(auto&[id,_]:nodes_)ids.push_back(id);std::sort(ids.begin(),ids.end());for(auto id:ids){const auto&n=node(id);o<<id<<' '<<std::quoted(n.name)<<' '<<std::quoted(n.shader)<<' '<<n.inputs.size();for(auto x:n.inputs)o<<' '<<x;o<<'\n';}if(!o)throw std::runtime_error("node graph serialization failed");}
+NodeGraph NodeGraph::deserialize(std::istream&i,const std::function<NodeProcessor(const std::string&)>&r){std::string magic;unsigned version;std::size_t count;NodeGraph g;if(!(i>>magic>>version)||magic!="DIGITOR_NODE_GRAPH"||version!=1||!(i>>count>>g.next_))throw std::runtime_error("invalid node graph");for(std::size_t k=0;k<count;++k){Node n;std::size_t inputs;if(!(i>>n.id>>std::quoted(n.name)>>std::quoted(n.shader)>>inputs)||!n.id||g.nodes_.contains(n.id))throw std::runtime_error("invalid node");n.process=r?r(n.name):NodeProcessor{};n.inputs.resize(inputs);for(auto&x:n.inputs)if(!(i>>x))throw std::runtime_error("invalid connection");g.nodes_.emplace(n.id,std::move(n));}for(auto&[id,n]:g.nodes_)for(auto x:n.inputs)if(!g.nodes_.contains(x))throw std::runtime_error("dangling connection");return g;}
+}
