@@ -43,7 +43,7 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
-    assert(std::strcmp(digitor_get_version(), "0.2.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "0.4.0") == 0);
     test_preferred_backend_selection();
     test_unavailable_backend_fallback();
 
@@ -54,6 +54,7 @@ int main() {
     assert(info.backend == DIGITOR_RENDERER_CPU && !info.is_gpu && info.supports_compute);
     DigitorRenderContext* context = nullptr;
     assert(digitor_create_render_context(&context) == DIGITOR_RESULT_OK);
+    assert(digitor_shutdown() == DIGITOR_RESULT_RESOURCE_IN_USE);
 
     DigitorTextureDesc texture_desc{1920, 1080, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
                                     DIGITOR_TEXTURE_USAGE_STORAGE | DIGITOR_TEXTURE_USAGE_RENDER_TARGET};
@@ -62,15 +63,29 @@ int main() {
     assert(texture != nullptr);
     assert(digitor_destroy_render_context(context) == DIGITOR_RESULT_RESOURCE_IN_USE);
     assert(digitor_destroy_texture(texture) == DIGITOR_RESULT_OK);
+    assert(digitor_destroy_texture(texture) == DIGITOR_RESULT_INVALID_ARGUMENT);
 
     DigitorBufferDesc buffer_desc{4096, DIGITOR_BUFFER_USAGE_UNIFORM | DIGITOR_BUFFER_USAGE_UPLOAD};
     DigitorBuffer* buffer = nullptr;
     assert(digitor_create_buffer(context, &buffer_desc, &buffer) == DIGITOR_RESULT_OK);
     assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_OK);
+    assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
+
+    DigitorSamplerDesc sampler_desc{DIGITOR_FILTER_LINEAR, DIGITOR_FILTER_LINEAR,
+        DIGITOR_FILTER_NEAREST, DIGITOR_ADDRESS_CLAMP_TO_EDGE, DIGITOR_ADDRESS_REPEAT,
+        DIGITOR_ADDRESS_MIRRORED_REPEAT, 1};
+    DigitorSampler* sampler = nullptr;
+    assert(digitor_create_sampler(context, &sampler_desc, &sampler) == DIGITOR_RESULT_OK);
+    assert(digitor_destroy_sampler(sampler) == DIGITOR_RESULT_OK);
+    assert(digitor_destroy_sampler(sampler) == DIGITOR_RESULT_INVALID_ARGUMENT);
 
     DigitorTextureDesc invalid_texture{0, 1080, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
                                        DIGITOR_TEXTURE_USAGE_SAMPLED};
     assert(digitor_create_texture(context, &invalid_texture, &texture) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    DigitorTextureDesc unsupported{1, 1, static_cast<DigitorPixelFormat>(99), DIGITOR_TEXTURE_USAGE_SAMPLED};
+    assert(digitor_create_texture(context, &unsupported, &texture) == DIGITOR_RESULT_UNSUPPORTED);
+    DigitorBufferDesc zero_buffer{0, DIGITOR_BUFFER_USAGE_STORAGE};
+    assert(digitor_create_buffer(context, &zero_buffer, &buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
     assert(digitor_create_buffer(context, nullptr, &buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
     assert(digitor_destroy_render_context(context) == DIGITOR_RESULT_OK);
     assert(digitor_shutdown() == DIGITOR_RESULT_OK);

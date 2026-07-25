@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <mutex>
+#include <unordered_set>
 
 #include "digitor/digitor.h"
 #include "core/render_context.hpp"
@@ -29,6 +30,7 @@ private:
     bool initialized_{false};
     DigitorEngineConfig config_{};
     std::unique_ptr<IRenderBackend> backend_;
+    std::unordered_set<RenderContext*> contexts_;
 };
 
 }  // namespace digitor

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 0.2.0
+    VERSION 0.4.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -22,6 +22,26 @@ add_library(digitor_engine
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp
 )
+
+if(WIN32)
+    target_sources(digitor_engine PRIVATE src/gpu/d3d12_backend.cpp)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    target_sources(digitor_engine PRIVATE src/gpu/metal_backend.mm)
+elseif(ANDROID)
+    target_sources(digitor_engine PRIVATE src/gpu/gles_backend.cpp)
+else()
+    target_sources(digitor_engine PRIVATE src/gpu/native_stub.cpp)
+endif()
+
+if(WIN32 OR ANDROID)
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        target_sources(digitor_engine PRIVATE src/gpu/vulkan_backend.cpp)
+        target_link_libraries(digitor_engine PRIVATE Vulkan::Vulkan)
+        target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_VULKAN=1)
+    endif()
+endif()
 
 add_library(Digitor::Engine ALIAS digitor_engine)
 

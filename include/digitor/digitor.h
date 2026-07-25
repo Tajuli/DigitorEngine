@@ -32,7 +32,10 @@ typedef enum DigitorResult {
 } DigitorResult;
 
 typedef enum DigitorPixelFormat {
-    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT = 1
+    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT = 1,
+    DIGITOR_PIXEL_FORMAT_RGBA8_UNORM = 2,
+    DIGITOR_PIXEL_FORMAT_BGRA8_UNORM = 3,
+    DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT = 4
 } DigitorPixelFormat;
 
 typedef enum DigitorTextureUsage {
@@ -62,6 +65,27 @@ typedef struct DigitorBufferDesc {
     uint32_t usage;
 } DigitorBufferDesc;
 
+typedef enum DigitorFilter {
+    DIGITOR_FILTER_NEAREST = 0,
+    DIGITOR_FILTER_LINEAR = 1
+} DigitorFilter;
+
+typedef enum DigitorAddressMode {
+    DIGITOR_ADDRESS_CLAMP_TO_EDGE = 0,
+    DIGITOR_ADDRESS_REPEAT = 1,
+    DIGITOR_ADDRESS_MIRRORED_REPEAT = 2
+} DigitorAddressMode;
+
+typedef struct DigitorSamplerDesc {
+    DigitorFilter min_filter;
+    DigitorFilter mag_filter;
+    DigitorFilter mip_filter;
+    DigitorAddressMode address_u;
+    DigitorAddressMode address_v;
+    DigitorAddressMode address_w;
+    uint8_t normalized_coordinates;
+} DigitorSamplerDesc;
+
 typedef enum DigitorRendererBackend {
     DIGITOR_RENDERER_AUTO = 0,
     DIGITOR_RENDERER_VULKAN = 1,
@@ -90,6 +114,7 @@ typedef struct DigitorRendererInfo {
 typedef struct DigitorRenderContext DigitorRenderContext;
 typedef struct DigitorTexture DigitorTexture;
 typedef struct DigitorBuffer DigitorBuffer;
+typedef struct DigitorSampler DigitorSampler;
 
 DIGITOR_API const char* digitor_get_version(void);
 
@@ -127,6 +152,14 @@ DIGITOR_API DigitorResult digitor_create_buffer(
 );
 
 DIGITOR_API DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer);
+
+DIGITOR_API DigitorResult digitor_create_sampler(
+    DigitorRenderContext* context,
+    const DigitorSamplerDesc* desc,
+    DigitorSampler** out_sampler
+);
+
+DIGITOR_API DigitorResult digitor_destroy_sampler(DigitorSampler* sampler);
 
 #ifdef __cplusplus
 }

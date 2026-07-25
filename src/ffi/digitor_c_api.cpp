@@ -2,6 +2,8 @@
 
 #include <cstring>
 #include <new>
+#include <mutex>
+#include <unordered_set>
 
 #include "core/engine.hpp"
 #include "core/resources.hpp"
@@ -12,9 +14,14 @@ struct DigitorRenderContext {
 
 struct DigitorTexture { digitor::Texture* impl; };
 struct DigitorBuffer { digitor::Buffer* impl; };
+struct DigitorSampler { digitor::Sampler* impl; };
+namespace { std::mutex handles_mutex; std::unordered_set<void*> contexts, textures, buffers, samplers;
+bool retire(std::unordered_set<void*>& set, void* value) { std::scoped_lock lock(handles_mutex); return set.erase(value) == 1; }
+void register_handle(std::unordered_set<void*>& set, void* value) { std::scoped_lock lock(handles_mutex); set.insert(value); }
+}
 
 const char* digitor_get_version(void) {
-    return "0.2.0";
+    return "0.4.0";
 }
 
 DigitorResult digitor_create_texture(DigitorRenderContext* context, const DigitorTextureDesc* desc,
@@ -24,13 +31,13 @@ DigitorResult digitor_create_texture(DigitorRenderContext* context, const Digito
     digitor::Texture* resource = nullptr;
     const auto result = context->impl->create_texture(*desc, &resource);
     if (result != DIGITOR_RESULT_OK) return result;
-    try { *out_texture = new DigitorTexture{resource}; }
+    try { *out_texture = new DigitorTexture{resource}; register_handle(textures, *out_texture); }
     catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
     return DIGITOR_RESULT_OK;
 }
 
 DigitorResult digitor_destroy_texture(DigitorTexture* texture) {
-    if (texture == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (texture == nullptr || !retire(textures, texture)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     delete texture->impl;
     delete texture;
     return DIGITOR_RESULT_OK;
@@ -43,15 +50,31 @@ DigitorResult digitor_create_buffer(DigitorRenderContext* context, const Digitor
     digitor::Buffer* resource = nullptr;
     const auto result = context->impl->create_buffer(*desc, &resource);
     if (result != DIGITOR_RESULT_OK) return result;
-    try { *out_buffer = new DigitorBuffer{resource}; }
+    try { *out_buffer = new DigitorBuffer{resource}; register_handle(buffers, *out_buffer); }
     catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
     return DIGITOR_RESULT_OK;
 }
 
 DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer) {
-    if (buffer == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (buffer == nullptr || !retire(buffers, buffer)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     delete buffer->impl;
     delete buffer;
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_create_sampler(DigitorRenderContext* context, const DigitorSamplerDesc* desc,
+                                     DigitorSampler** out_sampler) {
+    if (!context || !desc || !out_sampler) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_sampler = nullptr; digitor::Sampler* resource = nullptr;
+    auto result = context->impl->create_sampler(*desc, &resource); if (result != DIGITOR_RESULT_OK) return result;
+    try { *out_sampler = new DigitorSampler{resource}; register_handle(samplers, *out_sampler); }
+    catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
+    return DIGITOR_RESULT_OK;
+}
+DigitorResult digitor_destroy_sampler(DigitorSampler* sampler) {
+    if (!sampler || !retire(samplers, sampler)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    delete sampler->impl;
+    delete sampler;
     return DIGITOR_RESULT_OK;
 }
 
@@ -100,9 +123,11 @@ DigitorResult digitor_create_render_context(
         return result;
     }
 
-    auto* wrapper = new DigitorRenderContext{};
+    auto* wrapper = new (std::nothrow) DigitorRenderContext{};
+    if (!wrapper) { (void)digitor::Engine::instance().destroy_context(internal); return DIGITOR_RESULT_OUT_OF_MEMORY; }
     wrapper->impl = internal;
     *out_context = wrapper;
+    register_handle(contexts, wrapper);
     return DIGITOR_RESULT_OK;
 }
 
@@ -113,10 +138,13 @@ DigitorResult digitor_destroy_render_context(
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
+    { std::scoped_lock lock(handles_mutex); if (!contexts.count(context)) return DIGITOR_RESULT_INVALID_ARGUMENT; }
+
     const DigitorResult result =
         digitor::Engine::instance().destroy_context(context->impl);
 
     if (result == DIGITOR_RESULT_OK) {
+        (void)retire(contexts, context);
         delete context;
     }
     return result;

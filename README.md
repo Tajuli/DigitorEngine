@@ -142,3 +142,6 @@ docs/roadmap.md
 # License
 
 MIT License
+
+## Native resource layer (0.4.0)
+DigitorEngine creates opaque textures, buffers, upload/staging buffers, and samplers on Vulkan (when its SDK is detected), D3D12, Metal, and Android OpenGL ES. CPU-only builds retain deterministic host allocations. Portable formats are RGBA8 UNORM, BGRA8 UNORM (where native), RGBA16 float, and RGBA32 float; unsupported translations fail explicitly. Resources are context-owned and a context with live resources cannot be destroyed. This milestone does not include shaders, passes, command submission, codecs, timeline, preview, or export.
