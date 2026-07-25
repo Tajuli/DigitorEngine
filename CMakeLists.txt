@@ -16,6 +16,7 @@ option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 add_library(digitor_engine
     src/core/engine.cpp
     src/core/render_context.cpp
+    src/core/resources.cpp
     src/gpu/gpu_backend.cpp
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
@@ -61,6 +62,10 @@ if (DIGITOR_BUILD_TESTS)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME digitor_tests COMMAND digitor_tests)
+
+    add_executable(digitor_c_header_test tests/test_c_header.c)
+    target_link_libraries(digitor_c_header_test PRIVATE Digitor::Engine)
+    add_test(NAME digitor_c_header_test COMMAND digitor_c_header_test)
 endif()
 
 include(GNUInstallDirs)

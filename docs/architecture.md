@@ -41,3 +41,15 @@ Digitor Core
 ## Milestone 0.1.0
 
 Only engine lifecycle, backend selection, context lifecycle, tests, and documentation are implemented.
+
+## Milestone 0.3.0 resource-layer increment
+
+The public resource model starts with opaque texture and buffer handles, explicit immutable
+descriptors, checked allocation-size arithmetic, and context-scoped lifetime tracking. The CPU
+backend provides actual zero-initialized storage. GPU backends deliberately reject resource
+creation until their native devices, allocators, and synchronization primitives exist; a hidden
+CPU allocation must never masquerade as a GPU resource.
+
+Only `RGBA32_FLOAT` textures are accepted in this increment. This keeps the initial internal
+working format aligned with the engine's 32-bit floating-point color requirement while format
+conversion policy is designed separately.

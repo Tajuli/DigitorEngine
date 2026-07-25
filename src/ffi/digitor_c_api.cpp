@@ -1,15 +1,58 @@
 #include "digitor/digitor.h"
 
 #include <cstring>
+#include <new>
 
 #include "core/engine.hpp"
+#include "core/resources.hpp"
 
 struct DigitorRenderContext {
     digitor::RenderContext* impl;
 };
 
+struct DigitorTexture { digitor::Texture* impl; };
+struct DigitorBuffer { digitor::Buffer* impl; };
+
 const char* digitor_get_version(void) {
     return "0.2.0";
+}
+
+DigitorResult digitor_create_texture(DigitorRenderContext* context, const DigitorTextureDesc* desc,
+                                     DigitorTexture** out_texture) {
+    if (context == nullptr || desc == nullptr || out_texture == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_texture = nullptr;
+    digitor::Texture* resource = nullptr;
+    const auto result = context->impl->create_texture(*desc, &resource);
+    if (result != DIGITOR_RESULT_OK) return result;
+    try { *out_texture = new DigitorTexture{resource}; }
+    catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_destroy_texture(DigitorTexture* texture) {
+    if (texture == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    delete texture->impl;
+    delete texture;
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_create_buffer(DigitorRenderContext* context, const DigitorBufferDesc* desc,
+                                    DigitorBuffer** out_buffer) {
+    if (context == nullptr || desc == nullptr || out_buffer == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_buffer = nullptr;
+    digitor::Buffer* resource = nullptr;
+    const auto result = context->impl->create_buffer(*desc, &resource);
+    if (result != DIGITOR_RESULT_OK) return result;
+    try { *out_buffer = new DigitorBuffer{resource}; }
+    catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer) {
+    if (buffer == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    delete buffer->impl;
+    delete buffer;
+    return DIGITOR_RESULT_OK;
 }
 
 DigitorResult digitor_initialize(const DigitorEngineConfig* config) {
@@ -73,6 +116,8 @@ DigitorResult digitor_destroy_render_context(
     const DigitorResult result =
         digitor::Engine::instance().destroy_context(context->impl);
 
-    delete context;
+    if (result == DIGITOR_RESULT_OK) {
+        delete context;
+    }
     return result;
 }

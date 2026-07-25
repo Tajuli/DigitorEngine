@@ -36,10 +36,13 @@ Implemented:
 - Unit test framework
 - GitHub Actions CI
 - Cross-platform project layout
+- Opaque texture and buffer C handles with validated CPU allocation
+- Context-scoped resource lifetime enforcement
 
 Not implemented yet:
 
 - GPU rendering and command submission (discovery only is implemented)
+- Native GPU texture and buffer allocation
 - Video decoding
 - Video encoding
 - Timeline

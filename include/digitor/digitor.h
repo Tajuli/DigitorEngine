@@ -23,8 +23,42 @@ typedef enum DigitorResult {
     DIGITOR_RESULT_NOT_INITIALIZED = 2,
     DIGITOR_RESULT_ALREADY_INITIALIZED = 3,
     DIGITOR_RESULT_BACKEND_UNAVAILABLE = 4,
+    DIGITOR_RESULT_UNSUPPORTED = 5,
+    DIGITOR_RESULT_RESOURCE_IN_USE = 6,
+    DIGITOR_RESULT_OUT_OF_MEMORY = 7,
     DIGITOR_RESULT_INTERNAL_ERROR = 100
 } DigitorResult;
+
+typedef enum DigitorPixelFormat {
+    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT = 1
+} DigitorPixelFormat;
+
+typedef enum DigitorTextureUsage {
+    DIGITOR_TEXTURE_USAGE_SAMPLED = 1u << 0,
+    DIGITOR_TEXTURE_USAGE_STORAGE = 1u << 1,
+    DIGITOR_TEXTURE_USAGE_RENDER_TARGET = 1u << 2,
+    DIGITOR_TEXTURE_USAGE_TRANSFER_SOURCE = 1u << 3,
+    DIGITOR_TEXTURE_USAGE_TRANSFER_DESTINATION = 1u << 4
+} DigitorTextureUsage;
+
+typedef struct DigitorTextureDesc {
+    uint32_t width;
+    uint32_t height;
+    DigitorPixelFormat format;
+    uint32_t usage;
+} DigitorTextureDesc;
+
+typedef enum DigitorBufferUsage {
+    DIGITOR_BUFFER_USAGE_UNIFORM = 1u << 0,
+    DIGITOR_BUFFER_USAGE_STORAGE = 1u << 1,
+    DIGITOR_BUFFER_USAGE_UPLOAD = 1u << 2,
+    DIGITOR_BUFFER_USAGE_STAGING = 1u << 3
+} DigitorBufferUsage;
+
+typedef struct DigitorBufferDesc {
+    uint64_t size;
+    uint32_t usage;
+} DigitorBufferDesc;
 
 typedef enum DigitorRendererBackend {
     DIGITOR_RENDERER_AUTO = 0,
@@ -52,6 +86,8 @@ typedef struct DigitorRendererInfo {
 } DigitorRendererInfo;
 
 typedef struct DigitorRenderContext DigitorRenderContext;
+typedef struct DigitorTexture DigitorTexture;
+typedef struct DigitorBuffer DigitorBuffer;
 
 DIGITOR_API const char* digitor_get_version(void);
 
@@ -72,6 +108,23 @@ DIGITOR_API DigitorResult digitor_create_render_context(
 DIGITOR_API DigitorResult digitor_destroy_render_context(
     DigitorRenderContext* context
 );
+
+/* Resource handles are owned by their context. Destroy all resources before it. */
+DIGITOR_API DigitorResult digitor_create_texture(
+    DigitorRenderContext* context,
+    const DigitorTextureDesc* desc,
+    DigitorTexture** out_texture
+);
+
+DIGITOR_API DigitorResult digitor_destroy_texture(DigitorTexture* texture);
+
+DIGITOR_API DigitorResult digitor_create_buffer(
+    DigitorRenderContext* context,
+    const DigitorBufferDesc* desc,
+    DigitorBuffer** out_buffer
+);
+
+DIGITOR_API DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer);
 
 #ifdef __cplusplus
 }

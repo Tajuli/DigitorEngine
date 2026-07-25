@@ -54,6 +54,24 @@ int main() {
     assert(info.backend == DIGITOR_RENDERER_CPU && !info.is_gpu && info.supports_compute);
     DigitorRenderContext* context = nullptr;
     assert(digitor_create_render_context(&context) == DIGITOR_RESULT_OK);
+
+    DigitorTextureDesc texture_desc{1920, 1080, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                                    DIGITOR_TEXTURE_USAGE_STORAGE | DIGITOR_TEXTURE_USAGE_RENDER_TARGET};
+    DigitorTexture* texture = nullptr;
+    assert(digitor_create_texture(context, &texture_desc, &texture) == DIGITOR_RESULT_OK);
+    assert(texture != nullptr);
+    assert(digitor_destroy_render_context(context) == DIGITOR_RESULT_RESOURCE_IN_USE);
+    assert(digitor_destroy_texture(texture) == DIGITOR_RESULT_OK);
+
+    DigitorBufferDesc buffer_desc{4096, DIGITOR_BUFFER_USAGE_UNIFORM | DIGITOR_BUFFER_USAGE_UPLOAD};
+    DigitorBuffer* buffer = nullptr;
+    assert(digitor_create_buffer(context, &buffer_desc, &buffer) == DIGITOR_RESULT_OK);
+    assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_OK);
+
+    DigitorTextureDesc invalid_texture{0, 1080, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                                       DIGITOR_TEXTURE_USAGE_SAMPLED};
+    assert(digitor_create_texture(context, &invalid_texture, &texture) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_create_buffer(context, nullptr, &buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
     assert(digitor_destroy_render_context(context) == DIGITOR_RESULT_OK);
     assert(digitor_shutdown() == DIGITOR_RESULT_OK);
 
