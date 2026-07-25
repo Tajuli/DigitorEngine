@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 3.0.0
+    VERSION 3.1.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -56,7 +56,7 @@ else()
     target_sources(digitor_engine PRIVATE src/gpu/native_stub.cpp)
 endif()
 
-if(WIN32 OR ANDROID)
+if(WIN32 OR ANDROID OR UNIX)
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
         target_sources(digitor_engine PRIVATE src/gpu/vulkan_backend.cpp)
@@ -81,6 +81,10 @@ target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
 # __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.
 if (NOT BUILD_SHARED_LIBS)
     target_compile_definitions(digitor_engine PUBLIC DIGITOR_ENGINE_STATIC)
+elseif (WIN32)
+    # Internal C++ test seams are not part of the public C ABI, but must be exported
+    # so the shared-library test executables can link on Windows.
+    set_target_properties(digitor_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
 if (WIN32)
@@ -117,6 +121,22 @@ if (DIGITOR_BUILD_TESTS)
         target_compile_options(digitor_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME digitor_tests COMMAND digitor_tests)
+
+    if (WIN32)
+        add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
+        target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
+        target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        if (MSVC)
+            target_compile_options(digitor_native_gpu_tests PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(digitor_native_gpu_tests PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME digitor_native_gpu_tests COMMAND digitor_native_gpu_tests)
+        set_tests_properties(digitor_native_gpu_tests PROPERTIES
+            ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
+            LABELS "native-gpu;hardware"
+        )
+    endif()
 
     add_executable(digitor_c_header_test tests/test_c_header.c)
     set_target_properties(digitor_c_header_test PROPERTIES

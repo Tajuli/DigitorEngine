@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -29,6 +30,19 @@
 #endif
 
 namespace digitor {
+bool gpu_validation_requested() noexcept {
+#if defined(_WIN32)
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, "DIGITOR_GPU_VALIDATION") != 0) return false;
+    const bool enabled = value != nullptr && length > 1 && value[0] != '0';
+    std::free(value);
+    return enabled;
+#else
+    const char* value = std::getenv("DIGITOR_GPU_VALIDATION");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+#endif
+}
 DigitorResult IRenderBackend::create_texture(const DigitorTextureDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
 DigitorResult IRenderBackend::create_buffer(const DigitorBufferDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
 DigitorResult IRenderBackend::create_sampler(const DigitorSamplerDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }

@@ -51,7 +51,7 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
-    assert(std::strcmp(digitor_get_version(), "3.0.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "3.1.0") == 0);
     test_editor();
     test_v2();
 
