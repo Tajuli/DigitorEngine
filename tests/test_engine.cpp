@@ -68,8 +68,22 @@ int main() {
     DigitorBufferDesc buffer_desc{4096, DIGITOR_BUFFER_USAGE_UNIFORM | DIGITOR_BUFFER_USAGE_UPLOAD};
     DigitorBuffer* buffer = nullptr;
     assert(digitor_create_buffer(context, &buffer_desc, &buffer) == DIGITOR_RESULT_OK);
+    void* mapped = nullptr;
+    const auto map_result = digitor_map_buffer(buffer, 16, 32, &mapped);
+    assert(map_result == DIGITOR_RESULT_OK);
+    assert(mapped != nullptr);
+    if (mapped) std::memset(mapped, 0x5a, 32);
+    assert(digitor_map_buffer(buffer, 0, 1, &mapped) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_unmap_buffer(buffer) == DIGITOR_RESULT_OK);
+    assert(digitor_unmap_buffer(buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_map_buffer(buffer, 4090, 7, &mapped) == DIGITOR_RESULT_INVALID_ARGUMENT);
     assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_OK);
     assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_INVALID_ARGUMENT);
+
+    DigitorBufferDesc device_buffer_desc{64, DIGITOR_BUFFER_USAGE_STORAGE};
+    assert(digitor_create_buffer(context, &device_buffer_desc, &buffer) == DIGITOR_RESULT_OK);
+    assert(digitor_map_buffer(buffer, 0, 0, &mapped) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_destroy_buffer(buffer) == DIGITOR_RESULT_OK);
 
     DigitorSamplerDesc sampler_desc{DIGITOR_FILTER_LINEAR, DIGITOR_FILTER_LINEAR,
         DIGITOR_FILTER_NEAREST, DIGITOR_ADDRESS_CLAMP_TO_EDGE, DIGITOR_ADDRESS_REPEAT,
