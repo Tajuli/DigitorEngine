@@ -33,6 +33,10 @@ target_include_directories(digitor_engine
 )
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
+get_target_property(DIGITOR_ENGINE_TYPE digitor_engine TYPE)
+if (DIGITOR_ENGINE_TYPE STREQUAL "STATIC_LIBRARY")
+    target_compile_definitions(digitor_engine PUBLIC DIGITOR_STATIC)
+endif()
 
 if (WIN32)
     target_link_libraries(digitor_engine PRIVATE d3d12 dxgi)
@@ -61,6 +65,10 @@ if (DIGITOR_BUILD_TESTS)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME digitor_tests COMMAND digitor_tests)
+
+    add_executable(digitor_c_abi_test tests/test_c_abi.c)
+    target_link_libraries(digitor_c_abi_test PRIVATE Digitor::Engine)
+    add_test(NAME digitor_c_abi_test COMMAND digitor_c_abi_test)
 endif()
 
 include(GNUInstallDirs)

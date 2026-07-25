@@ -17,9 +17,22 @@ DigitorResult Engine::initialize(const DigitorEngineConfig& config) {
         return DIGITOR_RESULT_ALREADY_INITIALIZED;
     }
 
+    if (config.preferred_backend != DIGITOR_RENDERER_AUTO &&
+        config.preferred_backend != DIGITOR_RENDERER_VULKAN &&
+        config.preferred_backend != DIGITOR_RENDERER_METAL &&
+        config.preferred_backend != DIGITOR_RENDERER_D3D12 &&
+        config.preferred_backend != DIGITOR_RENDERER_OPENGL_ES &&
+        config.preferred_backend != DIGITOR_RENDERER_CPU) {
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+
     config_ = config;
 
-    backend_ = create_gpu_backend(config.preferred_backend);
+    if (config.preferred_backend == DIGITOR_RENDERER_CPU) {
+        backend_ = std::make_unique<CpuBackend>();
+    } else {
+        backend_ = create_gpu_backend(config.preferred_backend);
+    }
 
     if (!backend_ && config.allow_cpu_fallback) {
         backend_ = std::make_unique<CpuBackend>();
@@ -46,6 +59,10 @@ DigitorResult Engine::shutdown() {
     }
 
     if (backend_) {
+        for (RenderContext* context : contexts_) {
+            delete context;
+        }
+        contexts_.clear();
         backend_->shutdown();
         backend_.reset();
     }
@@ -59,14 +76,18 @@ bool Engine::is_initialized() const noexcept {
     return initialized_;
 }
 
-DigitorRendererInfo Engine::renderer_info() const noexcept {
+DigitorResult Engine::renderer_info(DigitorRendererInfo* out_info) const noexcept {
+    if (out_info == nullptr) {
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
     std::scoped_lock lock(mutex_);
 
-    if (!backend_) {
-        return {};
+    if (!initialized_ || !backend_) {
+        return DIGITOR_RESULT_NOT_INITIALIZED;
     }
 
-    return backend_->info();
+    *out_info = backend_->info();
+    return DIGITOR_RESULT_OK;
 }
 
 DigitorResult Engine::create_context(RenderContext** out_context) {
@@ -80,7 +101,9 @@ DigitorResult Engine::create_context(RenderContext** out_context) {
         return DIGITOR_RESULT_NOT_INITIALIZED;
     }
 
-    *out_context = new RenderContext(backend_->info().backend);
+    auto* context = new RenderContext(backend_->info().backend);
+    contexts_.insert(context);
+    *out_context = context;
     return DIGITOR_RESULT_OK;
 }
 
@@ -89,7 +112,13 @@ DigitorResult Engine::destroy_context(RenderContext* context) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
-    delete context;
+    std::scoped_lock lock(mutex_);
+    const auto entry = contexts_.find(context);
+    if (entry == contexts_.end()) {
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    delete *entry;
+    contexts_.erase(entry);
     return DIGITOR_RESULT_OK;
 }
 

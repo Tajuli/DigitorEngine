@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <mutex>
+#include <unordered_set>
 
 #include "digitor/digitor.h"
 #include "core/render_context.hpp"
@@ -17,7 +18,7 @@ public:
     DigitorResult shutdown();
 
     [[nodiscard]] bool is_initialized() const noexcept;
-    [[nodiscard]] DigitorRendererInfo renderer_info() const noexcept;
+    DigitorResult renderer_info(DigitorRendererInfo* out_info) const noexcept;
 
     DigitorResult create_context(RenderContext** out_context);
     DigitorResult destroy_context(RenderContext* context);
@@ -29,6 +30,7 @@ private:
     bool initialized_{false};
     DigitorEngineConfig config_{};
     std::unique_ptr<IRenderBackend> backend_;
+    std::unordered_set<RenderContext*> contexts_;
 };
 
 }  // namespace digitor

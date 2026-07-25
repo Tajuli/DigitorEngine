@@ -1,7 +1,5 @@
 #include "digitor/digitor.h"
 
-#include <cstring>
-
 #include "core/engine.hpp"
 
 struct DigitorRenderContext {
@@ -22,11 +20,19 @@ DigitorResult digitor_initialize(const DigitorEngineConfig* config) {
         resolved = *config;
     }
 
-    return digitor::Engine::instance().initialize(resolved);
+    try {
+        return digitor::Engine::instance().initialize(resolved);
+    } catch (...) {
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
 }
 
 DigitorResult digitor_shutdown(void) {
-    return digitor::Engine::instance().shutdown();
+    try {
+        return digitor::Engine::instance().shutdown();
+    } catch (...) {
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
 }
 
 DigitorResult digitor_get_renderer_info(DigitorRendererInfo* out_info) {
@@ -34,12 +40,11 @@ DigitorResult digitor_get_renderer_info(DigitorRendererInfo* out_info) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
-    if (!digitor::Engine::instance().is_initialized()) {
-        return DIGITOR_RESULT_NOT_INITIALIZED;
+    try {
+        return digitor::Engine::instance().renderer_info(out_info);
+    } catch (...) {
+        return DIGITOR_RESULT_INTERNAL_ERROR;
     }
-
-    *out_info = digitor::Engine::instance().renderer_info();
-    return DIGITOR_RESULT_OK;
 }
 
 DigitorResult digitor_create_render_context(
@@ -48,19 +53,27 @@ DigitorResult digitor_create_render_context(
     if (out_context == nullptr) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
+    *out_context = nullptr;
 
     digitor::RenderContext* internal = nullptr;
-    const DigitorResult result =
-        digitor::Engine::instance().create_context(&internal);
+    try {
+        const DigitorResult result =
+            digitor::Engine::instance().create_context(&internal);
 
-    if (result != DIGITOR_RESULT_OK) {
-        return result;
+        if (result != DIGITOR_RESULT_OK) {
+            return result;
+        }
+
+        auto* wrapper = new DigitorRenderContext{};
+        wrapper->impl = internal;
+        *out_context = wrapper;
+        return DIGITOR_RESULT_OK;
+    } catch (...) {
+        if (internal != nullptr) {
+            (void)digitor::Engine::instance().destroy_context(internal);
+        }
+        return DIGITOR_RESULT_INTERNAL_ERROR;
     }
-
-    auto* wrapper = new DigitorRenderContext{};
-    wrapper->impl = internal;
-    *out_context = wrapper;
-    return DIGITOR_RESULT_OK;
 }
 
 DigitorResult digitor_destroy_render_context(
@@ -70,9 +83,13 @@ DigitorResult digitor_destroy_render_context(
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
-    const DigitorResult result =
-        digitor::Engine::instance().destroy_context(context->impl);
+    try {
+        const DigitorResult result =
+            digitor::Engine::instance().destroy_context(context->impl);
 
-    delete context;
-    return result;
+        delete context;
+        return result;
+    } catch (...) {
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
 }

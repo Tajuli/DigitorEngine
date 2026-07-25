@@ -182,8 +182,12 @@ std::unique_ptr<IRenderBackend> select_gpu_backend(HostPlatform platform,
         DigitorRendererBackend preferred, const BackendFactory& factory) {
     auto order = platform_order(platform);
     if (preferred != DIGITOR_RENDERER_AUTO && preferred != DIGITOR_RENDERER_CPU) {
-        order.erase(std::remove(order.begin(), order.end(), preferred), order.end());
-        order.insert(order.begin(), preferred);
+        // An explicit backend is a request for that backend, not a hint to try
+        // unrelated GPU APIs before the Engine applies its CPU fallback policy.
+        if (std::find(order.begin(), order.end(), preferred) == order.end()) {
+            return nullptr;
+        }
+        order = {preferred};
     } else if (preferred == DIGITOR_RENDERER_CPU) {
         return nullptr;
     }
