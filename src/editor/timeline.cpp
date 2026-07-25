@@ -1,0 +1,21 @@
+#include "digitor/timeline.hpp"
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+namespace digitor {
+void Timeline::checkpoint(){undo_.push_back({tracks_});redo_.clear();}
+std::size_t Timeline::add_track(std::string n){checkpoint();tracks_.push_back({std::move(n),{}});return tracks_.size()-1;}
+void Timeline::sort(std::size_t t){std::sort(tracks_[t].clips.begin(),tracks_[t].clips.end(),[](auto&a,auto&b){return a.start<b.start;});}
+Clip* Timeline::find_mut(ClipId id){for(auto&t:tracks_)for(auto&c:t.clips)if(c.id==id)return &c;return nullptr;} const Clip*Timeline::find(ClipId id)const{for(auto&t:tracks_)for(auto&c:t.clips)if(c.id==id)return &c;return nullptr;}
+void Timeline::resolve_overwrite(std::size_t t,ClipId id,FrameNumber a,FrameNumber b){auto&v=tracks_[t].clips;v.erase(std::remove_if(v.begin(),v.end(),[&](auto&c){return c.id!=id&&c.start<b&&c.end()>a;}),v.end());}
+ClipId Timeline::add_clip(std::size_t t,const std::string&s,FrameNumber start,FrameNumber duration,FrameNumber in,EditMode mode){if(t>=tracks_.size()||start<0||duration<=0||in<0)throw std::invalid_argument("invalid clip");checkpoint();Clip c{next_id_++,s,start,duration,in,{}};if(mode==EditMode::insert){for(auto&x:tracks_[t].clips){if(x.start>=start)x.start+=duration;else if(x.end()>start)x.duration=start-x.start;}}else{resolve_overwrite(t,c.id,start,start+duration);}tracks_[t].clips.push_back(c);sort(t);return c.id;}
+bool Timeline::erase(ClipId id,bool rip){for(auto&t:tracks_)for(auto i=t.clips.begin();i!=t.clips.end();++i)if(i->id==id){checkpoint();auto end=i->end(),d=i->duration;t.clips.erase(i);if(rip)for(auto&c:t.clips)if(c.start>=end)c.start-=d;return true;}return false;}
+bool Timeline::move(ClipId id,std::size_t target,FrameNumber start,EditMode mode){if(target>=tracks_.size()||start<0)return false;auto*c=find_mut(id);if(!c)return false;checkpoint();Clip copy=*c;for(auto&t:tracks_)t.clips.erase(std::remove_if(t.clips.begin(),t.clips.end(),[&](auto&x){return x.id==id;}),t.clips.end());copy.start=start;if(mode==EditMode::insert){for(auto&x:tracks_[target].clips)if(x.start>=start)x.start+=copy.duration;}else{resolve_overwrite(target,id,start,start+copy.duration);}tracks_[target].clips.push_back(copy);sort(target);return true;}
+bool Timeline::ripple(ClipId id,FrameNumber delta){auto*c=find_mut(id);if(!c||c->duration+delta<=0)return false;checkpoint();auto old=c->end();c->duration+=delta;for(auto&t:tracks_)for(auto&x:t.clips)if(x.id!=id&&x.start>=old)x.start+=delta;return true;}
+bool Timeline::roll(ClipId l,ClipId r,FrameNumber d){auto*a=find_mut(l),*b=find_mut(r);if(!a||!b||a->end()!=b->start||a->duration+d<=0||b->duration-d<=0)return false;checkpoint();a=find_mut(l);b=find_mut(r);a->duration+=d;b->start+=d;b->source_in+=d;b->duration-=d;return true;}
+bool Timeline::slip(ClipId id,FrameNumber d){auto*c=find_mut(id);if(!c||c->source_in+d<0)return false;checkpoint();find_mut(id)->source_in+=d;return true;}
+bool Timeline::slide(ClipId id,FrameNumber d){auto*c=find_mut(id);if(!c||c->start+d<0)return false;checkpoint();find_mut(id)->start+=d;for(std::size_t i=0;i<tracks_.size();++i)sort(i);return true;}
+bool Timeline::set_keyframe(ClipId id,FrameNumber f,double v){auto*c=find_mut(id);if(!c||f<0||f>c->duration)return false;checkpoint();c=find_mut(id);auto i=std::lower_bound(c->keyframes.begin(),c->keyframes.end(),f,[](auto&k,auto x){return k.frame<x;});if(i!=c->keyframes.end()&&i->frame==f)i->value=v;else c->keyframes.insert(i,{f,v});return true;}
+std::optional<double> Timeline::value_at(ClipId id,FrameNumber f)const{auto*c=find(id);if(!c||c->keyframes.empty())return{};auto i=std::lower_bound(c->keyframes.begin(),c->keyframes.end(),f,[](auto&k,auto x){return k.frame<x;});if(i==c->keyframes.begin())return i->value;if(i==c->keyframes.end())return c->keyframes.back().value;if(i->frame==f)return i->value;auto&a=*(i-1);double x=double(f-a.frame)/double(i->frame-a.frame);return a.value+(i->value-a.value)*x;}
+bool Timeline::undo(){if(undo_.empty())return false;redo_.push_back({tracks_});tracks_=std::move(undo_.back().tracks);undo_.pop_back();return true;}bool Timeline::redo(){if(redo_.empty())return false;undo_.push_back({tracks_});tracks_=std::move(redo_.back().tracks);redo_.pop_back();return true;}
+}

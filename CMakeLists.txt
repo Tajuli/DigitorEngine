@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 0.8.0
+    VERSION 1.1.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(DIGITOR_BUILD_TESTS "Build DigitorEngine tests" ON)
 option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
+option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development packages are available" ON)
 
 add_library(digitor_engine
     src/core/engine.cpp
@@ -25,7 +26,21 @@ add_library(digitor_engine
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp
+    src/media/media.cpp
+    src/editor/timeline.cpp
+    src/render/renderer.cpp
 )
+
+if(DIGITOR_ENABLE_FFMPEG)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
+        if(FFMPEG_FOUND)
+            target_link_libraries(digitor_engine PRIVATE PkgConfig::FFMPEG)
+            target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
+        endif()
+    endif()
+endif()
 
 if(WIN32)
     target_sources(digitor_engine PRIVATE src/gpu/d3d12_backend.cpp)
@@ -88,6 +103,7 @@ if (DIGITOR_BUILD_TESTS)
     enable_testing()
     add_executable(digitor_tests
         tests/test_engine.cpp
+        tests/test_editor.cpp
     )
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
