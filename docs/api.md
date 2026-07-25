@@ -34,3 +34,8 @@ allocation is not yet implemented and returns `DIGITOR_RESULT_UNSUPPORTED` rathe
 allocating host memory or claiming a GPU resource exists.
 
 The C ABI is intentionally small so Flutter, Kotlin, Swift, C#, Rust, or any other host can bind to it.
+
+On Windows, CMake propagates `DIGITOR_ENGINE_STATIC` to consumers when the default static library
+is built. Shared-library builds continue to use `__declspec(dllexport)` and
+`__declspec(dllimport)`. Consumers linking a manually packaged static library must define
+`DIGITOR_ENGINE_STATIC` as part of that package's usage requirements.

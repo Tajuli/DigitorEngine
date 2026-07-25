@@ -35,6 +35,12 @@ target_include_directories(digitor_engine
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
 
+# add_library() follows BUILD_SHARED_LIBS. Static Windows consumers must not see
+# __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.
+if (NOT BUILD_SHARED_LIBS)
+    target_compile_definitions(digitor_engine PUBLIC DIGITOR_ENGINE_STATIC)
+endif()
+
 if (WIN32)
     target_link_libraries(digitor_engine PRIVATE d3d12 dxgi)
 elseif(APPLE)

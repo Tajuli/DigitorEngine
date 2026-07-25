@@ -3,7 +3,9 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32)
+#if defined(DIGITOR_ENGINE_STATIC)
+  #define DIGITOR_API
+#elif defined(_WIN32)
   #if defined(DIGITOR_ENGINE_BUILD)
     #define DIGITOR_API __declspec(dllexport)
   #else
