@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -34,6 +34,14 @@ target_include_directories(digitor_engine
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
 
+if (WIN32)
+    target_link_libraries(digitor_engine PRIVATE d3d12 dxgi)
+elseif(APPLE)
+    target_link_libraries(digitor_engine PRIVATE "-framework Metal" "-framework Foundation")
+elseif(ANDROID)
+    target_link_libraries(digitor_engine PRIVATE dl EGL GLESv2)
+endif()
+
 if (MSVC)
     target_compile_options(digitor_engine PRIVATE /W4 /permissive-)
 else()
@@ -51,6 +59,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_engine.cpp
     )
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
+    target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME digitor_tests COMMAND digitor_tests)
 endif()
 
