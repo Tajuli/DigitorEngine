@@ -35,6 +35,8 @@ public:
         std::span<const uint8_t> source, std::vector<uint8_t>& destination) noexcept;
 };
 
+[[nodiscard]] bool gpu_validation_requested() noexcept;
+
 std::unique_ptr<IRenderBackend> create_gpu_backend(
     DigitorRendererBackend preferred
 );
