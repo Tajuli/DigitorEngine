@@ -39,3 +39,7 @@ On Windows, CMake propagates `DIGITOR_ENGINE_STATIC` to consumers when the defau
 is built. Shared-library builds continue to use `__declspec(dllexport)` and
 `__declspec(dllimport)`. Consumers linking a manually packaged static library must define
 `DIGITOR_ENGINE_STATIC` as part of that package's usage requirements.
+
+## Resource API (0.4.0)
+`digitor_create_texture`, `digitor_create_buffer`, and the additive `digitor_create_sampler` clear output handles before work. Descriptors are copied and immutable. Valid formats are `RGBA8_UNORM`, `BGRA8_UNORM`, `RGBA16_FLOAT`, and `RGBA32_FLOAT`; a backend may return `DIGITOR_RESULT_UNSUPPORTED` (not substitute a format). Zero sizes, unknown flags, and malformed sampler enums are invalid. Upload/staging buffers request host-visible/shared/upload memory; other resources request device-local/private/default memory. Destroy calls reject null, unknown, retired, and double-destroyed public handles. Destroy resources before their owning context.
+Shutdown returns `DIGITOR_RESULT_RESOURCE_IN_USE` while a context remains, so a native device can never be invalidated beneath live resources.

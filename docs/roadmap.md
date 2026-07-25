@@ -75,3 +75,9 @@ Rendering, command queues, and shader execution begin in later milestones; v0.2.
 - Shared preview/export rendering path
 - GPU-first with CPU fallback
 - Cross-platform production API
+
+## v0.4.0 — Native GPU Resource Layer (complete)
+- Backend-neutral validated textures, buffers, upload/staging memory, and samplers.
+- Vulkan resources are optional at build time; D3D12 is Windows-only, Metal is Apple-only Objective-C++, and GLES is Android-only.
+- CPU fallback remains available without GPU SDKs.
+- No shaders, rendering passes, command submission, decoding/encoding, timeline, preview, or export are part of this milestone.

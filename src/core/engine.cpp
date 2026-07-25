@@ -45,6 +45,8 @@ DigitorResult Engine::shutdown() {
         return DIGITOR_RESULT_NOT_INITIALIZED;
     }
 
+    if (!contexts_.empty()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+
     if (backend_) {
         backend_->shutdown();
         backend_.reset();
@@ -80,7 +82,8 @@ DigitorResult Engine::create_context(RenderContext** out_context) {
         return DIGITOR_RESULT_NOT_INITIALIZED;
     }
 
-    *out_context = new RenderContext(backend_->info().backend);
+    try { *out_context = new RenderContext(*backend_); contexts_.insert(*out_context); }
+    catch (const std::bad_alloc&) { *out_context = nullptr; return DIGITOR_RESULT_OUT_OF_MEMORY; }
     return DIGITOR_RESULT_OK;
 }
 
@@ -89,9 +92,12 @@ DigitorResult Engine::destroy_context(RenderContext* context) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
+    std::scoped_lock lock(mutex_);
+    if (!contexts_.contains(context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (context->has_resources()) {
         return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
+    contexts_.erase(context);
     delete context;
     return DIGITOR_RESULT_OK;
 }

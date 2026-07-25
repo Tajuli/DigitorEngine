@@ -29,6 +29,12 @@
 #endif
 
 namespace digitor {
+DigitorResult IRenderBackend::create_texture(const DigitorTextureDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
+DigitorResult IRenderBackend::create_buffer(const DigitorBufferDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
+DigitorResult IRenderBackend::create_sampler(const DigitorSamplerDesc&, void** out) noexcept { if (out) *out=nullptr; return DIGITOR_RESULT_UNSUPPORTED; }
+void IRenderBackend::destroy_texture(void*) noexcept {}
+void IRenderBackend::destroy_buffer(void*) noexcept {}
+void IRenderBackend::destroy_sampler(void*) noexcept {}
 namespace {
 
 void copy_text(char* destination, std::size_t size, const char* source) {
@@ -192,7 +198,8 @@ std::unique_ptr<IRenderBackend> select_gpu_backend(HostPlatform platform,
 }
 
 std::unique_ptr<IRenderBackend> create_gpu_backend(DigitorRendererBackend preferred) {
-    return select_gpu_backend(current_platform(), preferred, [](DigitorRendererBackend backend) {
+    return select_gpu_backend(current_platform(), preferred, [](DigitorRendererBackend backend) -> std::unique_ptr<IRenderBackend> {
+        if (auto native = create_native_backend(backend)) return native;
         auto info = discover(backend);
         return info ? std::make_unique<DeviceBackend>(*info) : nullptr;
     });
