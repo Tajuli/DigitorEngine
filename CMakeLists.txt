@@ -16,6 +16,7 @@ option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 add_library(digitor_engine
     src/core/engine.cpp
     src/core/render_context.cpp
+    src/core/resources.cpp
     src/gpu/gpu_backend.cpp
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
@@ -33,6 +34,12 @@ target_include_directories(digitor_engine
 )
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
+
+# add_library() follows BUILD_SHARED_LIBS. Static Windows consumers must not see
+# __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.
+if (NOT BUILD_SHARED_LIBS)
+    target_compile_definitions(digitor_engine PUBLIC DIGITOR_ENGINE_STATIC)
+endif()
 
 if (WIN32)
     target_link_libraries(digitor_engine PRIVATE d3d12 dxgi)
@@ -61,6 +68,10 @@ if (DIGITOR_BUILD_TESTS)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME digitor_tests COMMAND digitor_tests)
+
+    add_executable(digitor_c_header_test tests/test_c_header.c)
+    target_link_libraries(digitor_c_header_test PRIVATE Digitor::Engine)
+    add_test(NAME digitor_c_header_test COMMAND digitor_c_header_test)
 endif()
 
 include(GNUInstallDirs)

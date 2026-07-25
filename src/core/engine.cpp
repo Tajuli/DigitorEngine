@@ -89,6 +89,9 @@ DigitorResult Engine::destroy_context(RenderContext* context) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
+    if (context->has_resources()) {
+        return DIGITOR_RESULT_RESOURCE_IN_USE;
+    }
     delete context;
     return DIGITOR_RESULT_OK;
 }
