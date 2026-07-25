@@ -102,4 +102,11 @@ DigitorResult Engine::destroy_context(RenderContext* context) {
     return DIGITOR_RESULT_OK;
 }
 
+DigitorResult Engine::render_preview_rgba8(uint32_t width, uint32_t height,
+        std::span<const uint8_t> source, std::vector<uint8_t>& destination) {
+    std::scoped_lock lock(mutex_);
+    if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
+    return backend_->render_rgba8(width, height, source, destination);
+}
+
 }  // namespace digitor

@@ -1,18 +1,21 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **2.0.0**, but that number is not evidence of production readiness or ABI stability.
+version **3.0.0**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
-yet contain a native GPU rendering pipeline or production media I/O.
+contains the first native preview passes on Metal and OpenGL ES, but does not yet
+contain production media I/O or qualified Vulkan/D3D12 graphics pipelines.
 
 ## Audited status
 
-The current portable command layer executes recorded C++ callbacks synchronously on the CPU.
+The legacy portable command layer executes recorded C++ callbacks synchronously on the CPU.
 Vulkan, Direct3D 12, Metal, and OpenGL ES backends allocate some native resources and perform
 device discovery, but do not create native command queues/buffers, compile native shaders,
 create pipelines/descriptors, dispatch/draw, transition textures, synchronize GPU work, or
-read rendered pixels back.
+read rendered pixels back. The v3 preview path now records a Metal clear pass and a GLES
+fullscreen texture-copy shader and returns GPU-completed pixels to preview. See the
+[native pipeline notes](docs/native_gpu_pipeline.md) for exact backend scope.
 
 FFmpeg libraries can be detected and linked, but the decoder implementations return empty,
 timestamped placeholder frames. Export writes a private `DIGITOR` text/interchange stream or

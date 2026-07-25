@@ -26,4 +26,17 @@ DigitorRendererInfo CpuBackend::info() const noexcept {
     return result;
 }
 
+DigitorResult CpuBackend::render_rgba8(uint32_t width, uint32_t height,
+        std::span<const uint8_t> source, std::vector<uint8_t>& destination) noexcept {
+    const auto size = static_cast<std::size_t>(width) * height * 4;
+    if (!width || !height || (!source.empty() && source.size() != size))
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    try {
+        destination.assign(size, 0);
+        if (!source.empty()) std::copy(source.begin(), source.end(), destination.begin());
+        else for (std::size_t i = 3; i < size; i += 4) destination[i] = 255;
+    } catch (...) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
+    return DIGITOR_RESULT_OK;
+}
+
 }  // namespace digitor

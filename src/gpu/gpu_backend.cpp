@@ -37,6 +37,10 @@ void IRenderBackend::unmap_buffer(void*) noexcept {}
 void IRenderBackend::destroy_texture(void*) noexcept {}
 void IRenderBackend::destroy_buffer(void*) noexcept {}
 void IRenderBackend::destroy_sampler(void*) noexcept {}
+DigitorResult IRenderBackend::render_rgba8(uint32_t, uint32_t,
+    std::span<const uint8_t>, std::vector<uint8_t>&) noexcept {
+    return DIGITOR_RESULT_UNSUPPORTED;
+}
 namespace {
 
 void copy_text(char* destination, std::size_t size, const char* source) {

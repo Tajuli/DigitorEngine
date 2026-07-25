@@ -10,6 +10,7 @@
 #include "digitor/shader.hpp"
 #include "digitor/render_graph.hpp"
 #include "digitor/color.hpp"
+#include "cpu/cpu_backend.hpp"
 #include <cmath>
 void test_editor();
 void test_v2();
@@ -50,7 +51,7 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
-    assert(std::strcmp(digitor_get_version(), "2.0.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "3.0.0") == 0);
     test_editor();
     test_v2();
 
@@ -60,6 +61,13 @@ int main() {
     { digitor::Color in{.2f,.4f,.6f,1},cpu{},gpu{}; digitor::ColorGrade grade; grade.exposure=1; grade.saturation=.8f; digitor::grade_image_cpu(&in,&cpu,1,grade); digitor::CommandBuffer b; digitor::CommandEncoder e(b); digitor::grade_image_gpu(e,&in,&gpu,1,grade); e.finish(); digitor::CommandQueue q; q.submit(b); assert(std::abs(cpu.r-gpu.r)<1e-6f && std::abs(cpu.g-gpu.g)<1e-6f); }
     test_preferred_backend_selection();
     test_unavailable_backend_fallback();
+
+    { digitor::CpuBackend backend; std::vector<uint8_t> input{1,2,3,4}, output;
+      assert(backend.initialize(true));
+      assert(backend.render_rgba8(1, 1, input, output) == DIGITOR_RESULT_OK);
+      assert(output == input);
+      assert(backend.render_rgba8(1, 1, {}, output) == DIGITOR_RESULT_OK);
+      assert((output == std::vector<uint8_t>{0,0,0,255})); }
 
     DigitorEngineConfig config{DIGITOR_RENDERER_CPU, 0, 1};
     assert(digitor_initialize(&config) == DIGITOR_RESULT_OK);
