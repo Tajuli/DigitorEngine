@@ -22,7 +22,7 @@ bool registered(const std::unordered_set<void*>& set, const void* value) { std::
 }
 
 const char* digitor_get_version(void) {
-    return "0.4.0";
+    return "0.8.0";
 }
 
 DigitorResult digitor_create_texture(DigitorRenderContext* context, const DigitorTextureDesc* desc,

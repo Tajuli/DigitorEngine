@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 0.4.0
+    VERSION 0.8.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -18,6 +18,10 @@ add_library(digitor_engine
     src/core/render_context.cpp
     src/core/resources.cpp
     src/gpu/gpu_backend.cpp
+    src/gpu/commands.cpp
+    src/gpu/shader.cpp
+    src/gpu/render_graph.cpp
+    src/gpu/color.cpp
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp

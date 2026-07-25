@@ -1,0 +1,13 @@
+#include "digitor/render_graph.hpp"
+#include <algorithm>
+#include <stdexcept>
+#include <unordered_map>
+namespace digitor {
+GraphResource RenderGraph::create_transient(uint64_t n){if(!n)throw std::invalid_argument("zero-sized transient");resources_.push_back({n,UINT32_MAX,0,0});return resources_.size();}
+uint32_t RenderGraph::add_pass(RenderPass p){if(p.name.empty()||!p.execute)throw std::invalid_argument("invalid pass");passes_.push_back(std::move(p));return passes_.size()-1;}
+void RenderGraph::compile(){order_.clear();barriers_.clear();std::vector<std::vector<uint32_t>>edges(passes_.size());std::vector<uint32_t>degree(passes_.size());std::unordered_map<GraphResource,uint32_t>writer;for(uint32_t i=0;i<passes_.size();++i){for(auto u:passes_[i].reads){if(!u.resource||u.resource>resources_.size())throw std::out_of_range("resource");if(writer.count(u.resource)){edges[writer[u.resource]].push_back(i);++degree[i];}}for(auto u:passes_[i].writes){if(!u.resource||u.resource>resources_.size())throw std::out_of_range("resource");if(writer.count(u.resource)){edges[writer[u.resource]].push_back(i);++degree[i];}writer[u.resource]=i;}for(auto u:passes_[i].reads)resources_[u.resource-1].first_pass=std::min(resources_[u.resource-1].first_pass,i),resources_[u.resource-1].last_pass=i;for(auto u:passes_[i].writes)resources_[u.resource-1].first_pass=std::min(resources_[u.resource-1].first_pass,i),resources_[u.resource-1].last_pass=i;}
+for(uint32_t i=0;i<degree.size();++i)if(!degree[i])order_.push_back(i);for(size_t q=0;q<order_.size();++q)for(auto v:edges[order_[q]])if(--degree[v]==0)order_.push_back(v);if(order_.size()!=passes_.size())throw std::logic_error("render graph cycle");
+for(uint32_t i=0;i<resources_.size();++i){uint32_t slot=0;for(;;++slot){bool clash=false;for(uint32_t j=0;j<i;++j)if(resources_[j].alias_slot==slot&&!(resources_[j].last_pass<resources_[i].first_pass||resources_[i].last_pass<resources_[j].first_pass)){clash=true;break;}if(!clash)break;}resources_[i].alias_slot=slot;}
+std::unordered_map<GraphResource,ResourceState>states;for(auto pi:order_){PipelineBarrier b;auto uses=passes_[pi].reads;uses.insert(uses.end(),passes_[pi].writes.begin(),passes_[pi].writes.end());for(auto u:uses){auto before=states.count(u.resource)?states[u.resource]:ResourceState::undefined;if(before!=u.state){b.transitions.push_back({u.resource,before,u.state});states[u.resource]=u.state;}}barriers_.push_back(std::move(b));}}
+void RenderGraph::execute(CommandQueue&q){if(order_.size()!=passes_.size())compile();CommandBuffer b;CommandEncoder e(b);for(size_t i=0;i<order_.size();++i){if(!barriers_[i].transitions.empty())e.barrier(barriers_[i]);passes_[order_[i]].execute(e);}e.finish();q.submit(b);}
+}
