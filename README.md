@@ -1,104 +1,56 @@
 # DigitorEngine
 
-A GPU-first, CPU-fallback, cross-platform native rendering engine for professional video editing applications.
+DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
+version **2.0.0**, but that number is not evidence of production readiness or ABI stability.
+The implementation has a CPU reference path, native GPU resource allocation on selected
+platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
+yet contain a native GPU rendering pipeline or production media I/O.
 
-DigitorEngine is being developed as the rendering core for **Digitor**, with a long-term goal of providing identical rendering behavior across Windows, Android, iOS, and macOS.
+## Audited status
 
----
+The current portable command layer executes recorded C++ callbacks synchronously on the CPU.
+Vulkan, Direct3D 12, Metal, and OpenGL ES backends allocate some native resources and perform
+device discovery, but do not create native command queues/buffers, compile native shaders,
+create pipelines/descriptors, dispatch/draw, transition textures, synchronize GPU work, or
+read rendered pixels back.
 
-# Goals
+FFmpeg libraries can be detected and linked, but the decoder implementations return empty,
+timestamped placeholder frames. Export writes a private `DIGITOR` text/interchange stream or
+raw `.rgba` float buffers; it does not encode or mux MP4, MOV, MKV, or standard images. Preview
+is an in-memory cached `VideoFrame`, not a native display surface. Preview and export both call
+the same CPU-oriented `SharedRenderer`, but no test proves they consume the same decoded frame,
+execute a native shader graph, or produce pixel-identical results.
 
-- GPU-first rendering
-- CPU fallback
-- Cross-platform architecture
-- Shared preview and export pipeline
-- Deterministic rendering
-- Stable public C API
-- Flutter FFI integration
-- Modular design
+See the evidence-based [implementation audit](docs/implementation_status.md), honest
+[platform matrix](docs/platform_support.md), [validation plan](docs/validation_plan.md), and
+[engineering backlog](docs/engineering_backlog.md).
 
----
+## What is currently usable
 
-# Current Status
+- CMake static/shared-library build configuration and a C-compatible opaque-handle API.
+- CPU-backed texture/buffer storage and native resource allocation prototypes.
+- CPU color operations, `.cube` LUT parsing/interpolation, and CPU image effects.
+- A synchronous callback command model and dependency-ordered render graph prototype.
+- A CPU callback node graph with deterministic serialization and a limited frame cache.
+- Timeline edit data structures (tracks, clips, edits, keyframes, undo/redo).
+- Unit tests for the CPU/reference and data-structure paths on the host build.
 
-Current version: **v2.0.0**
+These components remain experimental. The C API lacks a documented ABI compatibility policy;
+not every exported function is protected against C++ exceptions; handle operations are not
+safe against concurrent destroy/use; and no packaged mobile or desktop application is supplied.
 
-Implemented:
+## Platform status
 
-- Engine lifecycle
-- Render context lifecycle
-- Stable C API
-- Backend abstraction
-- CPU reference backend
-- Native GPU device discovery and capability reporting
-- Platform priority selection (Vulkan/D3D12 on Windows, Vulkan/OpenGL ES on Android, Metal on Apple)
-- CMake build system
-- Unit test framework
-- GitHub Actions CI
-- Cross-platform project layout
-- Opaque texture and buffer C handles with validated CPU allocation
-- Context-scoped resource lifetime enforcement
+| Platform | Build configuration | Native resource code | Native rendering | Media/preview/export validation |
+|---|---|---|---|---|
+| Windows | Configured, not verified in this audit | Vulkan optional; D3D12 present | Not implemented | Not verified |
+| Android | Configured, not verified in this audit | Vulkan optional; GLES requires a current EGL context | Not implemented | Not verified |
+| macOS | Configured, not verified in this audit | Metal present | Not implemented | Not verified |
+| iOS | Conditional Apple source only; no iOS toolchain/project | Metal source present | Not implemented | Not verified |
 
-Version 2.0 adds an unbounded dependency-ordered node/shader graph with deterministic
-serialization and frame caching, `.cube` 3D and 1D LUT processing (nearest, linear,
-and tetrahedral interpolation), and command-encoded GPU effects. Blur, sharpen, glow,
-lens distortion, seeded noise and film grain, chromatic aberration, vignette, and
-motion blur share the same command path used by preview and export. LUTs provide a
-CPU reference path and command-encoded path for parity testing.
+Linux is useful for the CPU reference build but is not one of the claimed production targets.
 
-Preview and export are built through `SharedRenderer`; both therefore execute the
-same render graph. Frame numbers are integral and seeded effects are deterministic.
-The portable command layer supplies the CPU fallback while native selection supports
-Vulkan/D3D12 on Windows, Vulkan/GLES on Android, and Metal on iOS/macOS.
-
----
-
-# Target Platforms
-
-| Platform | Status |
-|----------|--------|
-| Windows | Device discovery (Vulkan, D3D12) |
-| Android | Device discovery (Vulkan, OpenGL ES) |
-| iOS | Device discovery (Metal) |
-| macOS | Device discovery (Metal) |
-
----
-
-# Planned Graphics Backends
-
-| Platform | Primary | Fallback |
-|----------|----------|----------|
-| Windows | Vulkan | Direct3D12 → CPU |
-| Android | Vulkan | OpenGL ES → CPU |
-| iOS | Metal | CPU |
-| macOS | Metal | CPU |
-
----
-
-# Repository Structure
-
-```text
-docs/
-examples/
-include/
-src/
-tests/
-third_party/
-```
-
----
-
-# Build
-
-## Windows
-
-```powershell
-cmake -S . -B build -A x64
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
-```
-
-## macOS / Linux
+## Build the audited host configuration
 
 ```bash
 cmake -S . -B build
@@ -106,39 +58,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
----
+FFmpeg detection does not enable decoding or encoding; it only changes
+`ffmpeg_available()` in the current implementation.
 
-# Public API
+## Public API
 
-The stable public API is located at:
+The C header is `include/digitor/digitor.h`. Treat it as experimental rather than ABI-stable
+until the ABI and concurrency work in the backlog is complete.
 
-```
-include/digitor/digitor.h
-```
+## Roadmap
 
-Future language bindings:
+See [docs/roadmap.md](docs/roadmap.md). Items are now organized by demonstrated capability,
+not by the repository version number.
 
-- Flutter (FFI)
-- C#
-- Rust
-- Swift
-- Kotlin
-
----
-
-# Roadmap
-
-See:
-
-```
-docs/roadmap.md
-```
-
----
-
-# License
+## License
 
 MIT License
-
-## Native resource layer (0.4.0)
-DigitorEngine creates opaque textures, buffers, upload/staging buffers, and samplers on Vulkan (when its SDK is detected), D3D12, Metal, and Android OpenGL ES. CPU-only builds retain deterministic host allocations. Portable formats are RGBA8 UNORM, BGRA8 UNORM (where native), RGBA16 float, and RGBA32 float; unsupported translations fail explicitly. Resources are context-owned and a context with live resources cannot be destroyed. This milestone does not include shaders, passes, command submission, codecs, timeline, preview, or export.
