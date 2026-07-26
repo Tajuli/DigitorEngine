@@ -84,7 +84,8 @@ DigitorResult digitor_create_sampler(DigitorRenderContext* context, const Digito
                                      DigitorSampler** out_sampler) {
     if (!out_sampler) return DIGITOR_RESULT_INVALID_ARGUMENT;
     *out_sampler = nullptr;
-    if (!context || !desc || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT; digitor::Sampler* resource = nullptr;
+    if (!context || !desc || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    digitor::Sampler* resource = nullptr;
     auto result = context->impl->create_sampler(*desc, &resource); if (result != DIGITOR_RESULT_OK) return result;
     try { *out_sampler = new DigitorSampler{resource}; register_handle(samplers, *out_sampler); }
     catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }

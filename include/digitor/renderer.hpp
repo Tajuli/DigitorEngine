@@ -26,7 +26,16 @@ struct ExportSettings {
     std::uint32_t width{1920},height{1080}; FrameNumber first{},last{}; Rational frame_rate{30,1};
     std::uint64_t video_bitrate{8'000'000},audio_bitrate{192'000}; ProgressCallback progress; std::shared_ptr<std::atomic_bool> cancel;
 };
-class ExportRenderer {public:explicit ExportRenderer(SharedRenderer&r):renderer_(r){} void export_to(const std::string&,const ExportSettings&); private:SharedRenderer&renderer_;};
+class ExportRenderer {
+public:
+    explicit ExportRenderer(SharedRenderer& renderer) : renderer_(renderer) {}
+    void export_to(const std::string&, const ExportSettings&);
+private:
+    VideoFrame render_frame(FrameNumber frame, const ExportSettings& settings) {
+        return renderer_.render({frame, settings.width, settings.height, {}});
+    }
+    SharedRenderer& renderer_;
+};
 
 struct PixelValidation { double psnr{},ssim{}; std::size_t differing_pixels{}; bool passed{}; };
 double calculate_psnr(const VideoFrame&,const VideoFrame&);
