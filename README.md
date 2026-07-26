@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **3.9.0**, but that number is not evidence of production readiness or ABI stability.
+version **4.2.0**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet
@@ -87,3 +87,8 @@ fields use a 1/1,000,000-second engine timebase. Random backward access flushes 
 codec; `seek(pts_us)` provides timestamp seeking. Configure with `-DDIGITOR_REQUIRE_FFMPEG=ON`
 to reject a build without the five development libraries. Hardware decoding and encoding remain
 out of scope.
+
+
+## 4.x render, export, and Flutter SDK
+
+Preview and export now consume one `SharedRenderer` render graph. Pixel regression helpers expose PSNR and SSIM and validate the exact pre-encode pixels. FFmpeg-backed exports support MP4, MOV, Matroska, PNG/TIFF/EXR sequences and H.264, H.265, or AV1 video, with encoder draining, muxing, cancellation, and progress callbacks. The C ABI exposes a non-blocking Flutter SDK session and native RGBA texture bridge for Windows, Android, iOS, and macOS; see `flutter/digitor_sdk/example`. AAC is selected through `ExportSettings::audio_codec` when an audio source is attached.

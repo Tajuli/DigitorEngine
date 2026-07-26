@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 3.9.0
+    VERSION 4.2.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -33,9 +33,12 @@ add_library(digitor_engine
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp
+    src/ffi/flutter_sdk.cpp
     src/media/media.cpp
     src/editor/timeline.cpp
     src/render/renderer.cpp
+    src/render/export.cpp
+    src/render/validation.cpp
 )
 
 if(DIGITOR_ENABLE_FFMPEG)
@@ -124,6 +127,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_editor.cpp
         tests/test_v2.cpp
         tests/test_color_pipeline.cpp
+        tests/test_render_export.cpp
     )
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

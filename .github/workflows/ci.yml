@@ -61,3 +61,18 @@ jobs:
         env:
           # Keep expensive native validation on one Windows configuration.
           DIGITOR_GPU_VALIDATION: ${{ runner.os == 'Windows' && matrix.build_type == 'Release' && matrix.shared == 'ON' && '1' || '0' }}
+
+  flutter-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: flutter/digitor_sdk
+      - run: flutter analyze
+        working-directory: flutter/digitor_sdk
+      - run: flutter test
+        working-directory: flutter/digitor_sdk
