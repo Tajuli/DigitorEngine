@@ -52,7 +52,7 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
-    assert(std::strcmp(digitor_get_version(), "3.6.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "3.9.0") == 0);
     test_editor();
     test_v2();
     test_color_pipeline();

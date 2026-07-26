@@ -2,13 +2,17 @@
 #include "digitor/media.hpp"
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 namespace digitor {
 using ClipId=std::uint64_t;
 struct Keyframe { FrameNumber frame{}; double value{}; };
 struct Clip { ClipId id{}; std::string source; FrameNumber start{},duration{},source_in{}; std::vector<Keyframe> keyframes; FrameNumber end()const{return start+duration;} };
 struct Track { std::string name; std::vector<Clip> clips; };
+struct Gap { FrameNumber start{}, duration{}; FrameNumber end()const{return start+duration;} };
+struct ScheduledClip { std::size_t track{}; ClipId clip{}; FrameNumber timeline_frame{},source_frame{}; };
 enum class EditMode { overwrite, insert };
 class Timeline {
 public:
@@ -18,9 +22,11 @@ public:
  bool ripple(ClipId,FrameNumber); bool roll(ClipId left,ClipId right,FrameNumber delta); bool slip(ClipId,FrameNumber); bool slide(ClipId,FrameNumber);
  bool set_keyframe(ClipId,FrameNumber,double); std::optional<double> value_at(ClipId,FrameNumber)const;
  bool undo(); bool redo(); const std::vector<Track>& tracks()const{return tracks_;} Rational frame_rate()const{return rate_;}
+ std::vector<Gap> gaps(std::size_t track,FrameNumber through)const; std::vector<ScheduledClip> schedule(FrameNumber frame)const;
+ ClipId add_nested(std::size_t,const Timeline&,FrameNumber,EditMode=EditMode::overwrite); const Timeline* nested(ClipId)const;
  const Clip* find(ClipId)const;
 private:
  struct State{std::vector<Track> tracks;}; void checkpoint(); Clip* find_mut(ClipId); void resolve_overwrite(std::size_t,ClipId,FrameNumber,FrameNumber); void sort(std::size_t);
- Rational rate_; std::vector<Track>tracks_;std::vector<State>undo_,redo_;ClipId next_id_{1};
+ Rational rate_; std::vector<Track>tracks_;std::vector<State>undo_,redo_;ClipId next_id_{1};std::unordered_map<ClipId,std::shared_ptr<Timeline>> nested_;
 };
 }
