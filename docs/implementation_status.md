@@ -137,3 +137,8 @@ work (`CMakeLists.txt:46-73`). No platform/device CI configuration exists in thi
   run on target devices during this audit.
 - Findings are scoped to the supplied commit. Generated/vendor code and external downstream
   integrations were not present and therefore cannot substantiate repository claims.
+# Milestones v3.3.0–v3.6.0
+
+Native video texture upload, the unified shader graph and caches, professional color
+curves/wheels, and the HSL qualifier are implemented with CPU references, GPU command
+dispatch, parity tests, and pixel validation. Export remains unimplemented.
