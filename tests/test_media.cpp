@@ -19,8 +19,8 @@ void write_wav(const std::filesystem::path& path){
 int main(){
  const auto root=std::filesystem::path(DIGITOR_FIXTURE_DIR);
  const auto temporary=std::filesystem::temp_directory_path()/"digitor_media_tests";std::filesystem::create_directories(temporary);
- const auto wav=temporary/"eight_samples.wav";const auto malformed=temporary/"malformed.bin";write_wav(wav);
- {std::ofstream out(malformed);out<<"not a media container";}
+ const auto wav=temporary/"eight_samples.wav";const auto malformed_path=temporary/"malformed.bin";write_wav(wav);
+ {std::ofstream out(malformed_path);out<<"not a media container";}
  assert(digitor::ffmpeg_available());
  auto video=digitor::open_video_decoder((root/"two_frames.y4m").string());
  auto first=video->decode(0);auto last=video->decode(1);
@@ -31,7 +31,7 @@ int main(){
  video->seek(0);auto sought=video->decode(0);assert(sought&&sought->pts==0&&sought->pixels.size()==4);
  auto audio=digitor::open_audio_decoder(wav.string());auto pcm=audio->decode(0);
  assert(pcm&&pcm->sample_rate==8000&&pcm->channels==1&&pcm->samples.size()==8&&pcm->pts==0);
- bool malformed=false;try{digitor::open_video_decoder(malformed.string());}catch(const std::exception&){malformed=true;}assert(malformed);
+ bool malformed_thrown=false;try{digitor::open_video_decoder(malformed_path.string());}catch(const std::exception&){malformed_thrown=true;}assert(malformed_thrown);
  std::filesystem::remove_all(temporary);
  std::cout<<"verified y4m/rawvideo and wav/pcm_s16le fixtures\n";
 }
