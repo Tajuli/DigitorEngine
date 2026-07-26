@@ -11,8 +11,14 @@
 namespace digitor {
 using FrameNumber = std::int64_t;
 struct Rational { std::int32_t numerator{1}, denominator{30}; };
-struct VideoFrame { FrameNumber number{}; std::int64_t pts{}; std::uint32_t width{}, height{}; std::vector<Color> pixels; };
-struct AudioFrame { FrameNumber number{}; std::int64_t pts{}; std::uint32_t sample_rate{48000}, channels{2}; std::vector<float> samples; };
+// Media timestamps and durations use microseconds. Video is always converted to
+// full-resolution, top-down, non-premultiplied RGBA32F in `pixels`.
+enum class PixelFormat { rgba32f };
+enum class ColorRange { unspecified, limited, full };
+struct ColorMetadata { std::int32_t primaries{}, transfer{}, matrix{}; ColorRange range{ColorRange::unspecified}; };
+struct VideoFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t width{}, height{}; PixelFormat pixel_format{PixelFormat::rgba32f}; ColorMetadata color; std::vector<Color> pixels; };
+// Audio is interleaved native-endian float PCM in the decoder's reported layout.
+struct AudioFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t sample_rate{48000}, channels{2}; std::uint64_t channel_layout{}; std::vector<float> samples; };
 enum class HardwareDecode { automatic, cpu, dxva, videotoolbox, mediacodec };
 struct DecoderOptions { HardwareDecode hardware{HardwareDecode::automatic}; bool allow_cpu_fallback{true}; std::size_t cache_capacity{16}; };
 struct DecoderInfo { HardwareDecode selected{HardwareDecode::cpu}; bool hardware_accelerated{}; std::string implementation; };
@@ -34,8 +40,8 @@ private:
     std::unordered_map<FrameNumber,typename std::list<Entry>::iterator> index_;
 };
 
-class VideoDecoder { public: virtual ~VideoDecoder()=default; virtual std::shared_ptr<VideoFrame> decode(FrameNumber)=0; virtual DecoderInfo info()const=0; };
-class AudioDecoder { public: virtual ~AudioDecoder()=default; virtual std::shared_ptr<AudioFrame> decode(FrameNumber)=0; virtual DecoderInfo info()const=0; };
+class VideoDecoder { public: virtual ~VideoDecoder()=default; virtual std::shared_ptr<VideoFrame> decode(FrameNumber)=0; virtual void seek(std::int64_t pts_us)=0; virtual DecoderInfo info()const=0; };
+class AudioDecoder { public: virtual ~AudioDecoder()=default; virtual std::shared_ptr<AudioFrame> decode(FrameNumber)=0; virtual void seek(std::int64_t pts_us)=0; virtual DecoderInfo info()const=0; };
 std::unique_ptr<VideoDecoder> open_video_decoder(const std::string& path, DecoderOptions options={});
 std::unique_ptr<AudioDecoder> open_audio_decoder(const std::string& path, DecoderOptions options={});
 bool ffmpeg_available() noexcept;

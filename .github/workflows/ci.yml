@@ -11,7 +11,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+      - name: Install FFmpeg development libraries (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
+      - name: Install FFmpeg development libraries (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+      - name: Install FFmpeg development libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: vcpkg install ffmpeg:x64-windows
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
       - run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
       - run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
         env:

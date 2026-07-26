@@ -56,3 +56,11 @@ conversion policy is designed separately.
 
 ## 0.4 native resources
 Descriptor validation is shared by `RenderContext`; the selected `IRenderBackend` owns native creation/destruction. Native objects never enter the C ABI. CPU resources use byte storage. Vulkan binds selected device/host-visible memory and creates image views; D3D12 uses committed default/upload resources; Metal uses private/shared storage under ARC-safe bridge ownership; GLES requires a current EGL context for every creation and destruction call. Partial failures unwind acquired native objects.
+
+
+## Software media boundary
+
+The media module owns FFmpeg format, codec, packet, frame, scaler, and resampler lifetimes. It
+normalizes decoded data at the boundary (microsecond timestamps, RGBA32F video, interleaved float
+PCM audio), keeping FFmpeg types out of the public API and GPU/resource layers. Seeking flushes all
+decoder state before new packets enter the pipeline.

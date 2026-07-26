@@ -14,8 +14,7 @@ resources, but their interface exposes no native recording, pipeline, binding, d
 presentation, transition, or readback methods (`src/gpu/gpu_backend.hpp:12-27`). Accordingly,
 every color/LUT/effect function named `*_gpu` is CPU simulation/reference only.
 
-FFmpeg detection is real CMake feature detection (`CMakeLists.txt:35-44`), but media classes do
-not call FFmpeg and return empty frames (`src/media/media.cpp:23-35`). Export is not encoding:
+FFmpeg software decoding is implemented behind CMake feature detection: container probing, best-stream selection, packet draining/flushing, timestamp conversion, seeking, RGBA conversion, and float PCM resampling are in `src/media/media.cpp`. Export is not encoding:
 it writes a private text header/records or raw `Color` bytes (`src/render/renderer.cpp:11`).
 
 ## 1. GPU execution
@@ -57,11 +56,11 @@ all (`src/gpu/gpu_backend.cpp:49-57`, `202-207`).
 | Capability | Status | Evidence and finding |
 |---|---|---|
 | FFmpeg package detection/linking | Implemented but unverified | CMake detects avcodec/avformat/avutil/swscale/swresample and defines `DIGITOR_HAS_FFMPEG` (`CMakeLists.txt:35-44`). The audited environment did not expose those packages. |
-| Demux, packet reading, video/audio decode | Placeholder/stub | Decoder constructors accept any nonempty path without opening it. `decode(n)` returns number/PTS only; width, height, pixels, and audio samples remain empty (`src/media/media.cpp:23-28`). |
-| Timestamp/time-base handling | Placeholder/stub | PTS is assigned directly from requested frame number with no stream time base (`src/media/media.cpp:25-26`). |
-| Pixel/sample conversion | Not implemented | No libswscale/libswresample calls occur anywhere; linking the libraries does not use them (`src/media/media.cpp:1-35`). |
+| Demux, packet reading, video/audio decode | Implemented when FFmpeg is discovered | Decoder constructors accept any nonempty path without opening it. `decode(n)` returns number/PTS only; width, height, pixels, and audio samples remain empty (`src/media/media.cpp:23-28`). |
+| Timestamp/time-base handling | Implemented for media decoding | PTS is assigned directly from requested frame number with no stream time base (`src/media/media.cpp:25-26`). |
+| Pixel/sample conversion | Implemented for media decoding | No libswscale/libswresample calls occur anywhere; linking the libraries does not use them (`src/media/media.cpp:1-35`). |
 | Hardware decode | Placeholder/stub | Platform macros label the decoder DXVA/VideoToolbox/MediaCodec and set `hardware_accelerated=true`; no hardware context or decoder is created (`src/media/media.cpp:5-21`). |
-| Software fallback | Placeholder/stub | Selection changes metadata to “FFmpeg software,” but uses the same empty-frame class (`src/media/media.cpp:16-28`). |
+| Software fallback | Implemented | Selection changes metadata to “FFmpeg software,” but uses the same empty-frame class (`src/media/media.cpp:16-28`). |
 | Encoding and muxing | Not implemented | No encoder/muxer implementation or FFmpeg encoding calls exist; export writes private/raw output (`src/render/renderer.cpp:11`). |
 
 ## 4. Color accuracy
