@@ -161,15 +161,6 @@ if (DIGITOR_BUILD_TESTS)
         set_tests_properties(digitor_media_tests PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
         )
-        if(WIN32)
-            add_custom_command(TARGET digitor_media_tests POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_RUNTIME_DLLS:digitor_media_tests>
-                    $<TARGET_FILE_DIR:digitor_media_tests>
-                COMMAND_EXPAND_LISTS
-                VERBATIM
-            )
-        endif()
     endif()
 
     add_executable(digitor_c_header_test tests/test_c_header.c)
