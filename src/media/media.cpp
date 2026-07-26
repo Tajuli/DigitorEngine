@@ -20,7 +20,7 @@ namespace {
 #ifdef DIGITOR_HAS_FFMPEG
 DecoderInfo software_info(){return {HardwareDecode::cpu,false,"FFmpeg software"};}
 std::string error_text(int value){char text[AV_ERROR_MAX_STRING_SIZE]{};av_strerror(value,text,sizeof(text));return text;}
-[[noreturn]] void fail(const char* operation,int value){throw std::runtime_error(std::string(operation)+": "+error_text(value));}
+[[noreturn]] void fail(const char* operation,int value){throw std::runtime_error(std::string(operation)+" failed with FFmpeg error "+std::to_string(value)+" ("+error_text(value)+")");}
 constexpr AVRational engine_time_base{1,1000000};
 
 class DecoderBase {
@@ -32,6 +32,7 @@ protected:
  explicit DecoderBase(const std::string& path,AVMediaType type) try {
   int r=avformat_open_input(&format_,path.c_str(),nullptr,nullptr);if(r<0)fail("cannot open media",r);
   if((r=avformat_find_stream_info(format_,nullptr))<0)fail("cannot discover streams",r);
+  if(!format_->nb_streams)throw std::runtime_error("cannot discover streams: container reported zero streams");
   const AVCodec* decoder=nullptr;stream_index_=av_find_best_stream(format_,type,-1,-1,&decoder,0);
   if(stream_index_<0)fail(type==AVMEDIA_TYPE_VIDEO?"no decodable video stream":"no decodable audio stream",stream_index_);
   stream_=format_->streams[stream_index_];codec_=avcodec_alloc_context3(decoder);if(!codec_)throw std::bad_alloc();

@@ -149,7 +149,27 @@ if (DIGITOR_BUILD_TESTS)
     if(FFMPEG_FOUND)
         add_executable(digitor_media_tests tests/test_media.cpp)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
+        add_custom_command(TARGET digitor_media_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/malformed.txt"
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
+            VERBATIM
+        )
         add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
+        set_tests_properties(digitor_media_tests PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
+        )
+        if(WIN32)
+            add_custom_command(TARGET digitor_media_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_RUNTIME_DLLS:digitor_media_tests>
+                    $<TARGET_FILE_DIR:digitor_media_tests>
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+            )
+        endif()
     endif()
 
     add_executable(digitor_c_header_test tests/test_c_header.c)

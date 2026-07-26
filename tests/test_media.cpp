@@ -2,49 +2,59 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-
-#define CHECK(condition) do { if (!(condition)) { \
-    std::cerr << "CHECK failed: " #condition << " at " << __FILE__ << ':' << __LINE__ << '\n'; \
-    return 1; } } while (false)
+#include <string_view>
 
 namespace {
+std::filesystem::path fixture_path;
+
+#define CHECK_EQ(expected, actual) do { const auto expected_value=(expected);const auto actual_value=(actual); \
+ if(!(expected_value==actual_value)){std::cerr<<"CHECK failed in "<<section<<" at "<<__FILE__<<':'<<__LINE__ \
+ <<" fixture="<<fixture_path<<" expected="<<expected_value<<" actual="<<actual_value<<'\n'<<std::flush;return false;}} while(false)
+#define CHECK(condition) CHECK_EQ(true,static_cast<bool>(condition))
+
+void begin_section(std::string_view name,const std::filesystem::path& path){
+ fixture_path=path;std::cout<<"[media] "<<name<<" fixture="<<path<<'\n'<<std::flush;
+}
 void put_u16(std::ofstream& out,unsigned value){out.put(static_cast<char>(value));out.put(static_cast<char>(value>>8));}
 void put_u32(std::ofstream& out,unsigned value){put_u16(out,value);put_u16(out,value>>16);}
 void write_wav(const std::filesystem::path& path){
  const short samples[]={-32768,-20000,-10000,0,10000,20000,30000,32767};
- std::ofstream out(path,std::ios::binary);out.write("RIFF",4);put_u32(out,36+sizeof(samples));out.write("WAVEfmt ",8);
+ std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write("RIFF",4);put_u32(out,36+sizeof(samples));out.write("WAVEfmt ",8);
  put_u32(out,16);put_u16(out,1);put_u16(out,1);put_u32(out,8000);put_u32(out,16000);put_u16(out,2);put_u16(out,16);
  out.write("data",4);put_u32(out,sizeof(samples));for(short sample:samples)put_u16(out,static_cast<unsigned short>(sample));
+ if(!out)throw std::runtime_error("failed to write WAV fixture: "+path.string());
 }
 void write_y4m(const std::filesystem::path& path){
- std::ofstream out(path,std::ios::binary);out<<"YUV4MPEG2 W2 H2 F2:1 Ip A1:1 C444\n";
+ std::ofstream out(path,std::ios::binary|std::ios::trunc);out<<"YUV4MPEG2 W2 H2 F2:1 Ip A1:1 C444\n";
  const unsigned char frames[2][12]={{16,16,16,16,128,128,128,128,128,128,128,128},{235,235,235,235,128,128,128,128,128,128,128,128}};
  for(const auto& frame:frames){out<<"FRAME\n";out.write(reinterpret_cast<const char*>(frame),sizeof(frame));}
+ if(!out)throw std::runtime_error("failed to write Y4M fixture: "+path.string());
 }
-bool check_decode(const std::shared_ptr<digitor::VideoFrame>& frame,std::int64_t requested,bool expected,std::size_t decoded_count){
- const bool returned=static_cast<bool>(frame);
- if(returned!=expected){std::cerr<<"decode failure: requested="<<requested<<" returned="<<returned<<" pts="<<(frame?frame->pts:-1)<<" decoded_count="<<decoded_count<<"; demux_eof/flush_sent/decoder_finished are private decoder state\n";return false;}
+bool validate_fixture(const char* section,const std::filesystem::path& path){
+ begin_section(section,path);std::error_code error;const bool exists=std::filesystem::exists(path,error);
+ if(error||!exists){std::cerr<<"fixture validation failed at "<<__FILE__<<':'<<__LINE__<<" fixture="<<path<<" expected=exists actual="<<(error?error.message():"missing")<<'\n'<<std::flush;return false;}
+ const auto size=std::filesystem::file_size(path,error);if(error||size==0){std::cerr<<"fixture validation failed at "<<__FILE__<<':'<<__LINE__<<" fixture="<<path<<" expected=size>0 actual="<<(error?error.message():std::to_string(size))<<'\n'<<std::flush;return false;}return true;
+}
+bool run_tests(const std::filesystem::path& directory){
+ const auto video_path=directory/"two_frames.y4m";const auto wav_path=directory/"eight_samples.wav";const auto malformed_path=directory/"malformed.bin";
+ const char* section="fixture validation";
+ begin_section("fixture generation",directory);write_y4m(video_path);write_wav(wav_path);
+ CHECK(validate_fixture("Y4M fixture validation",video_path));CHECK(validate_fixture("WAV fixture validation",wav_path));CHECK(validate_fixture("malformed fixture validation",malformed_path));
+ section="FFmpeg availability";begin_section(section,video_path);CHECK(digitor::ffmpeg_available());
+ section="video decode and stable EOF";begin_section(section,video_path);auto video=digitor::open_video_decoder(video_path.string());
+ const auto first=video->decode(0);CHECK(first);const auto last=video->decode(1);CHECK(last);const auto third=video->decode(2);CHECK_EQ(false,static_cast<bool>(third));
+ for(digitor::FrameNumber index=3;index<10;++index){const auto eof=video->decode(index);if(eof){std::cerr<<"decode failure in "<<section<<" at "<<__FILE__<<':'<<__LINE__<<" fixture="<<fixture_path<<" requested="<<index<<" expected=false actual=true pts="<<eof->pts<<" decoded_count=2\n"<<std::flush;return false;}}
+ CHECK_EQ(2u,first->width);CHECK_EQ(2u,first->height);CHECK_EQ(0,first->pts);CHECK_EQ(500000,last->pts);CHECK_EQ(4u,first->pixels.size());CHECK_EQ(4u,last->pixels.size());
+ float first_sum=0,last_sum=0;for(auto p:first->pixels)first_sum+=p.r+p.g+p.b;for(auto p:last->pixels)last_sum+=p.r+p.g+p.b;CHECK(first_sum<0.1f);CHECK(last_sum>11.9f);
+ section="seek after EOF";begin_section(section,video_path);video->seek(0);const auto sought_first=video->decode(0);CHECK(sought_first);const auto sought_last=video->decode(1);CHECK(sought_last);const auto sought_eof=video->decode(2);CHECK_EQ(false,static_cast<bool>(sought_eof));
+ section="audio decode";begin_section(section,wav_path);auto audio=digitor::open_audio_decoder(wav_path.string());const auto pcm=audio->decode(0);CHECK(pcm);CHECK_EQ(8000u,pcm->sample_rate);CHECK_EQ(1u,pcm->channels);CHECK_EQ(8u,pcm->samples.size());CHECK_EQ(0,pcm->pts);
+ section="malformed input";begin_section(section,malformed_path);bool malformed_thrown=false;try{auto unused=digitor::open_video_decoder(malformed_path.string());(void)unused;}catch(const std::exception& error){malformed_thrown=true;std::cout<<"[media] expected FFmpeg failure: "<<error.what()<<'\n'<<std::flush;}CHECK(malformed_thrown);
  return true;
 }
 }
 
 int main(){
- const auto temporary=std::filesystem::temp_directory_path()/"digitor_media_tests";std::filesystem::create_directories(temporary);
- const auto video_path=temporary/"two_frames.y4m";const auto wav=temporary/"eight_samples.wav";const auto malformed_path=temporary/"malformed.bin";
- write_y4m(video_path);write_wav(wav);{std::ofstream out(malformed_path);out<<"not a media container";}
- CHECK(digitor::ffmpeg_available());
- auto video=digitor::open_video_decoder(video_path.string());
- const auto first=video->decode(0);CHECK(check_decode(first,0,true,first?1:0));
- const auto last=video->decode(1);CHECK(check_decode(last,1,true,last?2:1));
- const auto third=video->decode(2);CHECK(check_decode(third,2,false,2));
- for(digitor::FrameNumber index=3;index<10;++index){const auto eof=video->decode(index);CHECK(check_decode(eof,index,false,2));}
- CHECK(first->width==2&&first->height==2);CHECK(first->pts==0&&last->pts==500000);CHECK(first->pixels.size()==4&&last->pixels.size()==4);
- float first_sum=0,last_sum=0;for(auto p:first->pixels)first_sum+=p.r+p.g+p.b;for(auto p:last->pixels)last_sum+=p.r+p.g+p.b;
- CHECK(first_sum<0.1f&&last_sum>11.9f);
- video->seek(0);const auto sought_first=video->decode(0);const auto sought_last=video->decode(1);const auto sought_eof=video->decode(2);
- CHECK(check_decode(sought_first,0,true,sought_first?1:0));CHECK(check_decode(sought_last,1,true,sought_last?2:1));CHECK(check_decode(sought_eof,2,false,2));
- auto audio=digitor::open_audio_decoder(wav.string());const auto pcm=audio->decode(0);
- CHECK(pcm);CHECK(pcm->sample_rate==8000&&pcm->channels==1&&pcm->samples.size()==8&&pcm->pts==0);
- bool malformed_thrown=false;try{auto unused=digitor::open_video_decoder(malformed_path.string());(void)unused;}catch(const std::exception&){malformed_thrown=true;}CHECK(malformed_thrown);
- std::filesystem::remove_all(temporary);std::cout<<"verified stable EOF, seek reset, y4m/rawvideo, wav/pcm_s16le, and malformed input\n";
+ try{const auto directory=std::filesystem::current_path()/"digitor_media_fixtures";std::filesystem::create_directories(directory);const bool passed=run_tests(directory);std::filesystem::remove_all(directory);return passed?0:1;}
+ catch(const std::exception& error){std::cerr<<"unhandled media test exception at "<<__FILE__<<':'<<__LINE__<<" fixture="<<fixture_path<<" error="<<error.what()<<'\n'<<std::flush;return 1;}
+ catch(...){std::cerr<<"unhandled non-standard media test exception at "<<__FILE__<<':'<<__LINE__<<" fixture="<<fixture_path<<'\n'<<std::flush;return 1;}
 }
