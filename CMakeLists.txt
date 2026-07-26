@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(DIGITOR_BUILD_TESTS "Build DigitorEngine tests" ON)
 option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development packages are available" ON)
+option(DIGITOR_REQUIRE_FFMPEG "Fail configuration when FFmpeg is unavailable" OFF)
 
 add_library(digitor_engine
     src/core/engine.cpp
@@ -42,6 +43,13 @@ if(DIGITOR_ENABLE_FFMPEG)
             target_link_libraries(digitor_engine PRIVATE PkgConfig::FFMPEG)
             target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
         endif()
+    endif()
+    if(DIGITOR_REQUIRE_FFMPEG AND NOT FFMPEG_FOUND)
+        message(FATAL_ERROR "FFmpeg development libraries (avformat, avcodec, avutil, swscale, swresample) are required")
+    elseif(NOT FFMPEG_FOUND)
+        message(STATUS "FFmpeg not found: real media decoder API will report unavailable")
+    else()
+        message(STATUS "FFmpeg ${FFMPEG_VERSION} discovered with pkg-config")
     endif()
 endif()
 
@@ -135,6 +143,23 @@ if (DIGITOR_BUILD_TESTS)
         set_tests_properties(digitor_native_gpu_tests PROPERTIES
             ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
             LABELS "native-gpu;hardware"
+        )
+    endif()
+
+    if(FFMPEG_FOUND)
+        add_executable(digitor_media_tests tests/test_media.cpp)
+        target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
+        add_custom_command(TARGET digitor_media_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/malformed.txt"
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
+            VERBATIM
+        )
+        add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
+        set_tests_properties(digitor_media_tests PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
         )
     endif()
 

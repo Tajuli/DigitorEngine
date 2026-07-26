@@ -77,3 +77,14 @@ not by the repository version number.
 ## License
 
 MIT License
+
+## FFmpeg software media decoding
+
+When `libavformat`, `libavcodec`, `libavutil`, `libswscale`, and `libswresample` are found by
+pkg-config, DigitorEngine opens standard FFmpeg-supported containers (including MP4, MOV, MKV,
+and common audio containers), selects the best stream, and performs software packet decoding.
+Video is normalized to top-down RGBA32F and audio to interleaved float PCM. All PTS and duration
+fields use a 1/1,000,000-second engine timebase. Random backward access flushes and resets the
+codec; `seek(pts_us)` provides timestamp seeking. Configure with `-DDIGITOR_REQUIRE_FFMPEG=ON`
+to reject a build without the five development libraries. Hardware decoding and encoding remain
+out of scope.

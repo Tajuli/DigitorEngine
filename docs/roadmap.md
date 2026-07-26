@@ -22,8 +22,8 @@ be interpreted as completion claims.
 
 ## Required before media and shared-rendering claims
 
-- FFmpeg demux, packet iteration, video/audio decoding, timestamp conversion, pixel/sample
-  conversion, seek/flush, hardware-frame integration, and tested software fallback.
+- **Completed:** FFmpeg demux, packet iteration, video/audio software decoding, timestamp conversion,
+  pixel/sample conversion, seek/flush, and software fallback. Hardware-frame integration remains.
 - A render request sourced from the same decoded frame and timeline composition for both preview
   and export; real platform preview surfaces; GPU-to-encoder interop or explicit readback.
 - Standards-compliant image encoding and MP4/MOV/MKV codec encoding/muxing, verified by

@@ -1,18 +1,63 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        build_type: [Release, Debug]
-        shared: [OFF, ON]
+      matrix: ${{ fromJSON((github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')) && '{"include":[{"os":"ubuntu-latest","build_type":"Release","shared":"OFF"},{"os":"windows-latest","build_type":"Release","shared":"ON"},{"os":"macos-latest","build_type":"Release","shared":"OFF"},{"os":"ubuntu-latest","build_type":"Debug","shared":"OFF"}]}' || '{"os":["ubuntu-latest","windows-latest","macos-latest"],"build_type":["Release","Debug"],"shared":["OFF","ON"]}') }}
     runs-on: ${{ matrix.os }}
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }}
+
+      - name: Cache vcpkg downloads, packages, and binaries
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/downloads
+            C:/vcpkg/installed
+            ${{ github.workspace }}/vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install FFmpeg development libraries (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
+      - name: Install FFmpeg development libraries (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+      - name: Install FFmpeg development libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          vcpkg install ffmpeg:x64-windows
+
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+
       - run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
       - run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
         env:
-          DIGITOR_GPU_VALIDATION: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+          # Keep expensive native validation on one Windows configuration.
+          DIGITOR_GPU_VALIDATION: ${{ runner.os == 'Windows' && matrix.build_type == 'Release' && matrix.shared == 'ON' && '1' || '0' }}
