@@ -19,13 +19,12 @@ color primaries, transfer, matrix, and range metadata. Audio is converted by lib
 interleaved native float PCM at the decoded stream's sample rate/channel layout, with duration
 computed from its output sample count.
 
-`decode(n)` consumes exactly the next decoded frame in presentation order and requires `n` to match
-the next sequential frame index. It never seeks or restarts automatically and returns null stably
-after EOF. Random access is exclusively provided by `seek(pts_us)`, which performs a backward
+`decode(n)` decodes through the requested frame in presentation order and retains recent results
+in an LRU cache. An older evicted frame requires a seek, and null is returned stably after EOF.
+Timestamp random access is provided by `seek(pts_us)`, which performs a backward
 keyframe seek, flushes decoder buffers, clears packets,
-EOF state, and cache, and numbers the first subsequently returned decoded frame zero. Exact seeking
-is consequently keyframe-based; callers discard frames until the desired PTS when sample accuracy
-is required.
+EOF state, and cache, discards video preroll, and numbers the first subsequently returned decoded
+frame zero.
 
 Supported container and codec breadth is the linked FFmpeg build's responsibility. CI exercises
 software decoding only; hardware decode, encoding, effects, timeline composition, and UI are not

@@ -1,5 +1,6 @@
 #include "digitor/media.hpp"
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -27,7 +28,8 @@ class DecoderBase {
 protected:
  AVFormatContext* format_{}; AVCodecContext* codec_{}; AVPacket* packet_{}; AVFrame* frame_{};
  int stream_index_=-1; AVStream* stream_{}; FrameNumber next_number_{};
- bool input_eof_{},flush_sent_{},decoder_finished_{};
+ bool input_eof_{},flush_sent_{},decoder_finished_{},packet_pending_{};
+ std::int64_t seek_target_us_{};
  void cleanup(){av_frame_free(&frame_);av_packet_free(&packet_);avcodec_free_context(&codec_);avformat_close_input(&format_);}
  explicit DecoderBase(const std::string& path,AVMediaType type) try {
   int r=avformat_open_input(&format_,path.c_str(),nullptr,nullptr);if(r<0)fail("cannot open media",r);
@@ -50,10 +52,12 @@ protected:
    if(r==AVERROR_EOF){decoder_finished_=true;return false;}
    if(r!=AVERROR(EAGAIN))fail("decode frame",r);
    if(!input_eof_){
-    r=av_read_frame(format_,packet_);
+    if(!packet_pending_) r=av_read_frame(format_,packet_); else r=0;
     if(r>=0){
      if(packet_->stream_index!=stream_index_){av_packet_unref(packet_);continue;}
-     r=avcodec_send_packet(codec_,packet_);av_packet_unref(packet_);
+     r=avcodec_send_packet(codec_,packet_);
+     if(r==AVERROR(EAGAIN)){packet_pending_=true;continue;}
+     packet_pending_=false;av_packet_unref(packet_);
      if(r<0)fail("send packet",r);
      continue;
     }
@@ -74,15 +78,17 @@ protected:
  }
  void seek_to(std::int64_t pts){
   const auto target=av_rescale_q(pts,engine_time_base,stream_->time_base);int r=av_seek_frame(format_,stream_index_,target,AVSEEK_FLAG_BACKWARD);
-  if(r<0)fail("seek",r);avcodec_flush_buffers(codec_);av_packet_unref(packet_);av_frame_unref(frame_);input_eof_=flush_sent_=decoder_finished_=false;next_number_=0;
+  if(r<0)fail("seek",r);avcodec_flush_buffers(codec_);av_packet_unref(packet_);av_frame_unref(frame_);input_eof_=flush_sent_=decoder_finished_=packet_pending_=false;next_number_=0;seek_target_us_=pts;
  }
  std::int64_t timestamp()const {auto p=frame_->best_effort_timestamp;return p==AV_NOPTS_VALUE?0:av_rescale_q(p,stream_->time_base,engine_time_base);}
  std::int64_t duration()const {auto d=frame_->duration;return d>0?av_rescale_q(d,stream_->time_base,engine_time_base):0;}
+ bool is_preroll(std::int64_t pts)const{return seek_target_us_>0&&pts<seek_target_us_;}
 };
 
 class Video final:public VideoDecoder,private DecoderBase {
  FrameCache<VideoFrame> cache_; SwsContext* sws_{};
- std::shared_ptr<VideoFrame> next(){if(!receive())return {};auto out=std::make_shared<VideoFrame>();out->number=next_number_++;out->pts=timestamp();out->duration=duration();out->width=frame_->width;out->height=frame_->height;
+ std::shared_ptr<VideoFrame> next(){while(receive()&&is_preroll(timestamp())){}if(decoder_finished_)return {};auto out=std::make_shared<VideoFrame>();out->number=next_number_++;out->pts=timestamp();out->duration=duration();out->width=frame_->width;out->height=frame_->height;
+  if(frame_->width<=0||frame_->height<=0||static_cast<std::uint64_t>(frame_->width)*frame_->height>std::numeric_limits<std::size_t>::max()/sizeof(Color))throw std::runtime_error("invalid decoded video dimensions");
   out->color.primaries=frame_->color_primaries;out->color.transfer=frame_->color_trc;out->color.matrix=frame_->colorspace;out->color.range=frame_->color_range==AVCOL_RANGE_JPEG?ColorRange::full:(frame_->color_range==AVCOL_RANGE_MPEG?ColorRange::limited:ColorRange::unspecified);
   sws_=sws_getCachedContext(sws_,frame_->width,frame_->height,static_cast<AVPixelFormat>(frame_->format),frame_->width,frame_->height,AV_PIX_FMT_RGBA,SWS_BILINEAR,nullptr,nullptr,nullptr);if(!sws_)throw std::bad_alloc();
   std::vector<std::uint8_t> rgba(static_cast<std::size_t>(frame_->width)*frame_->height*4);std::uint8_t* dst[]={rgba.data()};int stride[]={frame_->width*4};if(sws_scale(sws_,frame_->data,frame_->linesize,0,frame_->height,dst,stride)!=frame_->height)throw std::runtime_error("pixel conversion failed");
@@ -90,7 +96,7 @@ class Video final:public VideoDecoder,private DecoderBase {
 public:
  Video(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_VIDEO),cache_(o.cache_capacity){if(o.hardware!=HardwareDecode::automatic&&o.hardware!=HardwareDecode::cpu&&!o.allow_cpu_fallback)throw std::runtime_error("hardware decoding is not implemented");}
  ~Video()override{sws_freeContext(sws_);}
- std::shared_ptr<VideoFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(decoder_finished_)return {};if(n!=next_number_)throw std::invalid_argument("decode index must equal the next sequential frame index; use seek() for random access");return next();}
+ std::shared_ptr<VideoFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto hit=cache_.get(n))return hit;if(n<next_number_)throw std::out_of_range("frame is no longer cached; seek before decoding it again");std::shared_ptr<VideoFrame> result;while(next_number_<=n){result=next();if(!result)return {};}return result;}
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
  DecoderInfo info()const override{return software_info();}
 };
@@ -103,7 +109,7 @@ class Audio final:public AudioDecoder,private DecoderBase {
 public:
  Audio(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_AUDIO),cache_(o.cache_capacity){if(o.hardware!=HardwareDecode::automatic&&o.hardware!=HardwareDecode::cpu&&!o.allow_cpu_fallback)throw std::runtime_error("hardware decoding is not implemented");}
  ~Audio()override{swr_free(&swr_);}
- std::shared_ptr<AudioFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(decoder_finished_)return {};if(n!=next_number_)throw std::invalid_argument("decode index must equal the next sequential frame index; use seek() for random access");return next();}
+ std::shared_ptr<AudioFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto hit=cache_.get(n))return hit;if(n<next_number_)throw std::out_of_range("frame is no longer cached; seek before decoding it again");std::shared_ptr<AudioFrame> result;while(next_number_<=n){result=next();if(!result)return {};}return result;}
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
  DecoderInfo info()const override{return software_info();}
 };
