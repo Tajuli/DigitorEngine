@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **3.0.0**, but that number is not evidence of production readiness or ABI stability.
+version **3.2.0**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet
@@ -17,8 +17,8 @@ read rendered pixels back. The v3 preview path now records a Metal clear pass an
 fullscreen texture-copy shader and returns GPU-completed pixels to preview. See the
 [native pipeline notes](docs/native_gpu_pipeline.md) for exact backend scope.
 
-FFmpeg libraries can be detected and linked, but the decoder implementations return empty,
-timestamped placeholder frames. Export writes a private `DIGITOR` text/interchange stream or
+When FFmpeg libraries are available, the media API performs packet-based software decoding into
+real RGBA pixels and float PCM. Export writes a private `DIGITOR` text/interchange stream or
 raw `.rgba` float buffers; it does not encode or mux MP4, MOV, MKV, or standard images. Preview
 is an in-memory cached `VideoFrame`, not a native display surface. Preview and export both call
 the same CPU-oriented `SharedRenderer`, but no test proves they consume the same decoded frame,
@@ -61,8 +61,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-FFmpeg detection does not enable decoding or encoding; it only changes
-`ffmpeg_available()` in the current implementation.
+FFmpeg detection enables software decoding; encoding remains outside this milestone.
 
 ## Public API
 

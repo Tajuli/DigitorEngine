@@ -45,8 +45,10 @@ bool run_tests(const std::filesystem::path& directory){
  const auto first=video->decode(0);CHECK(first);const auto last=video->decode(1);CHECK(last);const auto third=video->decode(2);CHECK_EQ(false,static_cast<bool>(third));
  for(digitor::FrameNumber index=3;index<10;++index){const auto eof=video->decode(index);if(eof){std::cerr<<"decode failure in "<<section<<" at "<<__FILE__<<':'<<__LINE__<<" fixture="<<fixture_path<<" requested="<<index<<" expected=false actual=true pts="<<eof->pts<<" decoded_count=2\n"<<std::flush;return false;}}
  CHECK_EQ(2u,first->width);CHECK_EQ(2u,first->height);CHECK_EQ(0,first->pts);CHECK_EQ(500000,last->pts);CHECK_EQ(4u,first->pixels.size());CHECK_EQ(4u,last->pixels.size());
+ CHECK_EQ(first.get(),video->decode(0).get());
  float first_sum=0,last_sum=0;for(auto p:first->pixels)first_sum+=p.r+p.g+p.b;for(auto p:last->pixels)last_sum+=p.r+p.g+p.b;CHECK(first_sum<0.1f);CHECK(last_sum>11.9f);
  section="seek after EOF";begin_section(section,video_path);video->seek(0);const auto sought_first=video->decode(0);CHECK(sought_first);const auto sought_last=video->decode(1);CHECK(sought_last);const auto sought_eof=video->decode(2);CHECK_EQ(false,static_cast<bool>(sought_eof));
+ section="timestamp seek";begin_section(section,video_path);video->seek(500000);const auto timestamp_sought=video->decode(0);CHECK(timestamp_sought);CHECK_EQ(500000,timestamp_sought->pts);CHECK_EQ(last_sum,[&]{float sum=0;for(auto p:timestamp_sought->pixels)sum+=p.r+p.g+p.b;return sum;}());
  section="audio decode";begin_section(section,wav_path);auto audio=digitor::open_audio_decoder(wav_path.string());const auto pcm=audio->decode(0);CHECK(pcm);CHECK_EQ(8000u,pcm->sample_rate);CHECK_EQ(1u,pcm->channels);CHECK_EQ(8u,pcm->samples.size());CHECK_EQ(0,pcm->pts);
  section="malformed input";begin_section(section,malformed_path);bool malformed_thrown=false;try{auto unused=digitor::open_video_decoder(malformed_path.string());(void)unused;}catch(const std::exception& error){malformed_thrown=true;std::cout<<"[media] expected FFmpeg failure: "<<error.what()<<'\n'<<std::flush;}CHECK(malformed_thrown);
  return true;
