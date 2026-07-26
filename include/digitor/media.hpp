@@ -13,7 +13,7 @@ using FrameNumber = std::int64_t;
 struct Rational { std::int32_t numerator{1}, denominator{30}; };
 // Media timestamps and durations use microseconds. Video is always converted to
 // full-resolution, top-down, non-premultiplied RGBA32F in `pixels`.
-enum class PixelFormat { rgba32f };
+enum class PixelFormat { rgba32f, rgba8, bgra8, nv12, yuv420p };
 enum class ColorRange { unspecified, limited, full };
 struct ColorMetadata { std::int32_t primaries{}, transfer{}, matrix{}; ColorRange range{ColorRange::unspecified}; };
 struct VideoFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t width{}, height{}; PixelFormat pixel_format{PixelFormat::rgba32f}; ColorMetadata color; std::vector<Color> pixels; };

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 3.2.0
+    VERSION 3.6.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -24,6 +24,9 @@ add_library(digitor_engine
     src/gpu/shader.cpp
     src/gpu/render_graph.cpp
     src/gpu/color.cpp
+    src/gpu/video_texture.cpp
+    src/gpu/color_pipeline.cpp
+    src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp
     src/gpu/node_graph.cpp
@@ -120,6 +123,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_engine.cpp
         tests/test_editor.cpp
         tests/test_v2.cpp
+        tests/test_color_pipeline.cpp
     )
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
