@@ -115,6 +115,12 @@ typedef struct DigitorRenderContext DigitorRenderContext;
 typedef struct DigitorTexture DigitorTexture;
 typedef struct DigitorBuffer DigitorBuffer;
 typedef struct DigitorSampler DigitorSampler;
+typedef struct DigitorSdkSession DigitorSdkSession;
+
+typedef struct DigitorColorControls { float exposure; float contrast; float saturation; } DigitorColorControls;
+typedef struct DigitorNativeTexture { const void* pixels; uint32_t width; uint32_t height; uint32_t row_bytes; uint64_t generation; } DigitorNativeTexture;
+typedef void (*DigitorAsyncCallback)(DigitorResult result, void* user_data);
+typedef void (*DigitorExportProgressCallback)(double fraction, int64_t completed, int64_t total, void* user_data);
 
 DIGITOR_API const char* digitor_get_version(void);
 
@@ -172,6 +178,18 @@ DIGITOR_API DigitorResult digitor_create_sampler(
 );
 
 DIGITOR_API DigitorResult digitor_destroy_sampler(DigitorSampler* sampler);
+
+/* Flutter-safe asynchronous SDK. Callbacks run on a worker thread; clients
+ * marshal them to their UI isolate. The texture remains valid until the next
+ * preview request or session destruction. */
+DIGITOR_API DigitorResult digitor_sdk_create(DigitorSdkSession** out_session);
+DIGITOR_API DigitorResult digitor_sdk_destroy(DigitorSdkSession* session);
+DIGITOR_API DigitorResult digitor_sdk_set_color(DigitorSdkSession* session, DigitorColorControls controls);
+DIGITOR_API DigitorResult digitor_sdk_preview_async(DigitorSdkSession* session, int64_t frame, uint32_t width, uint32_t height, DigitorAsyncCallback callback, void* user_data);
+DIGITOR_API DigitorResult digitor_sdk_seek_async(DigitorSdkSession* session, int64_t frame, DigitorAsyncCallback callback, void* user_data);
+DIGITOR_API DigitorResult digitor_sdk_get_native_texture(DigitorSdkSession* session, DigitorNativeTexture* out_texture);
+DIGITOR_API DigitorResult digitor_sdk_export_async(DigitorSdkSession* session, const char* path, int32_t format, int32_t codec, int64_t first, int64_t last, uint32_t width, uint32_t height, DigitorExportProgressCallback progress, DigitorAsyncCallback completion, void* user_data);
+DIGITOR_API DigitorResult digitor_sdk_cancel(DigitorSdkSession* session);
 
 #ifdef __cplusplus
 }
