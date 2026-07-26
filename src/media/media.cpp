@@ -26,7 +26,8 @@ constexpr AVRational engine_time_base{1,1000000};
 class DecoderBase {
 protected:
  AVFormatContext* format_{}; AVCodecContext* codec_{}; AVPacket* packet_{}; AVFrame* frame_{};
- int stream_index_=-1; AVStream* stream_{}; FrameNumber next_number_{}; bool input_eof_{},flush_sent_{};
+ int stream_index_=-1; AVStream* stream_{}; FrameNumber next_number_{};
+ bool input_eof_{},flush_sent_{},decoder_finished_{};
  void cleanup(){av_frame_free(&frame_);av_packet_free(&packet_);avcodec_free_context(&codec_);avformat_close_input(&format_);}
  explicit DecoderBase(const std::string& path,AVMediaType type) try {
   int r=avformat_open_input(&format_,path.c_str(),nullptr,nullptr);if(r<0)fail("cannot open media",r);
@@ -40,18 +41,39 @@ protected:
  } catch(...) { cleanup(); throw; }
  virtual ~DecoderBase(){cleanup();}
  bool receive(){
-  for(;;){int r=avcodec_receive_frame(codec_,frame_);if(r==0)return true;if(r==AVERROR_EOF)return false;if(r!=AVERROR(EAGAIN))fail("decode frame",r);
+  if(decoder_finished_)return false;
+  for(;;){
+   av_frame_unref(frame_);
+   int r=avcodec_receive_frame(codec_,frame_);
+   if(r==0)return true;
+   if(r==AVERROR_EOF){decoder_finished_=true;return false;}
+   if(r!=AVERROR(EAGAIN))fail("decode frame",r);
    if(!input_eof_){
-    r=av_read_frame(format_,packet_);if(r>=0){if(packet_->stream_index==stream_index_){r=avcodec_send_packet(codec_,packet_);av_packet_unref(packet_);if(r<0&&r!=AVERROR(EAGAIN))fail("send packet",r);}else av_packet_unref(packet_);continue;}
+    r=av_read_frame(format_,packet_);
+    if(r>=0){
+     if(packet_->stream_index!=stream_index_){av_packet_unref(packet_);continue;}
+     r=avcodec_send_packet(codec_,packet_);av_packet_unref(packet_);
+     if(r<0)fail("send packet",r);
+     continue;
+    }
+    av_packet_unref(packet_);
     if(r!=AVERROR_EOF)fail("read packet",r);input_eof_=true;
    }
-   if(!flush_sent_){r=avcodec_send_packet(codec_,nullptr);if(r<0&&r!=AVERROR_EOF)fail("flush decoder",r);flush_sent_=true;continue;}
-   return false;
+   if(!flush_sent_){
+    r=avcodec_send_packet(codec_,nullptr);
+    if(r==AVERROR_EOF){flush_sent_=true;decoder_finished_=true;return false;}
+    if(r<0)fail("flush decoder",r);
+    flush_sent_=true;continue;
+   }
+   // A successfully flushed decoder should return delayed frames and then
+   // AVERROR_EOF. Treat an unexpected EAGAIN as a stable terminal state rather
+   // than spinning or attempting to flush again.
+   decoder_finished_=true;return false;
   }
  }
  void seek_to(std::int64_t pts){
   const auto target=av_rescale_q(pts,engine_time_base,stream_->time_base);int r=av_seek_frame(format_,stream_index_,target,AVSEEK_FLAG_BACKWARD);
-  if(r<0)fail("seek",r);avcodec_flush_buffers(codec_);av_packet_unref(packet_);av_frame_unref(frame_);input_eof_=flush_sent_=false;next_number_=0;
+  if(r<0)fail("seek",r);avcodec_flush_buffers(codec_);av_packet_unref(packet_);av_frame_unref(frame_);input_eof_=flush_sent_=decoder_finished_=false;next_number_=0;
  }
  std::int64_t timestamp()const {auto p=frame_->best_effort_timestamp;return p==AV_NOPTS_VALUE?0:av_rescale_q(p,stream_->time_base,engine_time_base);}
  std::int64_t duration()const {auto d=frame_->duration;return d>0?av_rescale_q(d,stream_->time_base,engine_time_base):0;}
@@ -67,7 +89,7 @@ class Video final:public VideoDecoder,private DecoderBase {
 public:
  Video(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_VIDEO),cache_(o.cache_capacity){if(o.hardware!=HardwareDecode::automatic&&o.hardware!=HardwareDecode::cpu&&!o.allow_cpu_fallback)throw std::runtime_error("hardware decoding is not implemented");}
  ~Video()override{sws_freeContext(sws_);}
- std::shared_ptr<VideoFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto x=cache_.get(n))return x;if(n<next_number_){seek_to(0);cache_.clear();}while(next_number_<=n){auto x=next();if(!x)return {};if(x->number==n)return x;}return {};}
+ std::shared_ptr<VideoFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(decoder_finished_)return {};if(n!=next_number_)throw std::invalid_argument("decode index must equal the next sequential frame index; use seek() for random access");return next();}
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
  DecoderInfo info()const override{return software_info();}
 };
@@ -80,7 +102,7 @@ class Audio final:public AudioDecoder,private DecoderBase {
 public:
  Audio(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_AUDIO),cache_(o.cache_capacity){if(o.hardware!=HardwareDecode::automatic&&o.hardware!=HardwareDecode::cpu&&!o.allow_cpu_fallback)throw std::runtime_error("hardware decoding is not implemented");}
  ~Audio()override{swr_free(&swr_);}
- std::shared_ptr<AudioFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto x=cache_.get(n))return x;if(n<next_number_){seek_to(0);cache_.clear();}while(next_number_<=n){auto x=next();if(!x)return {};if(x->number==n)return x;}return {};}
+ std::shared_ptr<AudioFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(decoder_finished_)return {};if(n!=next_number_)throw std::invalid_argument("decode index must equal the next sequential frame index; use seek() for random access");return next();}
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
  DecoderInfo info()const override{return software_info();}
 };

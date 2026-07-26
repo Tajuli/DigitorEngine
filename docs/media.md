@@ -19,9 +19,10 @@ color primaries, transfer, matrix, and range metadata. Audio is converted by lib
 interleaved native float PCM at the decoded stream's sample rate/channel layout, with duration
 computed from its output sample count.
 
-`decode(n)` addresses decoded frames in presentation order from the current seek point and returns
-null at EOF. Cached frames are stable. Backward indexed reads seek to the beginning and reset the
-codec. `seek(pts_us)` performs a backward keyframe seek, flushes decoder buffers, clears packets,
+`decode(n)` consumes exactly the next decoded frame in presentation order and requires `n` to match
+the next sequential frame index. It never seeks or restarts automatically and returns null stably
+after EOF. Random access is exclusively provided by `seek(pts_us)`, which performs a backward
+keyframe seek, flushes decoder buffers, clears packets,
 EOF state, and cache, and numbers the first subsequently returned decoded frame zero. Exact seeking
 is consequently keyframe-based; callers discard frames until the desired PTS when sample accuracy
 is required.

@@ -149,7 +149,6 @@ if (DIGITOR_BUILD_TESTS)
     if(FFMPEG_FOUND)
         add_executable(digitor_media_tests tests/test_media.cpp)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
-        target_compile_definitions(digitor_media_tests PRIVATE DIGITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
         add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
     endif()
 
