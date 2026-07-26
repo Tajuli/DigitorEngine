@@ -41,6 +41,17 @@ bool run_tests(const std::filesystem::path& directory){
  begin_section("fixture generation",directory);write_y4m(video_path);write_wav(wav_path);
  CHECK(validate_fixture("Y4M fixture validation",video_path));CHECK(validate_fixture("WAV fixture validation",wav_path));CHECK(validate_fixture("malformed fixture validation",malformed_path));
  section="FFmpeg availability";begin_section(section,video_path);CHECK(digitor::ffmpeg_available());
+ for(const char* name:{"video.mp4","video.mov","video.mkv"}){
+  const auto container=directory/name;CHECK(validate_fixture("generated container",container));
+  section="container stream discovery and decode";begin_section(section,container);
+  auto decoder=digitor::open_video_decoder(container.string());const auto decoded=decoder->decode(0);
+  CHECK(decoded);CHECK(decoded->width>0);CHECK(decoded->height>0);CHECK(!decoded->pixels.empty());
+  CHECK_EQ(static_cast<std::size_t>(decoded->width)*decoded->height,decoded->pixels.size());
+  decoder->seek(0);CHECK(decoder->decode(0));
+ }
+ const auto generated_audio=directory/"audio.wav";CHECK(validate_fixture("generated audio",generated_audio));
+ auto generated_audio_decoder=digitor::open_audio_decoder(generated_audio.string());
+ const auto generated_pcm=generated_audio_decoder->decode(0);CHECK(generated_pcm);CHECK(!generated_pcm->samples.empty());
  section="video decode and stable EOF";begin_section(section,video_path);auto video=digitor::open_video_decoder(video_path.string());
  const auto first=video->decode(0);CHECK(first);const auto last=video->decode(1);CHECK(last);const auto third=video->decode(2);CHECK_EQ(false,static_cast<bool>(third));
  for(digitor::FrameNumber index=3;index<10;++index){const auto eof=video->decode(index);if(eof){std::cerr<<"decode failure in "<<section<<" at "<<__FILE__<<':'<<__LINE__<<" fixture="<<fixture_path<<" requested="<<index<<" expected=false actual=true pts="<<eof->pts<<" decoded_count=2\n"<<std::flush;return false;}}

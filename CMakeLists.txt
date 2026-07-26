@@ -14,6 +14,13 @@ option(DIGITOR_BUILD_TESTS "Build DigitorEngine tests" ON)
 option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development packages are available" ON)
 option(DIGITOR_REQUIRE_FFMPEG "Fail configuration when FFmpeg is unavailable" OFF)
+option(DIGITOR_WARNINGS_AS_ERRORS "Treat warnings in DigitorEngine-owned code as errors" OFF)
+
+if(DIGITOR_REQUIRE_FFMPEG AND NOT DIGITOR_ENABLE_FFMPEG)
+    message(FATAL_ERROR "DIGITOR_REQUIRE_FFMPEG=ON conflicts with DIGITOR_ENABLE_FFMPEG=OFF")
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 add_library(digitor_engine
     src/core/engine.cpp
@@ -41,23 +48,21 @@ add_library(digitor_engine
     src/render/validation.cpp
 )
 
+set(DIGITOR_FFMPEG_STATUS "disabled")
 if(DIGITOR_ENABLE_FFMPEG)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
-        if(FFMPEG_FOUND)
-            target_link_libraries(digitor_engine PRIVATE PkgConfig::FFMPEG)
-            target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
-        endif()
+    find_package(FFmpeg QUIET COMPONENTS avcodec avformat avutil swscale swresample)
+    if(FFmpeg_FOUND)
+        target_link_libraries(digitor_engine PRIVATE FFmpeg::FFmpeg)
+        target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
+        set(DIGITOR_FFMPEG_STATUS "enabled and linked (${FFmpeg_VERSION})")
     endif()
     if(DIGITOR_REQUIRE_FFMPEG AND NOT FFMPEG_FOUND)
         message(FATAL_ERROR "FFmpeg development libraries (avformat, avcodec, avutil, swscale, swresample) are required")
     elseif(NOT FFMPEG_FOUND)
-        message(STATUS "FFmpeg not found: real media decoder API will report unavailable")
-    else()
-        message(STATUS "FFmpeg ${FFMPEG_VERSION} discovered with pkg-config")
+        set(DIGITOR_FFMPEG_STATUS "unavailable (decoder API reports unavailable)")
     endif()
 endif()
+message(STATUS "DigitorEngine FFmpeg: ${DIGITOR_FFMPEG_STATUS}")
 
 if(WIN32)
     target_sources(digitor_engine PRIVATE src/gpu/d3d12_backend.cpp)
@@ -111,8 +116,14 @@ endif()
 
 if (MSVC)
     target_compile_options(digitor_engine PRIVATE /W4 /permissive-)
+    if(DIGITOR_WARNINGS_AS_ERRORS)
+        target_compile_options(digitor_engine PRIVATE /WX)
+    endif()
 else()
     target_compile_options(digitor_engine PRIVATE -Wall -Wextra -Wpedantic)
+    if(DIGITOR_WARNINGS_AS_ERRORS)
+        target_compile_options(digitor_engine PRIVATE -Werror)
+    endif()
 endif()
 
 if (DIGITOR_BUILD_EXAMPLES)
@@ -154,7 +165,8 @@ if (DIGITOR_BUILD_TESTS)
         )
     endif()
 
-    if(FFMPEG_FOUND)
+    if(FFmpeg_FOUND)
+        find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
         add_executable(digitor_media_tests tests/test_media.cpp)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
         add_custom_command(TARGET digitor_media_tests POST_BUILD
@@ -163,6 +175,8 @@ if (DIGITOR_BUILD_TESTS)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/malformed.txt"
                 "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_media_fixtures.sh"
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
             VERBATIM
         )
         add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
@@ -187,6 +201,7 @@ if (DIGITOR_BUILD_TESTS)
 endif()
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 install(TARGETS digitor_engine
     EXPORT DigitorEngineTargets
@@ -202,3 +217,14 @@ install(EXPORT DigitorEngineTargets
     NAMESPACE Digitor::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine
 )
+
+configure_package_config_file(cmake/DigitorEngineConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}" COMPATIBILITY SameMajorVersion)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")

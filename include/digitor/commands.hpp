@@ -15,6 +15,6 @@ class Semaphore { public: void signal(); void wait(); private: std::mutex m_; st
 class CommandBuffer { public: enum class State { initial, recording, executable, submitted, complete }; State state() const; private: friend class CommandEncoder; friend class CommandQueue; State state_{State::initial}; std::vector<std::function<void()>> commands_; };
 class CommandEncoder { public: explicit CommandEncoder(CommandBuffer&); void barrier(PipelineBarrier); void dispatch(std::function<void()>); void finish(); private: CommandBuffer* buffer_; };
 class CommandQueue { public: void submit(CommandBuffer&, Fence* = nullptr, uint64_t = 0, Semaphore* wait = nullptr, Semaphore* signal = nullptr); };
-struct FrameContext { uint32_t index{}; CommandBuffer commands; Fence fence; uint64_t serial{}; };
+struct FrameContext { FrameContext(uint32_t value) : index(value) {} uint32_t index{}; CommandBuffer commands; Fence fence; uint64_t serial{}; };
 class TripleBuffer { public: static constexpr uint32_t frame_count=3; FrameContext& begin_frame(); void end_frame(CommandQueue&); private: FrameContext frames_[frame_count]{{0},{1},{2}}; uint64_t serial_{}; FrameContext* active_{}; };
 }

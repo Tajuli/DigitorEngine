@@ -5,8 +5,8 @@
 
 namespace digitor {
 
-Texture::Texture(RenderContext& owner, const DigitorTextureDesc& desc, std::size_t byte_size, void* native)
-    : owner_(owner), desc_(desc), storage_(byte_size), native_(native) {
+Texture::Texture(RenderContext& owner, const DigitorTextureDesc&, std::size_t byte_size, void* native)
+    : owner_(owner), storage_(byte_size), native_(native) {
     owner_.retain_resource();
 }
 
@@ -49,8 +49,8 @@ DigitorResult Buffer::unmap() noexcept {
     return DIGITOR_RESULT_OK;
 }
 
-Sampler::Sampler(RenderContext& owner, const DigitorSamplerDesc& desc, void* native)
-    : owner_(owner), desc_(desc), native_(native) { owner_.retain_resource(); }
+Sampler::Sampler(RenderContext& owner, const DigitorSamplerDesc&, void* native)
+    : owner_(owner), native_(native) { owner_.retain_resource(); }
 Sampler::~Sampler() { owner_.backend_object().destroy_sampler(native_); owner_.release_resource(); }
 
 }  // namespace digitor

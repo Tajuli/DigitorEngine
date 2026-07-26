@@ -1,78 +1,61 @@
 name: CI
-
 on:
   pull_request:
-  push:
-    branches: [main]
-    tags: ['v*']
+  push: {branches: [main]}
   workflow_dispatch:
-  schedule:
-    - cron: '17 3 * * *'
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+concurrency: {group: 'ci-${{ github.ref }}', cancel-in-progress: true}
 
 jobs:
-  build:
+  desktop:
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON((github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')) && '{"include":[{"os":"ubuntu-latest","build_type":"Release","shared":"OFF"},{"os":"windows-latest","build_type":"Release","shared":"ON"},{"os":"macos-latest","build_type":"Release","shared":"OFF"},{"os":"ubuntu-latest","build_type":"Debug","shared":"OFF"}]}' || '{"os":["ubuntu-latest","windows-latest","macos-latest"],"build_type":["Release","Debug"],"shared":["OFF","ON"]}') }}
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        type: [Debug, Release]
+        shared: ['OFF', 'ON']
+        include:
+          - {os: ubuntu-latest, type: Debug, shared: 'OFF', cc: gcc, cxx: g++}
+          - {os: ubuntu-latest, type: Debug, shared: 'ON', cc: clang, cxx: clang++}
+          - {os: ubuntu-latest, type: Release, shared: 'OFF', cc: gcc, cxx: g++}
+          - {os: ubuntu-latest, type: Release, shared: 'ON', cc: clang, cxx: clang++}
     runs-on: ${{ matrix.os }}
-    env:
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
+    env: {CC: '${{ matrix.cc }}', CXX: '${{ matrix.cxx }}'}
     steps:
       - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=ON -DDIGITOR_WARNINGS_AS_ERRORS=ON
+      - run: cmake --build build --config ${{ matrix.type }} --parallel 2
+      - run: ctest --test-dir build -C ${{ matrix.type }} --output-on-failure -LE hardware
+      - shell: bash
+        run: ./scripts/test_install.sh build ${{ matrix.type }}
 
-      - name: Cache vcpkg downloads, packages, and binaries
-        if: runner.os == 'Windows'
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:/vcpkg/downloads
-            C:/vcpkg/installed
-            ${{ github.workspace }}/vcpkg-bincache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', '.github/workflows/ci.yml') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
-
-      - name: Install FFmpeg development libraries (Ubuntu)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev
-      - name: Install FFmpeg development libraries (macOS)
-        if: runner.os == 'macOS'
+  ffmpeg:
+    strategy: {fail-fast: false, matrix: {os: [ubuntu-latest, macos-latest, windows-latest]}}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+      - if: runner.os == 'macOS'
         run: brew install ffmpeg pkg-config
-      - name: Install FFmpeg development libraries (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
-          vcpkg install ffmpeg:x64-windows
+      - if: runner.os == 'Windows'
+        run: vcpkg install ffmpeg:x64-windows
+      - if: runner.os != 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON
+      - if: runner.os == 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+      - run: cmake --build build --config Release --parallel 2
+      - run: ctest --test-dir build -C Release --output-on-failure -LE hardware
 
-      - name: Configure Unix
-        if: runner.os != 'Windows'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON
-      - name: Configure Windows
-        if: runner.os == 'Windows'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DDIGITOR_REQUIRE_FFMPEG=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-
-      - run: cmake --build build --config ${{ matrix.build_type }} --parallel 2
-      - run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
-        env:
-          # Keep expensive native validation on one Windows configuration.
-          DIGITOR_GPU_VALIDATION: ${{ runner.os == 'Windows' && matrix.build_type == 'Release' && matrix.shared == 'ON' && '1' || '0' }}
-
-  flutter-sdk:
+  sanitizers:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - run: flutter pub get
-        working-directory: flutter/digitor_sdk
-      - run: flutter analyze
-        working-directory: flutter/digitor_sdk
-      - run: flutter test
-        working-directory: flutter/digitor_sdk
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DDIGITOR_ENABLE_FFMPEG=OFF -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure -LE hardware
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git diff --check

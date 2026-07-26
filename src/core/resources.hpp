@@ -20,7 +20,6 @@ public:
 
 private:
     RenderContext& owner_;
-    DigitorTextureDesc desc_;
     std::vector<std::byte> storage_;
     void* native_{};
 };
@@ -49,7 +48,7 @@ public:
     Sampler(RenderContext& owner, const DigitorSamplerDesc& desc, void* native);
     ~Sampler();
 private:
-    RenderContext& owner_; DigitorSamplerDesc desc_; void* native_{};
+    RenderContext& owner_; void* native_{};
 };
 
 }  // namespace digitor
