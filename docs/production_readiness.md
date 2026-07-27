@@ -40,6 +40,6 @@ the CPU reference in non-hardware tests.
 
 ## RGB Curves readiness
 
-The immutable specification, CPU reference, deterministic LUT/cache, tests, and explicit CPU Render Graph pass are ready. Native backends, preview use, provenance, numerical GPU comparison, and performance qualification remain release blockers. Consequently the project version remains 4.6.1 and this work must not be described as a complete production v4.7.0 release.
+The immutable specification, CPU reference, deterministic LUT/cache, native Vulkan/D3D12/Metal/GLES paths, preview routing, provenance, and numerical qualification harness are implemented. The harness gates absolute/relative error, RMS, PSNR, SSIM, worst pixel, all native execution stages, and zero CPU/fallback calls.
 
-The canonical curve shader, native cache key/ownership model, expanded provenance schema and backend-neutral graph pass now exist. Native backend artifact creation and hardware pixel qualification remain blockers; therefore 4.7.0 is not declared by this revision and Preview = Export remains unclaimed.
+No qualifying GPU was executed in the recorded Ubuntu environment, no native performance result was captured, and the complete Windows/Ubuntu/macOS/FFmpeg/sanitizer matrix has not been observed passing. All native backends therefore remain **Implemented, hardware-unverified**, and the project version remains 4.6.1 rather than making an unsupported v4.7.0 release claim.

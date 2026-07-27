@@ -30,14 +30,27 @@ The stable serialization/cache key is ASCII with schema `rgb-curves:v1`, fixed o
 
 ## Execution status and limitations
 
-`CompiledRgbCurves` is the independent CPU reference and `add_rgb_curves_cpu_pass` is an explicit Render Graph CPU-reference node with declared source/destination states. Native Vulkan, D3D12, Metal, GLES binding/dispatch, native LUT resources, preview consumption, provenance extension, and native numerical qualification are **not implemented** in this change. GPU selection therefore cannot invoke curves and must report unsupported; it never silently calls this CPU pass. This deliberately does not claim Preview = Export. Wheels, qualifiers, 3D LUTs, UI, and export work remain future milestones.
+`CompiledRgbCurves` remains the independent CPU reference, and
+`add_rgb_curves_cpu_pass` remains an explicitly selected reference pass. Vulkan,
+D3D12, Metal, and GLES have native FP32 execution paths that create their shader
+and pipeline objects, bind source/destination/LUT/parameter resources, issue
+compute dispatches or a framebuffer draw, synchronize, and read back the native
+result. Backend selection never redirects a failed native curve operation to the
+CPU pass. `SharedRenderer` replaces its preview pixels only with a successful
+native curve result and fails the render when native execution fails.
+
+These are production implementations but remain **hardware-unverified** in the
+recorded Ubuntu CPU-only environment. A backend becomes hardware-verified only
+when the native qualification executable actually runs it and passes the
+numerical and provenance gates. FP16 curves, GPU-side fusion with other grading
+stages, and platform performance qualification are not implemented.
 
 ## Performance harness
 
-`digitor_rgb_curves_benchmark` is non-gating and covers 1080p/4K, all LUT sizes, cold/warm compilation, cache hits, and a complex curve. It separates coefficient-plus-LUT generation from CPU application. Native pipeline creation, upload, execution, synchronization, and readback cannot truthfully be timed until native execution exists; normal preview timing includes no validation readback.
+`digitor_rgb_curves_benchmark` is non-gating and covers 1080p/4K, all LUT sizes, cold/warm compilation, cache hits, and a complex curve. It separates coefficient-plus-LUT generation from CPU application. Native execution now exists, but no qualifying hardware timing was captured in this environment. The harness therefore remains CPU-only and non-gating; native pipeline, upload, dispatch, synchronization, and readback performance is not claimed.
 
 ## Native execution contract (v4.7 development)
 
 The canonical backend shader is `src/gpu/shaders/rgb_curves.hlsl`. It consumes four contiguous FP32 LUT planes (Master, Red, Green, Blue), performs endpoint-inclusive `u=(x-lo)*(N-1)/(hi-lo)` addressing and explicit linear interpolation, preserves unbounded linear extrapolation, and restores alpha. `NativeRgbCurvesKey` includes the complete compiled serialization, LUT size, interpolation and shader ABI versions, precision, backend, and device identity. `NativeRgbCurvesCache` is a bounded 64-entry LRU with synchronized in-flight creation; native ownership remains separate from the weak CPU compilation cache.
 
-The backend-neutral `RGB Curves Native` Render Graph pass declares shader-read/source and shader-write/destination dependencies. It accepts only a native executor and has no CPU fallback callback. At this revision native backend adapters have not yet wired the canonical artifact, so this is not a v4.7.0 release and the version remains 4.6.1.
+The backend-neutral `RGB Curves Native` Render Graph pass declares shader-read/source and shader-write/destination dependencies. It accepts only a native executor and has no CPU fallback callback. All native adapters are wired to this contract. The version nevertheless remains 4.6.1 because the required Windows, Ubuntu, macOS, FFmpeg, sanitizer, and hardware qualification jobs have not all been observed passing for this revision.

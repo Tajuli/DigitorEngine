@@ -156,27 +156,41 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
 } // namespace
 
 int main() {
-#if defined(_WIN32)
     bool all_passed = true;
-    bool d3d12_available = false;
-    for (const auto entry : {std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}},
-                             std::pair{DIGITOR_RENDERER_D3D12, std::string_view{"Direct3D12"}}}) {
+    bool required_backend_available = false;
+#if defined(_WIN32)
+    constexpr std::array backends{
+        std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}},
+        std::pair{DIGITOR_RENDERER_D3D12, std::string_view{"Direct3D12"}}};
+#else
+    constexpr std::array backends{
+        std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}}};
+#endif
+    for (const auto entry : backends) {
         auto backend = digitor::create_native_backend(entry.first);
         if (!backend || !backend->initialize(true)) {
             std::cerr << "BACKEND UNAVAILABLE backend=" << entry.second << '\n';
             continue;
         }
-        if (entry.first == DIGITOR_RENDERER_D3D12) d3d12_available = true;
+#if defined(_WIN32)
+        if (entry.first == DIGITOR_RENDERER_D3D12)
+            required_backend_available = true;
+#else
+        required_backend_available = true;
+#endif
         all_passed &= exercise(*backend, entry.second);
         backend->shutdown();
     }
-    if (!d3d12_available) {
-        std::cerr << "Direct3D12 is required for the Windows native GPU test.\n";
+#if defined(_WIN32)
+    if (!required_backend_available) {
+        std::cerr << "Direct3D12 is required for Windows qualification.\n";
         return 1;
     }
-    return all_passed ? 0 : 1;
 #else
-    std::cout << "Native Windows GPU integration test is Windows-only.\n";
-    return 0;
+    if (!required_backend_available) {
+        std::cout << "No Vulkan device was executed; hardware remains unverified.\n";
+        return 77;
+    }
 #endif
+    return all_passed ? 0 : 1;
 }

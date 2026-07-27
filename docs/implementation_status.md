@@ -93,3 +93,23 @@ gated rather than being reported prematurely.
 | Failure injection | CPU validation | explicit error | explicit error | explicit error | explicit error | failure seam before native work | no CPU fallback | Implemented, hardware-unverified |
 | FP32 | yes | storage buffers | structured buffers | device buffers | float textures | native resource formats | not hardware measured | Implemented, hardware-unverified |
 | FP16 | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | no implementation | none | Unsupported |
+
+### Qualification runner evidence (current revision)
+
+`digitor_native_gpu_tests` is registered on Windows and on any non-Windows
+build where CMake discovers Vulkan. Windows requires an executed D3D12 adapter;
+a missing required adapter fails qualification. A non-Windows host with no
+usable Vulkan device exits with CTest skip code 77 and therefore cannot create a
+verification claim. An executed backend must report shader/pipeline creation,
+all four curve bindings, command recording, dispatch/draw, queue submission,
+synchronization, output, validation readback, zero CPU curve calls, and zero
+fallback calls. It also compares against the independent CPU reference and
+reports maximum absolute error, maximum relative error, RMS, PSNR, SSIM, and the
+worst pixel. The current gates are maximum absolute error below `2e-5` and SSIM
+above `0.99999`; a failure is fatal.
+
+No native adapter was executed in this Ubuntu container because Vulkan was not
+discovered at configure time. Consequently Vulkan, D3D12, Metal, and GLES all
+remain **Implemented, hardware-unverified**. No native performance number was
+measured. The release version remains 4.6.1 until every release gate named above
+has actually passed.
