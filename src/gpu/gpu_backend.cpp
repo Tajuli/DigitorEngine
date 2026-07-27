@@ -1,9 +1,9 @@
 #include "gpu/gpu_backend.hpp"
 
+#include "core/environment.hpp"
 #include "core/string_utils.hpp"
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -32,18 +32,8 @@
 
 namespace digitor {
 bool gpu_validation_requested() noexcept {
-#if defined(_WIN32)
-  char *value = nullptr;
-  std::size_t length = 0;
-  if (_dupenv_s(&value, &length, "DIGITOR_GPU_VALIDATION") != 0)
-    return false;
-  const bool enabled = value != nullptr && length > 1 && value[0] != '0';
-  std::free(value);
-  return enabled;
-#else
-  const char *value = std::getenv("DIGITOR_GPU_VALIDATION");
-  return value != nullptr && value[0] != '\0' && value[0] != '0';
-#endif
+  const auto value = environment_variable("DIGITOR_GPU_VALIDATION");
+  return value && value->front() != '0';
 }
 DigitorResult IRenderBackend::create_texture(const DigitorTextureDesc &,
                                              void **out) noexcept {

@@ -17,3 +17,12 @@ installed consumers resolve the installed DLL from the install `bin` directory/j
 
 FFmpeg jobs use required dependency mode and generated media. Linux supports distro development packages
 and pkg-config. macOS supports Homebrew/pkg-config. All desktops support `DIGITOR_FFMPEG_ROOT`; see README.
+
+## Shader/pipeline verification (2026-07-27)
+| Backend | Compiler configured | Compiles | Reflection verified | Native module | Native pipeline | Hardware-tested |
+|---|---|---|---|---|---|---|
+| Vulkan | optional DXC + spirv-val | compile path present | SPIR-V binary reader, not run in this environment | existing `vkCreateShaderModule` path | existing compute pipeline path | not run |
+| D3D12 | optional DXC | DXIL emitted then rejected | not implemented | bytecode only | existing grade PSO only | not run |
+| Metal | native source compiler exists in backend | canonical translation unavailable | not implemented | existing grade library/function only | existing grade compute state only | not run |
+| OpenGL ES | runtime driver compiler | canonical translation unavailable | native query incomplete | runtime shaders only | existing linked programs only | not run |
+| CPU | not applicable | no GPU compilation | validated CPU contract | not applicable | registered kernels only | host tests |

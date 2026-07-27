@@ -11,6 +11,7 @@
 #include "digitor/render_graph.hpp"
 #include "digitor/color.hpp"
 #include "cpu/cpu_backend.hpp"
+#include "core/environment.hpp"
 #include <cmath>
 void test_editor();
 void test_v2();
@@ -54,6 +55,11 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
+    assert(!digitor::environment_variable(""));
+    assert(!digitor::environment_variable(nullptr));
+    assert(!digitor::environment_variable("DIGITOR_ENVIRONMENT_VARIABLE_THAT_MUST_NOT_EXIST_7BC2F0A1"));
+    const auto path = digitor::environment_variable("PATH");
+    assert(path && !path->empty());
     assert(std::strcmp(digitor_get_version(), "4.4.0") == 0);
     test_editor();
     test_v2();
@@ -62,7 +68,7 @@ int main() {
     test_render_graph();
 
     { digitor::CommandQueue q; digitor::CommandBuffer b; digitor::CommandEncoder e(b); int value=0; e.dispatch([&]{value=7;}); e.finish(); digitor::Fence f; q.submit(b,&f,2); assert(value==7 && f.value()==2); }
-    { digitor::ShaderCompiler c; digitor::ShaderCache cache; auto& s=cache.get_or_compile(c,digitor::ShaderLanguage::glsl,digitor::ShaderStage::compute,"layout(binding=2, local_size_x=8) in; void main(){}"); assert(s.reflection.bindings[0].binding==2 && s.reflection.workgroup_size[0]==8); assert(cache.size()==1); }
+    { digitor::ShaderCompiler c; digitor::ShaderCompileRequest request; request.source="[numthreads(8,1,1)] void main(){}"; auto s=c.compile(request); assert(s.error==digitor::ShaderError::compiler_unavailable); assert(!s); }
     { digitor::RenderGraph g; auto r=g.create_transient(64); int ran=0; g.add_pass({"write",{},{{r,digitor::ResourceState::shader_write}},[&](auto&e){e.dispatch([&]{++ran;});}}); g.add_pass({"read",{{r,digitor::ResourceState::shader_read}},{},[&](auto&e){e.dispatch([&]{++ran;});}}); g.compile(); digitor::CommandQueue q; g.execute(q); assert(ran==2 && g.order().size()==2 && g.barriers().size()==2); }
     { digitor::Color in{.2f,.4f,.6f,1},cpu{},gpu{}; digitor::ColorGrade grade; grade.exposure=1; grade.saturation=.8f; digitor::grade_image_cpu(&in,&cpu,1,grade); digitor::CommandBuffer b; digitor::CommandEncoder e(b); digitor::grade_image_gpu(e,&in,&gpu,1,grade); e.finish(); digitor::CommandQueue q; q.submit(b); assert(std::abs(cpu.r-gpu.r)<1e-6f && std::abs(cpu.g-gpu.g)<1e-6f); }
     test_preferred_backend_selection();

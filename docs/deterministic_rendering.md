@@ -36,3 +36,6 @@ Golden failures retain numerical metrics and a difference image. Threshold chang
 reference evidence, never merely a new platform result. Cross-platform byte identity is **not claimed**
 for floating-point GPU rendering; it may be claimed for a named operation/backend only after independent
 multi-platform qualification.
+
+## Shader determinism
+Shader cache identities include canonical HLSL, every include content identity, ordered compile controls, exact compiler version, target, specialization values, and shader ABI. Native pipelines additionally include all attachment/fixed-function and device compatibility state.
