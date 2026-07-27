@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **4.3.0**, but that number is not evidence of production readiness or ABI stability.
+version **4.4.0**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet

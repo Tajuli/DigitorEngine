@@ -78,4 +78,20 @@ uint64_t PipelineCache::get_or_create(const std::vector<uint64_t>& shaders) {
     entries_[key] = identifier;
     return identifier;
 }
+
+uint64_t DescriptorCache::get_or_create(std::string_view layout) {
+    if (layout.empty()) throw std::invalid_argument("empty descriptor layout");
+    const std::string key(layout);
+    const auto [iterator, inserted] = entries_.emplace(key, 0);
+    if (inserted) iterator->second = stable_hash("descriptor:" + key);
+    return iterator->second;
+}
+
+uint64_t SamplerCache::get_or_create(std::string_view description) {
+    if (description.empty()) throw std::invalid_argument("empty sampler description");
+    const std::string key(description);
+    const auto [iterator, inserted] = entries_.emplace(key, 0);
+    if (inserted) iterator->second = stable_hash("sampler:" + key);
+    return iterator->second;
+}
 }  // namespace digitor
