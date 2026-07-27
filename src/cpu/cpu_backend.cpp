@@ -1,6 +1,6 @@
 #include "cpu/cpu_backend.hpp"
 
-#include <cstring>
+#include "core/string_utils.hpp"
 
 namespace digitor {
 
@@ -17,8 +17,8 @@ void CpuBackend::shutdown() noexcept {
 DigitorRendererInfo CpuBackend::info() const noexcept {
     DigitorRendererInfo result{};
     result.backend = DIGITOR_RENDERER_CPU;
-    std::strncpy(result.backend_name, "CPU Reference Renderer", sizeof(result.backend_name) - 1);
-    std::strncpy(result.device_name, "Host CPU", sizeof(result.device_name) - 1);
+    copy_bounded(result.backend_name, "CPU Reference Renderer");
+    copy_bounded(result.device_name, "Host CPU");
     result.is_gpu = 0;
     result.supports_compute = 1;
     result.supports_fp16 = 0;

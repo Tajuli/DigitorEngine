@@ -1,4 +1,5 @@
 #include "digitor/video_texture.hpp"
+#include "core/numeric_utils.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -16,5 +17,5 @@ std::vector<Color> convert_to_linear_rgba(const DecodedImage&i){if(!i.width||!i.
  return out;
 }
 NativeVideoTexture upload_video_texture(DigitorRendererBackend b,const DecodedImage&i){if(b!=DIGITOR_RENDERER_VULKAN&&b!=DIGITOR_RENDERER_D3D12&&b!=DIGITOR_RENDERER_METAL&&b!=DIGITOR_RENDERER_OPENGL_ES&&b!=DIGITOR_RENDERER_CPU)throw std::invalid_argument("unsupported backend");return{b,i.width,i.height,i.format,convert_to_linear_rgba(i)};}
-PixelValidation validate_pixels(std::span<const Color>a,std::span<const Color>b,float t){if(a.size()!=b.size()||t<0)throw std::invalid_argument("invalid pixel validation");PixelValidation r{};for(size_t i=0;i<a.size();i++){float e=std::max({std::abs(a[i].r-b[i].r),std::abs(a[i].g-b[i].g),std::abs(a[i].b-b[i].b),std::abs(a[i].a-b[i].a)});r.maximum_error=std::max(r.maximum_error,e);r.mean_error+=e;if(e>t)r.failing_pixels++;}if(!a.empty())r.mean_error/=a.size();r.passed=!r.failing_pixels;return r;}
+PixelValidation validate_pixels(std::span<const Color>a,std::span<const Color>b,float t){if(a.size()!=b.size()||t<0)throw std::invalid_argument("invalid pixel validation");PixelValidation r{};for(size_t i=0;i<a.size();i++){float e=std::max({std::abs(a[i].r-b[i].r),std::abs(a[i].g-b[i].g),std::abs(a[i].b-b[i].b),std::abs(a[i].a-b[i].a)});r.maximum_error=std::max(r.maximum_error,e);r.mean_error+=e;if(e>t)r.failing_pixels++;}if(!a.empty())r.mean_error/=checked_size_to_float(a.size());r.passed=!r.failing_pixels;return r;}
 }

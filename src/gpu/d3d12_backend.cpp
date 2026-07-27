@@ -15,17 +15,13 @@
 #include <vector>
 
 #include "gpu/gpu_backend.hpp"
+#include "core/string_utils.hpp"
 
 namespace digitor {
 namespace {
 using Microsoft::WRL::ComPtr;
 
-void copy_text(char* destination, std::size_t capacity, std::string_view source) noexcept {
-    if (capacity == 0) return;
-    const auto count = std::min(capacity - 1, source.size());
-    if (count != 0) std::memcpy(destination, source.data(), count);
-    destination[count] = '\0';
-}
+
 
 struct D3DObject { ComPtr<ID3D12Resource> resource; };
 
@@ -107,8 +103,8 @@ class D3DBackend final : public IRenderBackend {
 public:
     explicit D3DBackend(ComPtr<ID3D12Device> device) : device_(std::move(device)) {
         info_.backend = DIGITOR_RENDERER_D3D12;
-        copy_text(info_.backend_name, sizeof(info_.backend_name), "Direct3D 12");
-        copy_text(info_.device_name, sizeof(info_.device_name), "D3D12 Adapter");
+        copy_bounded(info_.backend_name, "Direct3D 12");
+        copy_bounded(info_.device_name, "D3D12 Adapter");
         info_.is_gpu = info_.supports_compute = info_.supports_fp16 = info_.supports_fp32 = 1;
     }
     ~D3DBackend() override { shutdown(); }

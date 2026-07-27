@@ -1,8 +1,81 @@
 #include "digitor/shader.hpp"
+
+#include <limits>
 #include <regex>
 #include <stdexcept>
-namespace digitor { namespace { uint64_t hash(const std::string&s){uint64_t h=1469598103934665603ull;for(unsigned char c:s){h^=c;h*=1099511628211ull;}return h;} }
-CompiledShader ShaderCompiler::compile(ShaderLanguage l,ShaderStage stage,const std::string&s){if(s.empty())throw std::invalid_argument("empty shader");CompiledShader out{l,{},s,{stage,{}, {1,1,1}},hash(std::to_string((int)l)+s)};if(l==ShaderLanguage::spirv){if(s.size()%4)throw std::invalid_argument("SPIR-V byte size");for(size_t i=0;i<s.size();i+=4)out.spirv.push_back((uint8_t)s[i]|((uint8_t)s[i+1]<<8)|((uint8_t)s[i+2]<<16)|((uint8_t)s[i+3]<<24));if(out.spirv.empty()||out.spirv[0]!=0x07230203)throw std::invalid_argument("SPIR-V magic");}else{if(s.find("main")==std::string::npos)throw std::invalid_argument("shader has no entry point");std::regex binding(R"((?:binding\s*=\s*|register\s*\(\s*[tubs])(\d+))");for(std::sregex_iterator i(s.begin(),s.end(),binding),e;i!=e;++i)out.reflection.bindings.push_back({0,(uint32_t)std::stoul((*i)[1]),{}});std::regex local(R"(local_size_x\s*=\s*(\d+))");std::smatch m;if(std::regex_search(s,m,local))out.reflection.workgroup_size[0]=std::stoul(m[1]);}return out;}
-const CompiledShader& ShaderCache::get_or_compile(ShaderCompiler&c,ShaderLanguage l,ShaderStage st,const std::string&s){auto k=std::to_string((int)l)+":"+std::to_string((int)st)+":"+s;auto it=entries_.find(k);if(it==entries_.end())it=entries_.emplace(k,c.compile(l,st,s)).first;return it->second;}
-uint64_t PipelineCache::get_or_create(const std::vector<uint64_t>& shaders){std::string k;for(auto h:shaders)k+=std::to_string(h)+":";auto it=entries_.find(k);if(it==entries_.end())it=entries_.emplace(k,hash(k)).first;return it->second;}
+
+namespace digitor {
+namespace {
+uint64_t stable_hash(const std::string& source) {
+    uint64_t hash = 1469598103934665603ull;
+    for (char value : source) {
+        hash ^= static_cast<unsigned char>(value);
+        hash *= 1099511628211ull;
+    }
+    return hash;
 }
+
+uint32_t parse_u32(const std::string& text) {
+    const unsigned long value = std::stoul(text);
+    if (value > std::numeric_limits<uint32_t>::max()) {
+        throw std::out_of_range("shader integer exceeds uint32 range");
+    }
+    return static_cast<uint32_t>(value);
+}
+}  // namespace
+
+CompiledShader ShaderCompiler::compile(ShaderLanguage language, ShaderStage stage,
+                                       const std::string& source) {
+    if (source.empty()) throw std::invalid_argument("empty shader");
+    CompiledShader out{language, {}, source, {stage, {}, {1, 1, 1}},
+                       stable_hash(std::to_string(static_cast<int>(language)) + source)};
+    if (language == ShaderLanguage::spirv) {
+        if (source.size() % 4 != 0) throw std::invalid_argument("SPIR-V byte size");
+        for (std::size_t index = 0; index < source.size(); index += 4) {
+            const auto byte = [&](std::size_t offset) {
+                return static_cast<uint32_t>(static_cast<unsigned char>(source[index + offset]));
+            };
+            out.spirv.push_back(byte(0) | (byte(1) << 8u) | (byte(2) << 16u) | (byte(3) << 24u));
+        }
+        if (out.spirv.empty() || out.spirv[0] != 0x07230203u) {
+            throw std::invalid_argument("SPIR-V magic");
+        }
+    } else {
+        if (source.find("main") == std::string::npos) {
+            throw std::invalid_argument("shader has no entry point");
+        }
+        const std::regex binding(R"((?:binding\s*=\s*|register\s*\(\s*[tubs])(\d+))");
+        for (std::sregex_iterator iterator(source.begin(), source.end(), binding), end;
+             iterator != end; ++iterator) {
+            out.reflection.bindings.push_back({0, parse_u32((*iterator)[1].str()), {}});
+        }
+        const std::regex local(R"(local_size_x\s*=\s*(\d+))");
+        std::smatch match;
+        if (std::regex_search(source, match, local)) {
+            out.reflection.workgroup_size[0] = parse_u32(match[1].str());
+        }
+    }
+    return out;
+}
+
+const CompiledShader& ShaderCache::get_or_compile(ShaderCompiler& compiler, ShaderLanguage language,
+                                                   ShaderStage stage, const std::string& source) {
+    const std::string key = std::to_string(static_cast<int>(language)) + ':' +
+                            std::to_string(static_cast<int>(stage)) + ':' + source;
+    auto iterator = entries_.find(key);
+    if (iterator == entries_.end()) {
+        iterator = entries_.emplace(key, compiler.compile(language, stage, source)).first;
+    }
+    return iterator->second;
+}
+
+uint64_t PipelineCache::get_or_create(const std::vector<uint64_t>& shaders) {
+    std::string key;
+    for (uint64_t shader : shaders) key += std::to_string(shader) + ':';
+    const auto iterator = entries_.find(key);
+    if (iterator != entries_.end()) return iterator->second;
+    const uint64_t identifier = stable_hash(key);
+    entries_[key] = identifier;
+    return identifier;
+}
+}  // namespace digitor

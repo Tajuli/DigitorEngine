@@ -5,6 +5,7 @@
 #include <limits>
 
 #include "gpu/gpu_backend.hpp"
+#include "core/string_utils.hpp"
 
 namespace digitor {
 namespace {
@@ -19,13 +20,7 @@ MTLPixelFormat metal_format(DigitorPixelFormat format) noexcept {
     }
 }
 
-void copy_text(char* destination, std::size_t capacity, const char* source) noexcept {
-    if (capacity == 0) return;
-    const char* value = source != nullptr ? source : "";
-    const std::size_t length = std::min(std::strlen(value), capacity - 1);
-    std::memcpy(destination, value, length);
-    destination[length] = '\0';
-}
+
 
 // Resource creation uses __bridge_retained exactly once. This is its matching
 // transfer back to ARC, which releases the object at the end of the scope.
@@ -39,8 +34,9 @@ class MetalBackend final : public IRenderBackend {
 public:
     explicit MetalBackend(id<MTLDevice> device) : device_(device) {
         info_.backend = DIGITOR_RENDERER_METAL;
-        copy_text(info_.backend_name, sizeof(info_.backend_name), "Metal");
-        copy_text(info_.device_name, sizeof(info_.device_name), device.name.UTF8String);
+        copy_bounded(info_.backend_name, "Metal");
+        copy_bounded(info_.device_name, device.name.UTF8String != nullptr
+            ? std::string_view(device.name.UTF8String) : std::string_view{});
         info_.is_gpu = 1;
         info_.supports_compute = 1;
         info_.supports_fp16 = 1;

@@ -90,6 +90,10 @@ endif()
 
 add_library(Digitor::Engine ALIAS digitor_engine)
 
+# Express the language requirement on the target as well as the project
+# default so it propagates through build-tree and installed consumers.
+target_compile_features(digitor_engine PUBLIC cxx_std_20)
+
 target_include_directories(digitor_engine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -132,6 +136,7 @@ endif()
 
 if (DIGITOR_BUILD_EXAMPLES)
     add_executable(digitor_info examples/digitor_info.cpp)
+    set_target_properties(digitor_info PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_info PRIVATE Digitor::Engine)
 endif()
 
@@ -144,6 +149,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_color_pipeline.cpp
         tests/test_render_export.cpp
     )
+    set_target_properties(digitor_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if (MSVC)
@@ -155,6 +161,7 @@ if (DIGITOR_BUILD_TESTS)
 
     if (WIN32)
         add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
+        set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
         target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         if (MSVC)
@@ -172,6 +179,7 @@ if (DIGITOR_BUILD_TESTS)
     if(FFmpeg_FOUND)
         find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
         add_executable(digitor_media_tests tests/test_media.cpp)
+        set_target_properties(digitor_media_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
         add_custom_command(TARGET digitor_media_tests POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory
