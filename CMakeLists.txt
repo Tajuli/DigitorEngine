@@ -16,6 +16,13 @@ option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development pa
 option(DIGITOR_REQUIRE_FFMPEG "Fail configuration when FFmpeg is unavailable" OFF)
 option(DIGITOR_GENERATE_TEST_MEDIA "Generate optional container fixtures with the FFmpeg CLI" OFF)
 option(DIGITOR_WARNINGS_AS_ERRORS "Treat warnings in DigitorEngine-owned code as errors" OFF)
+option(DIGITOR_ENABLE_NATIVE_SHADER_COMPILER "Enable explicitly discovered native shader tools" ON)
+set(DIGITOR_DXC_ROOT "" CACHE PATH "Optional DXC installation root")
+set(DIGITOR_SPIRV_TOOLS_ROOT "" CACHE PATH "Optional SPIRV-Tools installation root")
+if(DIGITOR_ENABLE_NATIVE_SHADER_COMPILER)
+    find_program(DIGITOR_DXC_EXECUTABLE NAMES dxc HINTS "${DIGITOR_DXC_ROOT}" PATH_SUFFIXES bin)
+    find_program(DIGITOR_SPIRV_VAL_EXECUTABLE NAMES spirv-val HINTS "${DIGITOR_SPIRV_TOOLS_ROOT}" PATH_SUFFIXES bin)
+endif()
 
 if(DIGITOR_REQUIRE_FFMPEG AND NOT DIGITOR_ENABLE_FFMPEG)
     message(FATAL_ERROR "DIGITOR_REQUIRE_FFMPEG=ON conflicts with DIGITOR_ENABLE_FFMPEG=OFF")
@@ -120,6 +127,19 @@ target_include_directories(digitor_engine
 )
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)
+if(DIGITOR_DXC_EXECUTABLE)
+    target_compile_definitions(digitor_engine PRIVATE DIGITOR_CONFIGURED_DXC="${DIGITOR_DXC_EXECUTABLE}")
+    execute_process(COMMAND "${DIGITOR_DXC_EXECUTABLE}" --version OUTPUT_VARIABLE DIGITOR_DXC_VERSION ERROR_VARIABLE DIGITOR_DXC_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE)
+    message(STATUS "DigitorEngine DXC: ${DIGITOR_DXC_EXECUTABLE} (${DIGITOR_DXC_VERSION})")
+else()
+    message(STATUS "DigitorEngine DXC: unavailable (GPU shader compilation fails explicitly)")
+endif()
+if(DIGITOR_SPIRV_VAL_EXECUTABLE)
+    target_compile_definitions(digitor_engine PRIVATE DIGITOR_CONFIGURED_SPIRV_VAL="${DIGITOR_SPIRV_VAL_EXECUTABLE}")
+    message(STATUS "DigitorEngine spirv-val: ${DIGITOR_SPIRV_VAL_EXECUTABLE}")
+else()
+    message(STATUS "DigitorEngine spirv-val: unavailable (Vulkan shader compilation fails explicitly)")
+endif()
 
 # add_library() follows BUILD_SHARED_LIBS. Static Windows consumers must not see
 # __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.

@@ -15,3 +15,6 @@ This work adds no rendering feature. Version numbers are not completion or produ
 - Implement plugin loading only after security review of `plugin_architecture.md`.
 
 Capabilities retain the classifications in `implementation_status.md` and `production_readiness.md`.
+
+## Native shader toolchain follow-up
+Complete native DXIL reflection/root-signature integration, SPIRV-Cross Metal/GLES translation, backend pipeline factories, and persistent binary cache before declaring this milestone production-complete. Hardware jobs remain separate and must name device/driver versions.

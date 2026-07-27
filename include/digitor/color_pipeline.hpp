@@ -15,5 +15,5 @@ struct ColorPipelineParameters {
 };
 enum class ColorPass { primary, curves, hue_curves, wheels };
 class ParameterBuffer { public: template<class T>void write(const T&v){auto*p=reinterpret_cast<const std::byte*>(&v);bytes_.assign(p,p+sizeof(T));} std::span<const std::byte> bytes()const{return bytes_;} private:std::vector<std::byte>bytes_; };
-class ColorShaderGraph { public: ColorShaderGraph(); const std::vector<ColorPass>& schedule()const{return schedule_;} void process_cpu(std::span<const Color>,std::span<Color>,const ColorPipelineParameters&)const; void process_gpu(CommandEncoder&,std::span<const Color>,std::span<Color>,const ColorPipelineParameters&); std::size_t shader_cache_size()const{return shaders_.size();}std::size_t pipeline_cache_size()const{return pipelines_.size();} private:std::vector<ColorPass>schedule_;ShaderCompiler compiler_;ShaderCache shaders_;PipelineCache pipelines_;};
+class ColorShaderGraph { public: ColorShaderGraph(); const std::vector<ColorPass>& schedule()const{return schedule_;} void process_cpu(std::span<const Color>,std::span<Color>,const ColorPipelineParameters&)const; void process_gpu(CommandEncoder&,std::span<const Color>,std::span<Color>,const ColorPipelineParameters&); std::size_t shader_cache_size()const{return 0;}std::size_t pipeline_cache_size()const{return 0;} private:std::vector<ColorPass>schedule_;};
 }

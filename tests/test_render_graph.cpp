@@ -115,11 +115,10 @@ void test_render_graph() {
     assert(stress.order().size() == 512);
     const auto stress_hash = stress.hash(); stress.compile(); assert(stress.hash() == stress_hash);
 
-    ShaderCompiler compiler;
-    RenderPipelineCaches caches;
-    const auto& shader = caches.shaders.get_or_compile(compiler, ShaderLanguage::glsl,
-        ShaderStage::compute, "void main(){}");
-    assert(caches.pipelines.get_or_create({shader.hash}) == caches.pipelines.get_or_create({shader.hash}));
-    assert(caches.descriptors.get_or_create("set0:storage") == caches.descriptors.get_or_create("set0:storage"));
-    assert(caches.samplers.get_or_create("linear:clamp") == caches.samplers.get_or_create("linear:clamp"));
+    CpuKernelRegistry kernels;
+    int kernel_calls = 0;
+    kernels.register_kernel("copy", [&](auto, auto) { ++kernel_calls; });
+    std::array<std::byte, 1> bytes{};
+    assert(kernels.execute("copy", bytes, bytes) && kernel_calls == 1);
+    assert(!kernels.execute("unregistered", bytes, bytes));
 }

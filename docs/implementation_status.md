@@ -31,3 +31,6 @@ Qualifier, or Timeline work is part of this milestone.
 
 See [render_graph.md](render_graph.md) and [resource_scheduler.md](resource_scheduler.md) for the
 construction, validation, allocation, and synchronization contracts.
+
+## Shader milestone audit
+The regex/source-search compiler and hash-valued pipeline cache were removed. Native compilation now fails when its required compiler, validator, or reflection facility is absent. The backend-neutral cache owns real polymorphic pipeline objects. Full cross-platform native factory wiring and persistent disk caching remain incomplete and are not presented as production-ready.

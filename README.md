@@ -119,3 +119,6 @@ MP4/H.264, MOV, MKV, WAV, and malformed inputs are never opaque checked-in binar
 plugin design are specified in [deterministic rendering](docs/deterministic_rendering.md) and
 [plugin architecture](docs/plugin_architecture.md). Current qualification limits are in
 [production readiness](docs/production_readiness.md); long-term ABI stability is not claimed.
+
+## Native shader milestone
+The canonical source contract is HLSL through DXC. Vulkan output must pass SPIRV-Tools validation and binary reflection before it is usable. Missing toolchains and unfinished D3D12/Metal/GLES reflection paths fail explicitly; the engine never substitutes a CPU callback after native compilation failure. See [the compiler](docs/shader_compiler.md), [reflection](docs/shader_reflection.md), [ABI](docs/shader_abi.md), and [cache](docs/pipeline_cache.md) documentation.
