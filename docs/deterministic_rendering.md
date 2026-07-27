@@ -39,3 +39,24 @@ multi-platform qualification.
 
 ## Shader determinism
 Shader cache identities include canonical HLSL, every include content identity, ordered compile controls, exact compiler version, target, specialization values, and shader ABI. Native pipelines additionally include all attachment/fixed-function and device compatibility state.
+
+## v4.5 color numerical policy
+
+Metadata resolution, graph ordering/identity on the same ABI, specified integer
+range normalization, and RGBA8 clear/copy require byte equality. Floating color
+is compared, not called byte-identical. FP32 qualification limits per operation
+are: transfer and YUV max absolute `2e-6`, max relative `2e-5`, RMS `5e-7`;
+matrix/adaptation max absolute `2e-6`, relative `2e-5`, RMS `5e-7`; PQ/HLG
+round-trip max absolute `8e-6`, relative `5e-5`, RMS `2e-6`. Image qualification
+additionally requires PSNR >= 100 dB and SSIM >= 0.99999. ULP is diagnostic
+because transcendental libraries differ. FP16 limits are not yet qualified.
+
+Fast-math is disabled. Reference matrix terms are evaluated row-major in written
+multiply/add order; shader contraction/FMA must be disabled for reference runs
+and separately reported otherwise. Round-to-nearest-even is assumed. Denormals
+are preserved by the CPU reference; a flushing GPU must be reported. No implicit
+clamp occurs. Non-finite values are rejected, PQ/HLG reject negatives, SDR
+functions use their documented signed extension. GLES shaders must use `highp`;
+FP16 and FP32 results are reported separately. Cross-GPU bit identity is not
+claimed. A report must include maximum absolute/relative/RMS errors, PSNR, SSIM,
+first failure, backend, operation and spaces.
