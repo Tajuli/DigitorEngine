@@ -119,6 +119,7 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
     digitor::VideoFrame curve_reference{.width=curve_width,.height=1,.pixels=curve_cpu};
     digitor::VideoFrame curve_actual{.width=curve_width,.height=1,.pixels=curve_gpu};
     const double curve_psnr=curve_rms==0?INFINITY:20*std::log10(1/curve_rms),curve_ssim=digitor::calculate_ssim(curve_reference,curve_actual);
+    std::cerr<<"RGB CURVES EXECUTION backend="<<name<<" result="<<curve_result<<" failure_stage=\""<<backend.execution_provenance().failure_stage<<"\"\n";
     std::cerr<<"RGB CURVES METRICS backend="<<name<<" max_error="<<curve_max<<" relative_error="<<curve_relative<<" rms="<<curve_rms<<" psnr="<<curve_psnr<<" ssim="<<curve_ssim<<" worst_pixel="<<worst<<'\n';
     const auto& curve_provenance=backend.execution_provenance();
     passed &= curve_result==DIGITOR_RESULT_OK && curve_max<2e-5 && curve_ssim>.99999 &&
