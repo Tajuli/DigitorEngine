@@ -5,6 +5,8 @@ project(DigitorEngine
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/rgb_curves.hlsl" DIGITOR_RGB_CURVES_HLSL)
+configure_file(cmake/rgb_curves_shader.hpp.in generated/rgb_curves_shader.hpp @ONLY)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -128,6 +130,7 @@ target_include_directories(digitor_engine
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 target_compile_definitions(digitor_engine PRIVATE DIGITOR_ENGINE_BUILD)

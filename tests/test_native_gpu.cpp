@@ -101,6 +101,24 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
         provenance.output_written && provenance.readback_performed &&
         provenance.cpu_fallback_invocations == 0 &&
         provenance.cpu_color_reference_invocations == 0;
+    digitor::RgbCurvesParameters curve_parameters;
+    curve_parameters.master.points={{0,0},{.3f,.18f},{.72f,.84f},{1,1}};
+    curve_parameters.red.points={{0,0},{.5f,.62f},{1,1}};
+    const auto curves=digitor::CompiledRgbCurves::compile(curve_parameters);
+    std::vector<digitor::Color> curve_cpu(grade_input.size()),curve_gpu(grade_input.size());
+    curves->apply(grade_input,curve_cpu);
+    const auto curve_result=backend.curves_rgba32f(grade_input,curve_gpu,*curves);
+    double curve_max=0,curve_relative=0,curve_squared=0;std::size_t worst=0;
+    for(std::size_t n=0;n<curve_cpu.size();++n)for(int c=0;c<4;++c){const float*a=&curve_cpu[n].r,*b=&curve_gpu[n].r;const double error=std::abs(double(a[c])-b[c]);if(error>curve_max){curve_max=error;worst=n;}curve_relative=std::max(curve_relative,error/std::max(1e-7,std::abs(double(a[c]))));curve_squared+=error*error;}
+    const double curve_rms=std::sqrt(curve_squared/(curve_cpu.size()*4));
+    digitor::VideoFrame curve_reference{.width=static_cast<uint32_t>(curve_cpu.size()),.height=1,.pixels=curve_cpu};
+    digitor::VideoFrame curve_actual{.width=static_cast<uint32_t>(curve_gpu.size()),.height=1,.pixels=curve_gpu};
+    const double curve_psnr=curve_rms==0?INFINITY:20*std::log10(1/curve_rms),curve_ssim=digitor::calculate_ssim(curve_reference,curve_actual);
+    std::cerr<<"RGB CURVES METRICS backend="<<name<<" max_error="<<curve_max<<" relative_error="<<curve_relative<<" rms="<<curve_rms<<" psnr="<<curve_psnr<<" ssim="<<curve_ssim<<" worst_pixel="<<worst<<'\n';
+    const auto& curve_provenance=backend.execution_provenance();
+    passed &= curve_result==DIGITOR_RESULT_OK && curve_max<2e-5 && curve_ssim>.99999 &&
+      curve_provenance.dispatch_or_draw_issued && curve_provenance.validation_readback_completed &&
+      curve_provenance.cpu_curve_invocations==0 && curve_provenance.curve_fallback_invocations==0;
     for (auto [width, height] : dimensions) {
         for (const auto color : colors) {
             const auto expected = solid(width, height, color);

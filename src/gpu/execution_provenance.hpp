@@ -68,5 +68,7 @@ GpuFailurePoint gpu_failure_point() noexcept;
 void note_cpu_color_reference() noexcept;
 std::uint64_t cpu_color_reference_count() noexcept;
 void reset_cpu_color_reference_count() noexcept;
+void note_cpu_curve_reference() noexcept;
+std::uint64_t cpu_curve_reference_count() noexcept;
 
 } // namespace digitor

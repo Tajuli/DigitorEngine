@@ -35,12 +35,15 @@ namespace digitor {
 namespace {
 std::atomic<GpuFailurePoint> failure_point{GpuFailurePoint::None};
 std::atomic<std::uint64_t> cpu_reference_count{0};
+std::atomic<std::uint64_t> cpu_curve_count{0};
 }
 void set_gpu_failure_point(GpuFailurePoint point) noexcept { failure_point.store(point); }
 GpuFailurePoint gpu_failure_point() noexcept { return failure_point.load(); }
 void note_cpu_color_reference() noexcept { ++cpu_reference_count; }
 std::uint64_t cpu_color_reference_count() noexcept { return cpu_reference_count.load(); }
 void reset_cpu_color_reference_count() noexcept { cpu_reference_count.store(0); }
+void note_cpu_curve_reference() noexcept { ++cpu_curve_count; }
+std::uint64_t cpu_curve_reference_count() noexcept { return cpu_curve_count.load(); }
 void IRenderBackend::begin_grade_provenance(
     DigitorRendererBackend backend, bool gpu, const char *device,
     const char *compiler, const char *shader, const char *pipeline) noexcept {
