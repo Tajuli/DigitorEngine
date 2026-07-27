@@ -52,10 +52,8 @@ void grade_image_gpu(CommandEncoder &e, const Color *i, Color *o, size_t n,
   if (!i || !o)
     throw std::invalid_argument("null color image");
   e.dispatch([=] {
-    if (!Engine::instance().is_initialized()) {
-      grade_image_cpu(i, o, n, p);
-      return;
-    }
+    if (!Engine::instance().is_initialized())
+      throw std::runtime_error("native GPU color dispatch requires an initialized GPU backend");
     if (Engine::instance().grade_rgba32f({i, n}, {o, n}, p) !=
         DIGITOR_RESULT_OK)
       throw std::runtime_error("native GPU color dispatch failed");
