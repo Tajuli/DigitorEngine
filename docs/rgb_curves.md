@@ -35,3 +35,9 @@ The stable serialization/cache key is ASCII with schema `rgb-curves:v1`, fixed o
 ## Performance harness
 
 `digitor_rgb_curves_benchmark` is non-gating and covers 1080p/4K, all LUT sizes, cold/warm compilation, cache hits, and a complex curve. It separates coefficient-plus-LUT generation from CPU application. Native pipeline creation, upload, execution, synchronization, and readback cannot truthfully be timed until native execution exists; normal preview timing includes no validation readback.
+
+## Native execution contract (v4.7 development)
+
+The canonical backend shader is `src/gpu/shaders/rgb_curves.hlsl`. It consumes four contiguous FP32 LUT planes (Master, Red, Green, Blue), performs endpoint-inclusive `u=(x-lo)*(N-1)/(hi-lo)` addressing and explicit linear interpolation, preserves unbounded linear extrapolation, and restores alpha. `NativeRgbCurvesKey` includes the complete compiled serialization, LUT size, interpolation and shader ABI versions, precision, backend, and device identity. `NativeRgbCurvesCache` is a bounded 64-entry LRU with synchronized in-flight creation; native ownership remains separate from the weak CPU compilation cache.
+
+The backend-neutral `RGB Curves Native` Render Graph pass declares shader-read/source and shader-write/destination dependencies. It accepts only a native executor and has no CPU fallback callback. At this revision native backend adapters have not yet wired the canonical artifact, so this is not a v4.7.0 release and the version remains 4.6.1.

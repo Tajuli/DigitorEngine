@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -65,12 +66,37 @@ private:
     std::string identity_;
 };
 
-// Adds an explicit CPU-reference pass. Native GPU curve attachment remains
-// unsupported until a backend supplies the complete binding/dispatch contract.
+enum class RgbCurvesBackend : std::uint32_t {
+    cpu = 0, vulkan = 1, d3d12 = 2, metal = 3, gles = 4
+};
+
+enum class RgbCurvesPrecision : std::uint32_t { fp32 = 1 };
+
+// Immutable native-resource key. Device identity is deliberately part of the
+// key: native objects are never shared between physical/logical devices.
+struct NativeRgbCurvesKey {
+    std::string compiled_identity;
+    std::string device_identity;
+    RgbCurvesBackend backend{RgbCurvesBackend::cpu};
+    RgbCurvesPrecision precision{RgbCurvesPrecision::fp32};
+    std::uint32_t lut_size{};
+    std::uint32_t interpolation_version{1};
+    std::uint32_t shader_abi_version{1};
+    bool operator==(const NativeRgbCurvesKey&) const noexcept = default;
+    [[nodiscard]] std::string serialize() const;
+};
+
+// Adds the explicit CPU-reference pass; GPU backends never call this executor.
 GraphPass add_rgb_curves_cpu_pass(RenderGraph&, GraphResource source,
                                   GraphResource destination,
                                   std::shared_ptr<const CompiledRgbCurves>,
                                   std::span<const Color> input,
                                   std::span<Color> output);
+
+// Backend-neutral graph pass. GPU work is submitted only by the selected
+// backend; an error is returned by that backend rather than falling back.
+GraphPass add_rgb_curves_pass(RenderGraph&, GraphResource source,
+                              GraphResource destination,
+                              std::function<void(CommandEncoder&)> native_execute);
 
 } // namespace digitor

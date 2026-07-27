@@ -38,3 +38,5 @@ the CPU reference in non-hardware tests.
 ## v4.7 RGB Curves qualification remaining
 
 The curve math, CPU reference, LUT cache, and CPU graph contract are implemented. Release requires real backend shaders/resources/dispatch on Vulkan, D3D12, Metal, and GLES, native provenance and numerical/performance qualification. Wheels, qualifier, 3D LUT, UI, timeline, codecs, and export formats are explicitly out of this item.
+
+The v4.7 implementation now has its canonical shader ABI, native LUT cache, graph node and provenance contract. Remaining release gates are native adapter wiring on Vulkan/D3D12/Metal/GLES, preview texture routing, failure execution, hardware numerical reports, and performance capture. No compilation-only result counts as verification.

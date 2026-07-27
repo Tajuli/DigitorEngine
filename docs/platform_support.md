@@ -45,3 +45,7 @@ the CPU reference in non-hardware tests.
 ## RGB Curves
 
 The CPU FP32 reference is implemented on supported desktop hosts. Vulkan, D3D12, Metal, and OpenGL ES native curve execution are currently **Unsupported** and have no hardware evidence. Compilation on a platform does not change that classification; Android/iOS are not verified.
+
+### RGB Curves native resource requirements
+
+FP32 storage buffers are the canonical representation. Vulkan requires storage buffers and compute; D3D12 requires SM 6/DXIL, UAV/SRV/CBV and fence support; Metal requires compute and shared/private buffers; GLES requires ES 3.0 plus `EXT_color_buffer_float` for RGBA32F output. A device that cannot represent 4096 FP32 samples per each of four planes must return unsupported rather than downgrade.

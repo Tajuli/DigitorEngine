@@ -37,3 +37,5 @@ implementation of the identical scheduling abstraction.
 ## RGB Curves
 
 `add_rgb_curves_cpu_pass` records an immutable compiled descriptor as an explicit shader-read source and shader-write destination pass. It is pure/cullable, replayable, and participates in normal dependency, barrier, lifetime, and transient-alias analysis. Native GPU curve attachment is currently unsupported rather than hidden outside the graph.
+
+The native RGB Curves pass declares source shader-read and destination shader-write uses, is cullable when its output is not exported, and therefore participates in dependency ordering, barriers, replay identity, lifetime analysis and transient aliasing. Native dispatch is supplied as the pass executor; CPU reference execution uses the separately named CPU pass only.

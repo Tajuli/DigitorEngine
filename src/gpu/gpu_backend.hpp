@@ -9,6 +9,7 @@
 
 #include "digitor/color.hpp"
 #include "digitor/digitor.h"
+#include "digitor/rgb_curves.hpp"
 #include "gpu/execution_provenance.hpp"
 #include "platform/platform.hpp"
 
@@ -43,6 +44,9 @@ public:
   virtual DigitorResult grade_rgba32f(std::span<const Color> source,
                                       std::span<Color> destination,
                                       const ColorGrade &parameters) noexcept;
+  virtual DigitorResult curves_rgba32f(std::span<const Color> source,
+                                       std::span<Color> destination,
+                                       const CompiledRgbCurves&) noexcept;
   [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
     return provenance_;
   }

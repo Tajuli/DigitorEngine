@@ -129,3 +129,5 @@ is max absolute error `<2e-5` and SSIM `>0.99999`. It also validates 1x1, 2x2,
 3x2, 7x5, 63x17, 65x3, and 257x2 upload/readback patterns. Results are not
 recorded as passed unless that executable actually runs. Vulkan absence is a
 skip; D3D12 availability is required by the Windows hardware-labeled test.
+
+RGB Curves is a distinct canonical compute ABI (`rgb_curves.hlsl`) and does not alter the v4.6.1 primary-grade shader or its validated operation order.

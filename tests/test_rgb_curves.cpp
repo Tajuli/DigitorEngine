@@ -1,4 +1,5 @@
 #include "digitor/rgb_curves.hpp"
+#include "gpu/native_rgb_curves.hpp"
 #include <cassert>
 #include <cmath>
 #include <limits>
@@ -14,4 +15,8 @@ void test_rgb_curves(){using namespace digitor;
  bad=false;try{RgbCurvesParameters q;q.blue.points[0].x=std::numeric_limits<float>::quiet_NaN();(void)CompiledRgbCurves::compile(q);}catch(const std::invalid_argument&){bad=true;}assert(bad);
  bad=false;try{RgbCurvesParameters q;q.master.domain_min=2;(void)CompiledRgbCurves::compile(q);}catch(const std::invalid_argument&){bad=true;}assert(bad);
  std::vector<Color> in(15,a),out(15);curve->apply(in,out);for(auto q:out)assert(q.a==a.a);
+ NativeRgbCurvesKey nk{curve->identity(),"device-a",RgbCurvesBackend::vulkan,RgbCurvesPrecision::fp32,curve->lut_size(),1,1};
+ NativeRgbCurvesKey other{curve->identity(),"device-b",RgbCurvesBackend::vulkan,RgbCurvesPrecision::fp32,curve->lut_size(),1,1};assert(nk.serialize()!=other.serialize());
+ NativeRgbCurvesCache native(2);int uploads=0;auto make=[&]{++uploads;auto r=std::make_shared<NativeRgbCurvesResource>();r->identity=nk.serialize();r->uploaded_bytes=curve->lut_size()*4*sizeof(float);return r;};
+ auto cold=native.get_or_create(nk,make),warm=native.get_or_create(nk,make);assert(!cold.hit&&warm.hit&&uploads==1&&native.size()==1);
 }

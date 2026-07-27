@@ -106,6 +106,10 @@ DigitorResult IRenderBackend::grade_rgba32f(std::span<const Color>,
                                             const ColorGrade &) noexcept {
   return DIGITOR_RESULT_UNSUPPORTED;
 }
+DigitorResult IRenderBackend::curves_rgba32f(std::span<const Color>, std::span<Color>,
+                                             const CompiledRgbCurves&) noexcept {
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
 namespace {
 
 class DeviceBackend final : public IRenderBackend {

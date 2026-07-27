@@ -27,6 +27,8 @@ public:
                                      std::vector<uint8_t> &);
   DigitorResult grade_rgba32f(std::span<const Color>, std::span<Color>,
                               const ColorGrade &);
+  DigitorResult curves_rgba32f(std::span<const Color>, std::span<Color>,
+                               const CompiledRgbCurves&);
 
 private:
   Engine() = default;

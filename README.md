@@ -146,3 +146,7 @@ not a production-readiness claim.
 ### RGB Curves
 
 An immutable FP32 CPU reference, monotone-cubic control-point compiler, deterministic 256/1024/4096-sample LUTs, and explicit CPU Render Graph node are documented in [`docs/rgb_curves.md`](docs/rgb_curves.md). Native GPU curves are truthfully unsupported; there is no CPU fallback after GPU selection.
+
+### RGB Curves native execution development
+
+A single canonical HLSL shader, device-scoped bounded native FP32 LUT cache, backend-neutral Render Graph pass and detailed curve provenance contract are present. Native backend dispatch and hardware qualification are still open, so the advertised engine version intentionally remains 4.6.1 and no Preview = Export claim is made. See [the RGB Curves specification](docs/rgb_curves.md).
