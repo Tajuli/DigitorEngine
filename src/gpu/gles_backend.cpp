@@ -1,12 +1,309 @@
 #ifdef __ANDROID__
+#include "core/string_utils.hpp"
+#include "gpu/gpu_backend.hpp"
 #include <GLES3/gl3.h>
 #include <cstring>
-#include "gpu/gpu_backend.hpp"
-#include "core/string_utils.hpp"
-namespace digitor { namespace { struct GlObject{GLuint name;}; class GlBackend final:public IRenderBackend{DigitorRendererInfo i_{};public:GlBackend(){i_.backend=DIGITOR_RENDERER_OPENGL_ES;copy_bounded(i_.backend_name,"OpenGL ES");copy_bounded(i_.device_name,"Current EGL context");i_.is_gpu=i_.supports_fp32=1;}bool initialize(bool)override{return glGetString(GL_VERSION)!=nullptr;}void shutdown()noexcept override{}DigitorRendererInfo info()const noexcept override{return i_;}DigitorResult create_texture(const DigitorTextureDesc&d,void**o)noexcept override{*o=nullptr;GLenum in=0,format=GL_RGBA,type=GL_UNSIGNED_BYTE;switch(d.format){case DIGITOR_PIXEL_FORMAT_RGBA8_UNORM:in=GL_RGBA8;break;case DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT:in=GL_RGBA16F;type=GL_HALF_FLOAT;break;case DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT:in=GL_RGBA32F;type=GL_FLOAT;break;default:return DIGITOR_RESULT_UNSUPPORTED;}auto*p=new(std::nothrow)GlObject{};if(!p)return DIGITOR_RESULT_OUT_OF_MEMORY;glGenTextures(1,&p->name);glBindTexture(GL_TEXTURE_2D,p->name);glTexImage2D(GL_TEXTURE_2D,0,in,d.width,d.height,0,format,type,nullptr);if(glGetError()!=GL_NO_ERROR){glDeleteTextures(1,&p->name);delete p;return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}*o=p;return DIGITOR_RESULT_OK;}DigitorResult create_buffer(const DigitorBufferDesc&d,void**o)noexcept override{auto*p=new(std::nothrow)GlObject{};if(!p)return DIGITOR_RESULT_OUT_OF_MEMORY;glGenBuffers(1,&p->name);glBindBuffer(GL_ARRAY_BUFFER,p->name);glBufferData(GL_ARRAY_BUFFER,(GLsizeiptr)d.size,nullptr,(d.usage&DIGITOR_BUFFER_USAGE_UPLOAD)?GL_STREAM_DRAW:GL_STATIC_DRAW);if(glGetError()!=GL_NO_ERROR){glDeleteBuffers(1,&p->name);delete p;return DIGITOR_RESULT_OUT_OF_MEMORY;}*o=p;return DIGITOR_RESULT_OK;}DigitorResult create_sampler(const DigitorSamplerDesc&,void**o)noexcept override{auto*p=new(std::nothrow)GlObject{};if(!p)return DIGITOR_RESULT_OUT_OF_MEMORY;glGenSamplers(1,&p->name);*o=p;return glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;}DigitorResult map_buffer(void*p,uint64_t offset,uint64_t size,void**o)noexcept override{if(!p||!o)return DIGITOR_RESULT_INVALID_ARGUMENT;auto*x=(GlObject*)p;glBindBuffer(GL_ARRAY_BUFFER,x->name);*o=glMapBufferRange(GL_ARRAY_BUFFER,(GLintptr)offset,(GLsizeiptr)size,GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_RANGE_BIT);return *o?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;}void unmap_buffer(void*p)noexcept override{if(p){glBindBuffer(GL_ARRAY_BUFFER,((GlObject*)p)->name);glUnmapBuffer(GL_ARRAY_BUFFER);}}
-DigitorResult render_rgba8(uint32_t w,uint32_t h,std::span<const uint8_t>src,std::vector<uint8_t>&out)noexcept override{if(!w||!h||(!src.empty()&&src.size()!=size_t(w)*h*4))return DIGITOR_RESULT_INVALID_ARGUMENT;const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.0-1.0,0,1);}";const char*fs="#version 300 es\nprecision highp float;in vec2 uv;uniform sampler2D image;out vec4 color;void main(){color=texture(image,uv);}";auto compile=[](GLenum type,const char*text){GLuint sh=glCreateShader(type);glShaderSource(sh,1,&text,nullptr);glCompileShader(sh);GLint ok=0;glGetShaderiv(sh,GL_COMPILE_STATUS,&ok);if(!ok){glDeleteShader(sh);return GLuint(0);}return sh;};GLuint v=compile(GL_VERTEX_SHADER,vs),f=compile(GL_FRAGMENT_SHADER,fs),program=glCreateProgram();if(!v||!f)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;glAttachShader(program,v);glAttachShader(program,f);glLinkProgram(program);glDeleteShader(v);glDeleteShader(f);GLint linked=0;glGetProgramiv(program,GL_LINK_STATUS,&linked);if(!linked){glDeleteProgram(program);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}GLuint input=0,target=0,fbo=0;glGenTextures(1,&input);glBindTexture(GL_TEXTURE_2D,input);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA8,w,h);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);if(!src.empty())glTexSubImage2D(GL_TEXTURE_2D,0,0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,src.data());glGenTextures(1,&target);glBindTexture(GL_TEXTURE_2D,target);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA8,w,h);glGenFramebuffers(1,&fbo);glBindFramebuffer(GL_FRAMEBUFFER,fbo);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,target,0);glViewport(0,0,w,h);if(src.empty()){glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);}else{glUseProgram(program);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,input);glUniform1i(glGetUniformLocation(program,"image"),0);glDrawArrays(GL_TRIANGLES,0,3);}try{out.resize(size_t(w)*h*4);}catch(...){return DIGITOR_RESULT_OUT_OF_MEMORY;}glReadPixels(0,0,w,h,GL_RGBA,GL_UNSIGNED_BYTE,out.data());glFinish();GLenum error=glGetError();glDeleteFramebuffers(1,&fbo);glDeleteTextures(1,&target);glDeleteTextures(1,&input);glDeleteProgram(program);return error==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;}void destroy_texture(void*p)noexcept override{auto*x=(GlObject*)p;if(x){glDeleteTextures(1,&x->name);delete x;}}void destroy_buffer(void*p)noexcept override{auto*x=(GlObject*)p;if(x){glDeleteBuffers(1,&x->name);delete x;}}void destroy_sampler(void*p)noexcept override{auto*x=(GlObject*)p;if(x){glDeleteSamplers(1,&x->name);delete x;}}};}std::unique_ptr<IRenderBackend>create_native_backend(DigitorRendererBackend b){
+namespace digitor {
+namespace {
+struct GlObject {
+  GLuint name;
+};
+class GlBackend final : public IRenderBackend {
+  DigitorRendererInfo i_{};
+
+public:
+  GlBackend() {
+    i_.backend = DIGITOR_RENDERER_OPENGL_ES;
+    copy_bounded(i_.backend_name, "OpenGL ES");
+    copy_bounded(i_.device_name, "Current EGL context");
+    i_.is_gpu = i_.supports_fp32 = 1;
+  }
+  bool initialize(bool) override { return glGetString(GL_VERSION) != nullptr; }
+  void shutdown() noexcept override {}
+  DigitorRendererInfo info() const noexcept override { return i_; }
+  DigitorResult create_texture(const DigitorTextureDesc &d,
+                               void **o) noexcept override {
+    *o = nullptr;
+    GLenum in = 0, format = GL_RGBA, type = GL_UNSIGNED_BYTE;
+    switch (d.format) {
+    case DIGITOR_PIXEL_FORMAT_RGBA8_UNORM:
+      in = GL_RGBA8;
+      break;
+    case DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT:
+      in = GL_RGBA16F;
+      type = GL_HALF_FLOAT;
+      break;
+    case DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT:
+      in = GL_RGBA32F;
+      type = GL_FLOAT;
+      break;
+    default:
+      return DIGITOR_RESULT_UNSUPPORTED;
+    }
+    auto *p = new (std::nothrow) GlObject{};
+    if (!p)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    glGenTextures(1, &p->name);
+    glBindTexture(GL_TEXTURE_2D, p->name);
+    glTexImage2D(GL_TEXTURE_2D, 0, in, d.width, d.height, 0, format, type,
+                 nullptr);
+    if (glGetError() != GL_NO_ERROR) {
+      glDeleteTextures(1, &p->name);
+      delete p;
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    *o = p;
+    return DIGITOR_RESULT_OK;
+  }
+  DigitorResult create_buffer(const DigitorBufferDesc &d,
+                              void **o) noexcept override {
+    auto *p = new (std::nothrow) GlObject{};
+    if (!p)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    glGenBuffers(1, &p->name);
+    glBindBuffer(GL_ARRAY_BUFFER, p->name);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)d.size, nullptr,
+                 (d.usage & DIGITOR_BUFFER_USAGE_UPLOAD) ? GL_STREAM_DRAW
+                                                         : GL_STATIC_DRAW);
+    if (glGetError() != GL_NO_ERROR) {
+      glDeleteBuffers(1, &p->name);
+      delete p;
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    }
+    *o = p;
+    return DIGITOR_RESULT_OK;
+  }
+  DigitorResult create_sampler(const DigitorSamplerDesc &,
+                               void **o) noexcept override {
+    auto *p = new (std::nothrow) GlObject{};
+    if (!p)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    glGenSamplers(1, &p->name);
+    *o = p;
+    return glGetError() == GL_NO_ERROR ? DIGITOR_RESULT_OK
+                                       : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  DigitorResult map_buffer(void *p, uint64_t offset, uint64_t size,
+                           void **o) noexcept override {
+    if (!p || !o)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto *x = (GlObject *)p;
+    glBindBuffer(GL_ARRAY_BUFFER, x->name);
+    *o = glMapBufferRange(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size,
+                          GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
+    return *o ? DIGITOR_RESULT_OK : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  void unmap_buffer(void *p) noexcept override {
+    if (p) {
+      glBindBuffer(GL_ARRAY_BUFFER, ((GlObject *)p)->name);
+      glUnmapBuffer(GL_ARRAY_BUFFER);
+    }
+  }
+  DigitorResult render_rgba8(uint32_t w, uint32_t h,
+                             std::span<const uint8_t> src,
+                             std::vector<uint8_t> &out) noexcept override {
+    if (!w || !h || (!src.empty() && src.size() != size_t(w) * h * 4))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    const char *vs =
+        "#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 "
+        "p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.0-"
+        "1.0,0,1);}";
+    const char *fs =
+        "#version 300 es\nprecision highp float;in vec2 uv;uniform sampler2D "
+        "image;out vec4 color;void main(){color=texture(image,uv);}";
+    auto compile = [](GLenum type, const char *text) {
+      GLuint sh = glCreateShader(type);
+      glShaderSource(sh, 1, &text, nullptr);
+      glCompileShader(sh);
+      GLint ok = 0;
+      glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+      if (!ok) {
+        glDeleteShader(sh);
+        return GLuint(0);
+      }
+      return sh;
+    };
+    GLuint v = compile(GL_VERTEX_SHADER, vs),
+           f = compile(GL_FRAGMENT_SHADER, fs), program = glCreateProgram();
+    if (!v || !f)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    glAttachShader(program, v);
+    glAttachShader(program, f);
+    glLinkProgram(program);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    GLint linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+      glDeleteProgram(program);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    GLuint input = 0, target = 0, fbo = 0;
+    glGenTextures(1, &input);
+    glBindTexture(GL_TEXTURE_2D, input);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    if (!src.empty())
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                      src.data());
+    glGenTextures(1, &target);
+    glBindTexture(GL_TEXTURE_2D, target);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           target, 0);
+    glViewport(0, 0, w, h);
+    if (src.empty()) {
+      glClearColor(0, 0, 0, 1);
+      glClear(GL_COLOR_BUFFER_BIT);
+    } else {
+      glUseProgram(program);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, input);
+      glUniform1i(glGetUniformLocation(program, "image"), 0);
+      glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    try {
+      out.resize(size_t(w) * h * 4);
+    } catch (...) {
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    }
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+    glFinish();
+    GLenum error = glGetError();
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &target);
+    glDeleteTextures(1, &input);
+    glDeleteProgram(program);
+    return error == GL_NO_ERROR ? DIGITOR_RESULT_OK
+                                : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  DigitorResult grade_rgba32f(std::span<const Color> src, std::span<Color> out,
+                              const ColorGrade &p) noexcept override {
+    if (src.size() != out.size())
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (src.empty())
+      return DIGITOR_RESULT_OK;
+    const char *vs =
+        "#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 "
+        "q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.0-"
+        "1.0,0,1);}";
+    const char *fs =
+        "#version 300 es\nprecision highp float;in vec2 uv;uniform sampler2D "
+        "im;uniform float "
+        "exposure,contrast,gamma_,lift,gain,offset_,temperature,tint,"
+        "saturation,vibrance,hue;out vec4 color;void main(){vec4 "
+        "c=texture(im,uv);vec3 x=c.rgb;float "
+        "t=temperature*.1;x.r+=t;x.b-=t;x.g+=tint*.1;float "
+        "l=dot(x,vec3(.2126,.7152,.0722));float "
+        "v=1.+vibrance*(1.-(max(x.r,max(x.g,x.b))-min(x.r,min(x.g,x.b))));x=l+("
+        "x-l)*(saturation*v);x=(x-.5)*contrast+.5;x=(x+lift)*gain+offset_;x*="
+        "exp2(exposure);x=sign(x)*pow(abs(x),vec3(1./max(.001,gamma_)));float "
+        "a=hue*.0174532925199433,co=cos(a),s=sin(a);vec3 "
+        "r=x;x=vec3((.213+co*.787-s*.213)*r.r+(.715-co*.715-s*.715)*r.g+(.072-"
+        "co*.072+s*.928)*r.b,(.213-co*.213+s*.143)*r.r+(.715+co*.285+s*.140)*r."
+        "g+(.072-co*.072-s*.283)*r.b,(.213-co*.213-s*.787)*r.r+(.715-co*.715+s*"
+        ".715)*r.g+(.072+co*.928+s*.072)*r.b);color=vec4(x,c.a);}";
+    auto comp = [](GLenum t, const char *z) {
+      GLuint s = glCreateShader(t);
+      glShaderSource(s, 1, &z, nullptr);
+      glCompileShader(s);
+      GLint ok;
+      glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+      if (!ok) {
+        glDeleteShader(s);
+        return GLuint(0);
+      }
+      return s;
+    };
+    GLuint v = comp(GL_VERTEX_SHADER, vs), f = comp(GL_FRAGMENT_SHADER, fs);
+    if (!v || !f)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, v);
+    glAttachShader(prog, f);
+    glLinkProgram(prog);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+      glDeleteProgram(prog);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    GLuint input, target, fb;
+    glGenTextures(1, &input);
+    glBindTexture(GL_TEXTURE_2D, input);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, src.size(), 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src.size(), 1, GL_RGBA, GL_FLOAT,
+                    src.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(1, &target);
+    glBindTexture(GL_TEXTURE_2D, target);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, src.size(), 1);
+    glGenFramebuffers(1, &fb);
+    glBindFramebuffer(GL_FRAMEBUFFER, fb);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           target, 0);
+    glUseProgram(prog);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, input);
+    glUniform1i(glGetUniformLocation(prog, "im"), 0);
+    const char *names[] = {"exposure",   "contrast", "gamma_",      "lift",
+                           "gain",       "offset_",  "temperature", "tint",
+                           "saturation", "vibrance", "hue"};
+    const float vals[] = {p.exposure,   p.contrast, p.gamma,       p.lift,
+                          p.gain,       p.offset,   p.temperature, p.tint,
+                          p.saturation, p.vibrance, p.hue};
+    for (int k = 0; k < 11; k++)
+      glUniform1f(glGetUniformLocation(prog, names[k]), vals[k]);
+    glViewport(0, 0, src.size(), 1);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glReadPixels(0, 0, src.size(), 1, GL_RGBA, GL_FLOAT, out.data());
+    glFinish();
+    GLenum error = glGetError();
+    glDeleteFramebuffers(1, &fb);
+    glDeleteTextures(1, &target);
+    glDeleteTextures(1, &input);
+    glDeleteProgram(prog);
+    return error == GL_NO_ERROR ? DIGITOR_RESULT_OK
+                                : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  void destroy_texture(void *p) noexcept override {
+    auto *x = (GlObject *)p;
+    if (x) {
+      glDeleteTextures(1, &x->name);
+      delete x;
+    }
+  }
+  void destroy_buffer(void *p) noexcept override {
+    auto *x = (GlObject *)p;
+    if (x) {
+      glDeleteBuffers(1, &x->name);
+      delete x;
+    }
+  }
+  void destroy_sampler(void *p) noexcept override {
+    auto *x = (GlObject *)p;
+    if (x) {
+      glDeleteSamplers(1, &x->name);
+      delete x;
+    }
+  }
+};
+} // namespace
+std::unique_ptr<IRenderBackend>
+create_native_backend(DigitorRendererBackend b) {
 #ifdef DIGITOR_HAS_VULKAN
-extern std::unique_ptr<IRenderBackend> create_vulkan_backend(); if(b==DIGITOR_RENDERER_VULKAN)return create_vulkan_backend();
+  extern std::unique_ptr<IRenderBackend> create_vulkan_backend();
+  if (b == DIGITOR_RENDERER_VULKAN)
+    return create_vulkan_backend();
 #endif
-return b==DIGITOR_RENDERER_OPENGL_ES?std::make_unique<GlBackend>():nullptr;}}
+  return b == DIGITOR_RENDERER_OPENGL_ES ? std::make_unique<GlBackend>()
+                                         : nullptr;
+}
+} // namespace digitor
 #endif

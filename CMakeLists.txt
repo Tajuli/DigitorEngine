@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 4.2.0
+    VERSION 4.3.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -132,7 +132,7 @@ elseif (WIN32)
 endif()
 
 if (WIN32)
-    target_link_libraries(digitor_engine PRIVATE d3d12 dxgi)
+    target_link_libraries(digitor_engine PRIVATE d3d12 dxgi d3dcompiler)
 elseif(APPLE)
     target_link_libraries(digitor_engine PRIVATE "-framework Metal" "-framework Foundation")
 elseif(ANDROID)

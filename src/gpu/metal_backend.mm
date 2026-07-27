@@ -183,6 +183,37 @@ public:
         }
     }
 
+    DigitorResult grade_rgba32f(std::span<const Color> source, std::span<Color> out,
+                                const ColorGrade& p) noexcept override {
+        if (source.size() != out.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+        if (source.empty()) return DIGITOR_RESULT_OK;
+        @autoreleasepool {
+            static NSString* code = @"#include <metal_stdlib>\nusing namespace metal;\n"
+                "struct P{float exposure,contrast,gamma,lift,gain,offset,temperature,tint,saturation,vibrance,hue;};\n"
+                "kernel void grade(device const float4* i[[buffer(0)]],device float4* o[[buffer(1)]],constant P&p[[buffer(2)]],constant uint&n[[buffer(3)]],uint k[[thread_position_in_grid]]){if(k>=n)return;float4 c=i[k];float3 x=c.rgb;float t=p.temperature*.1; x.r+=t;x.b-=t;x.g+=p.tint*.1;float l=dot(x,float3(.2126,.7152,.0722));float v=1+p.vibrance*(1-(max(x.r,max(x.g,x.b))-min(x.r,min(x.g,x.b))));x=l+(x-l)*(p.saturation*v);x=(x-.5)*p.contrast+.5;x=(x+p.lift)*p.gain+p.offset;x*=exp2(p.exposure);x=sign(x)*pow(abs(x),float3(1/max(.001,p.gamma)));float a=p.hue*.0174532925199433,co=cos(a),s=sin(a);float3 r=x;x=float3((.213+co*.787-s*.213)*r.r+(.715-co*.715-s*.715)*r.g+(.072-co*.072+s*.928)*r.b,(.213-co*.213+s*.143)*r.r+(.715+co*.285+s*.140)*r.g+(.072-co*.072-s*.283)*r.b,(.213-co*.213-s*.787)*r.r+(.715-co*.715+s*.715)*r.g+(.072+co*.928+s*.072)*r.b);o[k]=float4(x,c.a);}";
+            NSError* error = nil;
+            id<MTLLibrary> library = [device_ newLibraryWithSource:code options:nil error:&error];
+            id<MTLFunction> function = [library newFunctionWithName:@"grade"];
+            id<MTLComputePipelineState> pipeline = function ? [device_ newComputePipelineStateWithFunction:function error:&error] : nil;
+            id<MTLCommandQueue> queue = [device_ newCommandQueue];
+            const NSUInteger bytes = source.size_bytes();
+            id<MTLBuffer> input = [device_ newBufferWithBytes:source.data() length:bytes options:MTLResourceStorageModeShared];
+            id<MTLBuffer> output = [device_ newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+            if (!pipeline || !queue || !input || !output) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            id<MTLCommandBuffer> command = [queue commandBuffer];
+            id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+            uint32_t count = static_cast<uint32_t>(source.size());
+            [encoder setComputePipelineState:pipeline]; [encoder setBuffer:input offset:0 atIndex:0];
+            [encoder setBuffer:output offset:0 atIndex:1]; [encoder setBytes:&p length:sizeof(p) atIndex:2];
+            [encoder setBytes:&count length:sizeof(count) atIndex:3];
+            const NSUInteger group = std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup, 64);
+            [encoder dispatchThreads:MTLSizeMake(count,1,1) threadsPerThreadgroup:MTLSizeMake(group,1,1)];
+            [encoder endEncoding]; [command commit]; [command waitUntilCompleted];
+            if (command.status != MTLCommandBufferStatusCompleted) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            std::memcpy(out.data(), output.contents, bytes); return DIGITOR_RESULT_OK;
+        }
+    }
+
     void destroy_texture(void* object) noexcept override { release_native(object); }
     void destroy_buffer(void* object) noexcept override { release_native(object); }
     void destroy_sampler(void* object) noexcept override { release_native(object); }
