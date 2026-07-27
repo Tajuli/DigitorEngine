@@ -32,6 +32,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 add_library(digitor_engine
     src/core/engine.cpp
+    src/core/environment.cpp
     src/core/render_context.cpp
     src/core/resources.cpp
     src/gpu/gpu_backend.cpp

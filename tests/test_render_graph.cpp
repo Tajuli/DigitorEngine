@@ -2,6 +2,7 @@
 #include "digitor/shader.hpp"
 
 #include <cassert>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,6 +22,13 @@ digitor::RenderPass pass(std::string name, std::vector<digitor::ResourceUse> rea
                 encoder.dispatch([replay, marker] { if (replay) replay->push_back(marker); });
             }, side_effect};
 }
+
+class TestPipeline final : public digitor::NativePipeline {
+public:
+    digitor::ShaderBackend backend() const noexcept override {
+        return digitor::ShaderBackend::vulkan;
+    }
+};
 }
 
 void test_render_graph() {
@@ -121,4 +129,25 @@ void test_render_graph() {
     std::array<std::byte, 1> bytes{};
     assert(kernels.execute("copy", bytes, bytes) && kernel_calls == 1);
     assert(!kernels.execute("unregistered", bytes, bytes));
+
+    PipelineCache pipeline_cache;
+    PipelineDescription pipeline_description;
+    pipeline_description.shader_binary_keys = {"compiled-shader"};
+    pipeline_description.device_compatibility = "test-device-driver";
+    int creations = 0;
+    const auto first_pipeline = pipeline_cache.get_or_create(pipeline_description, [&] {
+        ++creations;
+        return std::make_shared<TestPipeline>();
+    });
+    const auto same_pipeline = pipeline_cache.get_or_create(pipeline_description, [&] {
+        ++creations;
+        return std::make_shared<TestPipeline>();
+    });
+    assert(first_pipeline == same_pipeline && creations == 1 && pipeline_cache.size() == 1);
+    pipeline_description.render_target_formats = "rgba16f";
+    pipeline_cache.get_or_create(pipeline_description, [&] {
+        ++creations;
+        return std::make_shared<TestPipeline>();
+    });
+    assert(creations == 2 && pipeline_cache.size() == 2);
 }

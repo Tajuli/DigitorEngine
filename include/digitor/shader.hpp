@@ -94,12 +94,10 @@ private:
 
 class ShaderCache {
 public:
-    explicit ShaderCache(std::filesystem::path disk_directory = {}, std::uint64_t maximum_bytes = 64u << 20);
+    ShaderCache() = default;
     ShaderCompileResult get_or_compile(const ShaderCompiler&, const ShaderCompileRequest&);
     std::size_t size() const;
 private:
-    std::filesystem::path disk_directory_;
-    std::uint64_t maximum_bytes_;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::shared_ptr<ShaderCompileResult>> entries_;
 };
