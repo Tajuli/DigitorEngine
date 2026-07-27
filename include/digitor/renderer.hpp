@@ -37,7 +37,7 @@ private:
     SharedRenderer& renderer_;
 };
 
-struct PixelValidation { double psnr{},ssim{}; std::size_t differing_pixels{}; bool passed{}; };
+struct PixelValidation { double max_absolute_error{},rms_error{},psnr{},ssim{}; std::size_t differing_pixels{}; bool passed{}; };
 double calculate_psnr(const VideoFrame&,const VideoFrame&);
 double calculate_ssim(const VideoFrame&,const VideoFrame&);
 PixelValidation validate_pixels(const VideoFrame&,const VideoFrame&,double minimum_psnr=40.0,double minimum_ssim=0.99);

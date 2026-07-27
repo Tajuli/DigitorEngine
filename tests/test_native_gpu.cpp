@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <iostream>
 #include <string_view>
 #include <vector>
 
 #include "gpu/gpu_backend.hpp"
+#include "digitor/renderer.hpp"
 
 namespace {
 using Pixel = std::array<std::uint8_t, 4>;
@@ -76,6 +78,22 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
     constexpr std::array colors{Pixel{255,0,0,255}, Pixel{0,255,0,255}, Pixel{0,0,255,255},
         Pixel{0,0,0,255}, Pixel{17,53,101,211}};
     bool passed = true;
+    std::vector<digitor::Color> grade_input{{.0f,.25f,1.f,1.f},{.1f,.5f,.9f,.75f},
+        {-.1f,1.2f,.33f,.5f}}, grade_cpu(grade_input.size()), grade_gpu(grade_input.size());
+    digitor::ColorGrade grade{.exposure=.25f,.contrast=1.1f,.gamma=.95f,.lift=.02f,
+        .gain=1.03f,.offset=-.01f,.temperature=.15f,.tint=-.1f,.saturation=.8f};
+    digitor::grade_image_cpu(grade_input.data(),grade_cpu.data(),grade_input.size(),grade);
+    const auto grade_result=backend.grade_rgba32f(grade_input,grade_gpu,grade);
+    double maximum=0,squared=0;
+    for(std::size_t n=0;n<grade_cpu.size();++n)for(int c=0;c<4;++c){const float*a=&grade_cpu[n].r,*b=&grade_gpu[n].r;double error=std::abs(double(a[c])-b[c]);maximum=std::max(maximum,error);squared+=error*error;}
+    const double rms=std::sqrt(squared/(grade_cpu.size()*4));
+    const double psnr=rms==0?INFINITY:20*std::log10(1/rms);
+    digitor::VideoFrame reference{.width=static_cast<uint32_t>(grade_cpu.size()),.height=1,.pixels=grade_cpu};
+    digitor::VideoFrame actual{.width=static_cast<uint32_t>(grade_gpu.size()),.height=1,.pixels=grade_gpu};
+    const double ssim=digitor::calculate_ssim(reference,actual);
+    std::cerr<<"COLOR METRICS backend="<<name<<" max_absolute_error="<<maximum
+             <<" rms_error="<<rms<<" psnr="<<psnr<<" ssim="<<ssim<<'\n';
+    passed &= grade_result==DIGITOR_RESULT_OK && maximum<2e-5 && ssim>.99999;
     for (auto [width, height] : dimensions) {
         for (const auto color : colors) {
             const auto expected = solid(width, height, color);

@@ -1,3 +1,33 @@
+# Implementation status — v4.3.0
+
+## Native color execution
+
+The primary color grade is implemented as native shader work on every supported GPU backend.
+The operation covers passthrough, exposure, contrast, saturation, lift, gamma, gain, offset,
+temperature, and tint (and retains the existing vibrance and hue controls). Vulkan and D3D12 use
+compute pipelines over FP32 structured/storage buffers; Metal uses a compute pipeline; OpenGL ES
+uses an FP32 render-target fragment pipeline. GPU selection does not call the CPU reference: a
+native dispatch failure is returned as a backend error. The CPU implementation is selected only by
+the CPU backend, or by the legacy uninitialised command API where no GPU exists.
+
+| Operation | CPU backend | Vulkan | Direct3D12 | Metal | OpenGL ES |
+|---|---|---|---|---|---|
+| passthrough | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| exposure | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| contrast | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| saturation | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| lift / gamma / gain / offset | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| temperature / tint | reference/fallback | native GPU | native GPU | native GPU | native GPU |
+| curves, hue curves, wheels | CPU only | CPU only | CPU only | CPU only | CPU only |
+| LUT, qualifier, effects, generic node callbacks | CPU only | CPU only | CPU only | CPU only | CPU only |
+| arbitrary user shader source | not implemented | not implemented | not implemented | not implemented | not implemented |
+
+Validation now reports maximum absolute error, RMS error, PSNR, and SSIM. Hardware results must be
+reported by the native GPU test on its target runner; no claim of bit-identical floating-point
+output is made. This Linux qualification host had no Windows, Android, or Apple GPU target.
+
+## Earlier audit (historical)
+
 # Implementation status
 
 > **Stabilization qualification update:** Desktop GCC/Clang/MSVC/Apple Clang Debug/Release and
