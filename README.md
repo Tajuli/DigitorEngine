@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **4.5.0**, but that number is not evidence of production readiness or ABI stability.
+version **4.6.1**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet
@@ -131,3 +131,14 @@ Bradford adaptation, integer YUV decoding, immutable transform graphs and
 baseline tone operators. See `docs/color_science.md` and the honest backend truth
 table in `docs/implementation_status.md`. Native color-graph GPU execution is not
 yet implemented; v4.5.0 does not claim ACES or a complete HDR pipeline.
+
+## v4.6.1 `grade_rgba32f` execution qualification
+
+The engine now records internal execution provenance for native grading and
+has deterministic no-fallback failure seams. The complete CPU/Vulkan/D3D12/
+Metal/GLES call graphs and evidence truth table are in
+[`docs/grade_rgba32f_execution.md`](docs/grade_rgba32f_execution.md). The native
+FP32 implementations issue real commands, but this audit did not run qualifying
+GPU hardware, so every GPU backend remains **Implemented,
+hardware-unverified**. FP16 is unsupported. Version 4.6.1 is an audit milestone,
+not a production-readiness claim.

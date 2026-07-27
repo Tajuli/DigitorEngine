@@ -185,6 +185,11 @@ public:
 
     DigitorResult grade_rgba32f(std::span<const Color> source, std::span<Color> out,
                                 const ColorGrade& p) noexcept override {
+        begin_grade_provenance(DIGITOR_RENDERER_METAL, true, info_.device_name,
+                               "Metal runtime compiler", "grade-msl-v1:grade",
+                               "MTLComputePipelineState:grade-v1");
+        if (gpu_failure_point() != GpuFailurePoint::None)
+            return injected_failure(gpu_failure_point());
         if (source.size() != out.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
         if (source.empty()) return DIGITOR_RESULT_OK;
         @autoreleasepool {
@@ -200,6 +205,7 @@ public:
             id<MTLBuffer> input = [device_ newBufferWithBytes:source.data() length:bytes options:MTLResourceStorageModeShared];
             id<MTLBuffer> output = [device_ newBufferWithLength:bytes options:MTLResourceStorageModeShared];
             if (!pipeline || !queue || !input || !output) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            provenance_.source_upload_performed = true;
             id<MTLCommandBuffer> command = [queue commandBuffer];
             id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
             uint32_t count = static_cast<uint32_t>(source.size());
@@ -208,9 +214,15 @@ public:
             [encoder setBytes:&count length:sizeof(count) atIndex:3];
             const NSUInteger group = std::min<NSUInteger>(pipeline.maxTotalThreadsPerThreadgroup, 64);
             [encoder dispatchThreads:MTLSizeMake(count,1,1) threadsPerThreadgroup:MTLSizeMake(group,1,1)];
+            provenance_.command_recorded = true; provenance_.dispatch_or_draw_issued = true;
             [encoder endEncoding]; [command commit]; [command waitUntilCompleted];
+            provenance_.queue_submission_issued = true; provenance_.synchronization_waited = true;
             if (command.status != MTLCommandBufferStatusCompleted) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-            std::memcpy(out.data(), output.contents, bytes); return DIGITOR_RESULT_OK;
+            std::memcpy(out.data(), output.contents, bytes);
+            provenance_.output_written = true; provenance_.readback_performed = true;
+            provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
+            return DIGITOR_RESULT_OK;
         }
     }
 

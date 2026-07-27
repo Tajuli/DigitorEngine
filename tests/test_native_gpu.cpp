@@ -84,6 +84,7 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
         .gain=1.03f,.offset=-.01f,.temperature=.15f,.tint=-.1f,.saturation=.8f};
     digitor::grade_image_cpu(grade_input.data(),grade_cpu.data(),grade_input.size(),grade);
     const auto grade_result=backend.grade_rgba32f(grade_input,grade_gpu,grade);
+    const auto& provenance = backend.execution_provenance();
     double maximum=0,squared=0;
     for(std::size_t n=0;n<grade_cpu.size();++n)for(int c=0;c<4;++c){const float*a=&grade_cpu[n].r,*b=&grade_gpu[n].r;double error=std::abs(double(a[c])-b[c]);maximum=std::max(maximum,error);squared+=error*error;}
     const double rms=std::sqrt(squared/(grade_cpu.size()*4));
@@ -94,6 +95,12 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
     std::cerr<<"COLOR METRICS backend="<<name<<" max_absolute_error="<<maximum
              <<" rms_error="<<rms<<" psnr="<<psnr<<" ssim="<<ssim<<'\n';
     passed &= grade_result==DIGITOR_RESULT_OK && maximum<2e-5 && ssim>.99999;
+    passed &= provenance.gpu_execution && provenance.source_upload_performed &&
+        provenance.command_recorded && provenance.dispatch_or_draw_issued &&
+        provenance.queue_submission_issued && provenance.synchronization_waited &&
+        provenance.output_written && provenance.readback_performed &&
+        provenance.cpu_fallback_invocations == 0 &&
+        provenance.cpu_color_reference_invocations == 0;
     for (auto [width, height] : dimensions) {
         for (const auto color : colors) {
             const auto expected = solid(width, height, color);

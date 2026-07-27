@@ -340,6 +340,11 @@ public:
   DigitorResult grade_rgba32f(std::span<const Color> source,
                               std::span<Color> out,
                               const ColorGrade &p) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_D3D12, true, info_.device_name,
+                           "D3DCompile cs_5_1", "grade-hlsl-v1:main",
+                           "ID3D12PipelineState:grade-v1");
+    if (gpu_failure_point() != GpuFailurePoint::None)
+      return injected_failure(gpu_failure_point());
     if (source.size() != out.size())
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (source.empty())
@@ -414,6 +419,7 @@ public:
     input->Map(0, &none, &m);
     std::memcpy(m, source.data(), bytes);
     input->Unmap(0, nullptr);
+    provenance_.source_upload_performed = true;
     D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2,
                                   D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};
     ComPtr<ID3D12DescriptorHeap> heap;
@@ -453,6 +459,8 @@ public:
            static_cast<uint32_t>(source.size())};
     list_->SetComputeRoot32BitConstants(2, 12, &push, 0);
     list_->Dispatch((push.n + 63) / 64, 1, 1);
+    provenance_.command_recorded = true;
+    provenance_.dispatch_or_draw_issued = true;
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition = {output.Get(), 0,
@@ -463,13 +471,19 @@ public:
     list_->Close();
     ID3D12CommandList *lists[]{list_.Get()};
     queue_->ExecuteCommandLists(1, lists);
+    provenance_.queue_submission_issued = true;
     auto result = signal_and_wait();
     if (result != DIGITOR_RESULT_OK)
       return result;
+    provenance_.synchronization_waited = true;
     D3D12_RANGE range{0, static_cast<SIZE_T>(bytes)};
     readback->Map(0, &range, &m);
     std::memcpy(out.data(), m, bytes);
     readback->Unmap(0, &none);
+    provenance_.output_written = true;
+    provenance_.readback_performed = true;
+    provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
     return DIGITOR_RESULT_OK;
   }
 

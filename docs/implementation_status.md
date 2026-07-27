@@ -1,4 +1,4 @@
-# Implementation status — v4.6.0
+# Implementation status — v4.6.1
 
 The CPU equations in `src/gpu/color.cpp` remain authoritative. The canonical
 compute source is `src/gpu/shaders/color_pipeline.hlsl`; native backend adapters
@@ -29,3 +29,12 @@ equivalence is not claimed. The validation report contains maximum absolute and
 relative error, RMS, PSNR, SSIM, first failing pixel, worst pixel, backend, and
 precision. Native hardware remains unverified on all four backends for this
 commit.
+
+## v4.6.1 native grade qualification
+
+The source-level audit and exact qualification truth table are maintained in
+[`grade_rgba32f_execution.md`](grade_rgba32f_execution.md). This host audit did
+not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
+Native compilation is not reported as pixel validation; FP16 is unsupported.
+The internal provenance/failure seams prove that failures do not silently run
+the CPU reference in non-hardware tests.

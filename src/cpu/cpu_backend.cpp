@@ -49,7 +49,13 @@ DigitorResult CpuBackend::grade_rgba32f(std::span<const Color> source,
                                         const ColorGrade &parameters) noexcept {
   if (source.size() != destination.size())
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  begin_grade_provenance(DIGITOR_RENDERER_CPU, false, "Host CPU",
+                         "C++20 host compiler", "CPU grade_color",
+                         "CPU direct loop");
   grade_image_cpu(source.data(), destination.data(), source.size(), parameters);
+  provenance_.output_written = true;
+  provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
   return DIGITOR_RESULT_OK;
 }
 

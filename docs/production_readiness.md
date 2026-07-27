@@ -28,3 +28,12 @@ GPU readiness is blocked on native graph compilers, backend fixtures, FP16/FP32
 qualification and hardware CI. PQ/HLG functions do not constitute an HDR display
 pipeline. Performance targets and native timings are not available; no real-time
 claim is made.
+
+## v4.6.1 native grade qualification
+
+The source-level audit and exact qualification truth table are maintained in
+[`grade_rgba32f_execution.md`](grade_rgba32f_execution.md). This host audit did
+not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
+Native compilation is not reported as pixel validation; FP16 is unsupported.
+The internal provenance/failure seams prove that failures do not silently run
+the CPU reference in non-hardware tests.

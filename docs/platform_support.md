@@ -32,3 +32,12 @@ and pkg-config. macOS supports Homebrew/pkg-config. All desktops support `DIGITO
 The authoritative CPU reference builds on all desktop targets. Vulkan, D3D12,
 Metal and GLES graph shader/pipeline paths are not implemented or hardware-tested;
 they are not silently substituted with CPU work. Android/iOS are unverified.
+
+## v4.6.1 native grade qualification
+
+The source-level audit and exact qualification truth table are maintained in
+[`grade_rgba32f_execution.md`](grade_rgba32f_execution.md). This host audit did
+not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
+Native compilation is not reported as pixel validation; FP16 is unsupported.
+The internal provenance/failure seams prove that failures do not silently run
+the CPU reference in non-hardware tests.
