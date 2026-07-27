@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **4.4.0**, but that number is not evidence of production readiness or ABI stability.
+version **4.5.0**, but that number is not evidence of production readiness or ABI stability.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet
@@ -122,3 +122,12 @@ plugin design are specified in [deterministic rendering](docs/deterministic_rend
 
 ## Native shader milestone
 The canonical source contract is HLSL through DXC. Vulkan output must pass SPIRV-Tools validation and binary reflection before it is usable. Missing toolchains and unfinished D3D12/Metal/GLES reflection paths fail explicitly; the engine never substitutes a CPU callback after native compilation failure. See [the compiler](docs/shader_compiler.md), [reflection](docs/shader_reflection.md), [ABI](docs/shader_abi.md), and [cache](docs/pipeline_cache.md) documentation.
+
+## Color science v4.5
+
+The public C++ color-science foundation defines explicit metadata, linear BT.709
+working space, standards-based transfer functions, derived primary matrices,
+Bradford adaptation, integer YUV decoding, immutable transform graphs and
+baseline tone operators. See `docs/color_science.md` and the honest backend truth
+table in `docs/implementation_status.md`. Native color-graph GPU execution is not
+yet implemented; v4.5.0 does not claim ACES or a complete HDR pipeline.

@@ -18,3 +18,10 @@ Capabilities retain the classifications in `implementation_status.md` and `produ
 
 ## Native shader toolchain follow-up
 Complete native DXIL reflection/root-signature integration, SPIRV-Cross Metal/GLES translation, backend pipeline factories, and persistent binary cache before declaring this milestone production-complete. Hardware jobs remain separate and must name device/driver versions.
+
+## After v4.5
+
+Native ColorTransformGraph compilation/qualification and metadata-aware plane
+upload precede later RGB Curves, Primary Wheels, Log Wheels, HSL Qualifier and
+LUT milestones. HDR display mapping, highlight roll-off and gamut compression
+remain future work.

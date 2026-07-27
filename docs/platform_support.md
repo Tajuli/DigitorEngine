@@ -26,3 +26,9 @@ and pkg-config. macOS supports Homebrew/pkg-config. All desktops support `DIGITO
 | Metal | native source compiler exists in backend | canonical translation unavailable | not implemented | existing grade library/function only | existing grade compute state only | not run |
 | OpenGL ES | runtime driver compiler | canonical translation unavailable | native query incomplete | runtime shaders only | existing linked programs only | not run |
 | CPU | not applicable | no GPU compilation | validated CPU contract | not applicable | registered kernels only | host tests |
+
+## v4.5 color graph
+
+The authoritative CPU reference builds on all desktop targets. Vulkan, D3D12,
+Metal and GLES graph shader/pipeline paths are not implemented or hardware-tested;
+they are not silently substituted with CPU work. Android/iOS are unverified.

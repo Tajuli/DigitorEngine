@@ -20,3 +20,11 @@ version numbers are not readiness evidence.
 The public structs currently have no `size`/ABI-version fields. Callers must compile against the matching
 header/library; additions cannot yet be negotiated. C handles enforce basic registry/type membership but
 concurrent destroy/use is not guaranteed safe. Long-term ABI stability is explicitly not claimed.
+
+## Color science v4.5
+
+The CPU mathematical foundation is implemented and locally tested. Production
+GPU readiness is blocked on native graph compilers, backend fixtures, FP16/FP32
+qualification and hardware CI. PQ/HLG functions do not constitute an HDR display
+pipeline. Performance targets and native timings are not available; no real-time
+claim is made.
