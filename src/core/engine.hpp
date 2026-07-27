@@ -29,6 +29,9 @@ public:
                               const ColorGrade &);
   DigitorResult curves_rgba32f(std::span<const Color>, std::span<Color>,
                                const CompiledRgbCurves&);
+  DigitorResult process_curves_gpu(std::span<const Color>, std::uint32_t,
+      std::uint32_t, std::int64_t, const CompiledRgbCurves&, ProcessedGpuFramePtr&);
+  DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&);
 
 private:
   Engine() = default;

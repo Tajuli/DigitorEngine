@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 4.6.1
+    VERSION 4.7.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -47,6 +47,7 @@ add_library(digitor_engine
     src/gpu/color_pipeline.cpp
     src/gpu/rgb_curves.cpp
     src/gpu/native_rgb_curves.cpp
+    src/gpu/processed_gpu_frame.cpp
     src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp
@@ -206,7 +207,7 @@ if (DIGITOR_BUILD_TESTS)
     endif()
     add_test(NAME digitor_tests COMMAND digitor_tests)
 
-    if (WIN32)
+    if (WIN32 OR APPLE OR ANDROID)
         add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
         set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
@@ -220,6 +221,7 @@ if (DIGITOR_BUILD_TESTS)
         set_tests_properties(digitor_native_gpu_tests PROPERTIES
             ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
             LABELS "native-gpu;hardware"
+            SKIP_RETURN_CODE 77
         )
     endif()
 

@@ -10,6 +10,11 @@
 
 namespace digitor {
 namespace {
+struct MetalPreviewOwner {
+    id<MTLTexture> output;
+    id<MTLTexture> preview;
+    id<MTLCommandQueue> queue;
+};
 
 MTLPixelFormat metal_format(DigitorPixelFormat format) noexcept {
     switch (format) {
@@ -47,6 +52,53 @@ public:
     bool initialize(bool) override { return device_ != nil; }
     void shutdown() noexcept override {}
     DigitorRendererInfo info() const noexcept override { return info_; }
+
+    DigitorResult execute_process_curves_gpu(std::span<const Color> source,
+        std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+        const CompiledRgbCurves& compiled, ProcessedGpuFramePtr& out) noexcept override {
+      out.reset();
+      begin_grade_provenance(DIGITOR_RENDERER_METAL,true,info_.device_name,
+        "Metal runtime compiler","rgb-curves-texture-msl-v1","MTLComputePipelineState:texture-curves-v1");
+      if (!width||!height||source.size()!=std::size_t(width)*height) return DIGITOR_RESULT_INVALID_ARGUMENT;
+      @autoreleasepool {
+        static NSString* code=@"#include <metal_stdlib>\nusing namespace metal;"
+          "struct M{float lo,hi,first,last,sb,sa;uint extrap,enabled;};struct P{M m[4];uint size,w,h;};"
+          "float cv(device const float*l,constant P&p,uint k,float x){M m=p.m[k];if(!m.enabled||!isfinite(x))return x;if(x<m.lo)return m.extrap==2?m.first+m.sb*(x-m.lo):m.first;if(x>m.hi)return m.extrap==2?m.last+m.sa*(x-m.hi):m.last;float u=(x-m.lo)/(m.hi-m.lo)*float(p.size-1);uint a=min(uint(u),p.size-1),b=min(a+1,p.size-1);return mix(l[k*p.size+a],l[k*p.size+b],u-float(a));}"
+          "kernel void curves(texture2d<float,access::read> i[[texture(0)]],texture2d<float,access::write> o[[texture(1)]],device const float*l[[buffer(0)]],constant P&p[[buffer(1)]],uint2 q[[thread_position_in_grid]]){if(q.x>=p.w||q.y>=p.h)return;float4 c=i.read(q);float a=c.a;c.r=cv(l,p,0,c.r);c.g=cv(l,p,0,c.g);c.b=cv(l,p,0,c.b);c.r=cv(l,p,1,c.r);c.g=cv(l,p,2,c.g);c.b=cv(l,p,3,c.b);c.a=a;o.write(c,q);}";
+        NSError* error=nil; id<MTLLibrary> lib=[device_ newLibraryWithSource:code options:nil error:&error];
+        id<MTLFunction> fn=[lib newFunctionWithName:@"curves"];
+        id<MTLComputePipelineState> pipe=fn?[device_ newComputePipelineStateWithFunction:fn error:&error]:nil;
+        MTLTextureDescriptor* sd=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float width:width height:height mipmapped:NO];
+        sd.storageMode=MTLStorageModeShared;sd.usage=MTLTextureUsageShaderRead;
+        id<MTLTexture> input=[device_ newTextureWithDescriptor:sd];
+        sd.storageMode=MTLStorageModePrivate;sd.usage=MTLTextureUsageShaderWrite|MTLTextureUsageShaderRead;
+        id<MTLTexture> output=[device_ newTextureWithDescriptor:sd];
+        sd.usage=MTLTextureUsageShaderRead|MTLTextureUsageRenderTarget;
+        id<MTLTexture> preview=[device_ newTextureWithDescriptor:sd];
+        id<MTLCommandQueue> queue=[device_ newCommandQueue];
+        if(!pipe||!input||!output||!preview||!queue)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        [input replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:source.data() bytesPerRow:width*sizeof(Color)];
+        struct M{float lo,hi,first,last,sb,sa;uint32_t extrap,enabled;};struct P{M m[4];uint32_t size,w,h;}p{};
+        std::vector<float> lut;lut.reserve(std::size_t(compiled.lut_size())*4);
+        for(unsigned k=0;k<4;k++){const auto&c=compiled.curves()[k];p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,uint32_t(c.extrapolation),c.enabled?1u:0u};lut.insert(lut.end(),c.samples.begin(),c.samples.end());}
+        p.size=compiled.lut_size();p.w=width;p.h=height;id<MTLBuffer> lb=[device_ newBufferWithBytes:lut.data() length:lut.size()*sizeof(float) options:MTLResourceStorageModeShared];if(!lb)return DIGITOR_RESULT_OUT_OF_MEMORY;
+        id<MTLCommandBuffer> command=[queue commandBuffer];id<MTLComputeCommandEncoder> e=[command computeCommandEncoder];
+        [e setComputePipelineState:pipe];[e setTexture:input atIndex:0];[e setTexture:output atIndex:1];[e setBuffer:lb offset:0 atIndex:0];[e setBytes:&p length:sizeof(p) atIndex:1];
+        NSUInteger g=std::min<NSUInteger>(pipe.maxTotalThreadsPerThreadgroup,64);[e dispatchThreads:MTLSizeMake(width,height,1) threadsPerThreadgroup:MTLSizeMake(g,1,1)];[e endEncoding];[command commit];[command waitUntilCompleted];
+        if(command.status==MTLCommandBufferStatusError)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        auto owner=std::shared_ptr<void>(new MetalPreviewOwner{output,preview,queue},[](void*v){delete static_cast<MetalPreviewOwner*>(v);});
+        auto ready=std::make_shared<std::atomic_bool>(true);static std::atomic_uint64_t ids{1};
+        out=std::make_shared<ProcessedGpuFrame>(this,DIGITOR_RENDERER_METAL,GpuFrameMetadata{width,height,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,GpuFrameAlpha::straight,timestamp,"linear-rgba"},ids++,owner,ready,true);
+        provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.command_recorded=provenance_.dispatch_or_draw_issued=provenance_.queue_submission_issued=provenance_.synchronization_waited=provenance_.output_written=true;provenance_.readback_performed=false;return DIGITOR_RESULT_OK;
+      }
+    }
+    DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr& frame) noexcept override {
+      if(!frame||frame->acquire(this,DIGITOR_RENDERER_METAL)!=DIGITOR_RESULT_OK)return DIGITOR_RESULT_INVALID_ARGUMENT;
+      auto owner=std::static_pointer_cast<MetalPreviewOwner>(native_owner(*frame));
+      if(!owner){(void)frame->release(this);return DIGITOR_RESULT_INVALID_ARGUMENT;}
+      id<MTLCommandBuffer> c=[owner->queue commandBuffer];id<MTLBlitCommandEncoder>b=[c blitCommandEncoder];
+      auto m=frame->metadata();[b copyFromTexture:owner->output sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0,0,0) sourceSize:MTLSizeMake(m.width,m.height,1) toTexture:owner->preview destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0,0,0)];[b endEncoding];[c commit];[c waitUntilCompleted];auto r=c.status==MTLCommandBufferStatusError?DIGITOR_RESULT_BACKEND_UNAVAILABLE:DIGITOR_RESULT_OK;(void)frame->release(this);return r;
+    }
 
     DigitorResult create_texture(const DigitorTextureDesc& description, void** out) noexcept override {
         if (out == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
@@ -229,7 +281,7 @@ public:
         }
     }
 
-    DigitorResult curves_rgba32f(std::span<const Color> source, std::span<Color> out,
+    DigitorResult execute_curves_rgba32f(std::span<const Color> source, std::span<Color> out,
                                  const CompiledRgbCurves& compiled) noexcept override {
         begin_grade_provenance(DIGITOR_RENDERER_METAL, true, info_.device_name,
                                "Metal runtime compiler", "rgb-curves-msl-v1:curves",

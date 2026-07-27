@@ -109,8 +109,57 @@ DigitorResult IRenderBackend::grade_rgba32f(std::span<const Color>,
                                             const ColorGrade &) noexcept {
   return DIGITOR_RESULT_UNSUPPORTED;
 }
-DigitorResult IRenderBackend::curves_rgba32f(std::span<const Color>, std::span<Color>,
-                                             const CompiledRgbCurves&) noexcept {
+DigitorResult IRenderBackend::curves_rgba32f(std::span<const Color> source,
+                                             std::span<Color> destination,
+                                             const CompiledRgbCurves& curves) noexcept {
+  const auto before = cpu_curve_reference_count();
+  const auto result = execute_curves_rgba32f(source, destination, curves);
+  provenance_.cpu_curve_invocations = cpu_curve_reference_count() - before;
+  if (provenance_.readback_performed)
+    provenance_.preview_source = PreviewSource::cpu_validation;
+  return result;
+}
+DigitorResult IRenderBackend::execute_curves_rgba32f(std::span<const Color>, std::span<Color>,
+                                                     const CompiledRgbCurves&) noexcept {
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
+DigitorResult IRenderBackend::process_curves_gpu(
+    std::span<const Color> source, std::uint32_t width, std::uint32_t height,
+    std::int64_t timestamp, const CompiledRgbCurves& curves,
+    ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  if (gpu_failure_point() != GpuFailurePoint::None)
+    return injected_failure(gpu_failure_point());
+  const auto before = cpu_curve_reference_count();
+  const auto result = execute_process_curves_gpu(source, width, height, timestamp,
+                                                 curves, out);
+  provenance_.cpu_curve_invocations = cpu_curve_reference_count() - before;
+  if (result != DIGITOR_RESULT_OK || !out ||
+      provenance_.cpu_curve_invocations != 0 ||
+      provenance_.curve_fallback_invocations != 0 ||
+      provenance_.readback_performed) {
+    out.reset();
+    return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
+  }
+  provenance_.preview_source = PreviewSource::gpu;
+  return DIGITOR_RESULT_OK;
+}
+DigitorResult IRenderBackend::present_gpu_frame(const ProcessedGpuFramePtr& frame) noexcept {
+  provenance_.direct_preview_consumed = false;
+  if (!frame) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  if (gpu_failure_point() == GpuFailurePoint::PreviewAcquisition ||
+      gpu_failure_point() == GpuFailurePoint::PreviewPresentation)
+    return injected_failure(gpu_failure_point());
+  const auto result = execute_present_gpu_frame(frame);
+  provenance_.direct_preview_consumed = result == DIGITOR_RESULT_OK;
+  return result;
+}
+DigitorResult IRenderBackend::execute_process_curves_gpu(
+    std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
+    const CompiledRgbCurves&, ProcessedGpuFramePtr& out) noexcept {
+  out.reset(); return DIGITOR_RESULT_UNSUPPORTED;
+}
+DigitorResult IRenderBackend::execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept {
   return DIGITOR_RESULT_UNSUPPORTED;
 }
 namespace {

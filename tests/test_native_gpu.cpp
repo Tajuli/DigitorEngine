@@ -124,6 +124,38 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
     passed &= curve_result==DIGITOR_RESULT_OK && curve_max<2e-5 && curve_ssim>.99999 &&
       curve_provenance.dispatch_or_draw_issued && curve_provenance.validation_readback_completed &&
       curve_provenance.cpu_curve_invocations==0 && curve_provenance.curve_fallback_invocations==0;
+    digitor::ProcessedGpuFramePtr processed;
+    const auto processed_result=backend.process_curves_gpu(grade_input,3,1,73,*curves,processed);
+    const auto producer_identity=processed?processed->identity():0;
+    const auto present_result=processed?backend.present_gpu_frame(processed):DIGITOR_RESULT_INTERNAL_ERROR;
+    const auto& preview_provenance=backend.execution_provenance();
+    std::cerr<<"DIRECT PREVIEW backend="<<name<<" producer_identity="<<producer_identity
+             <<" consumer_identity="<<(processed?processed->identity():0)
+             <<" normal_readback="<<preview_provenance.readback_performed
+             <<" cpu_curve_delta="<<preview_provenance.cpu_curve_invocations
+             <<" fallback="<<preview_provenance.curve_fallback_invocations<<'\n';
+    passed &= processed_result==DIGITOR_RESULT_OK && processed && processed->ready() &&
+      present_result==DIGITOR_RESULT_OK && producer_identity==processed->identity() &&
+      preview_provenance.preview_source==digitor::PreviewSource::gpu &&
+      preview_provenance.direct_preview_consumed && !preview_provenance.readback_performed &&
+      preview_provenance.cpu_curve_invocations==0 && preview_provenance.curve_fallback_invocations==0;
+    for(const auto point:{digitor::GpuFailurePoint::DestinationAllocation,
+                          digitor::GpuFailurePoint::DescriptorAllocation,
+                          digitor::GpuFailurePoint::CommandRecording,
+                          digitor::GpuFailurePoint::QueueSubmission,
+                          digitor::GpuFailurePoint::Synchronization}){
+      digitor::set_gpu_failure_point(point);digitor::ProcessedGpuFramePtr failed=processed;
+      const auto failure=backend.process_curves_gpu(grade_input,3,1,74,*curves,failed);
+      passed &= failure!=DIGITOR_RESULT_OK && !failed &&
+        backend.execution_provenance().curve_fallback_invocations==0 &&
+        !backend.execution_provenance().readback_performed;
+    }
+    for(const auto point:{digitor::GpuFailurePoint::PreviewAcquisition,
+                          digitor::GpuFailurePoint::PreviewPresentation}){
+      digitor::set_gpu_failure_point(point);
+      passed &= backend.present_gpu_frame(processed)!=DIGITOR_RESULT_OK &&
+        !backend.execution_provenance().readback_performed;
+    }
     for (auto [width, height] : dimensions) {
         for (const auto color : colors) {
             const auto expected = solid(width, height, color);
@@ -157,26 +189,33 @@ bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
 
 int main() {
 #if defined(_WIN32)
+    constexpr std::array entries{std::pair{DIGITOR_RENDERER_D3D12, std::string_view{"Direct3D12"}},
+                                 std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}}};
+#elif defined(__APPLE__)
+    constexpr std::array entries{std::pair{DIGITOR_RENDERER_METAL, std::string_view{"Metal"}}};
+#elif defined(__ANDROID__)
+    constexpr std::array entries{std::pair{DIGITOR_RENDERER_OPENGL_ES, std::string_view{"OpenGL ES"}},
+                                 std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}}};
+#else
+    std::cerr << "QUALIFICATION SKIP reason=no native GPU backend for this host\n";
+    return 77;
+#endif
+#if defined(_WIN32) || defined(__APPLE__) || defined(__ANDROID__)
     bool all_passed = true;
-    bool d3d12_available = false;
-    for (const auto entry : {std::pair{DIGITOR_RENDERER_VULKAN, std::string_view{"Vulkan"}},
-                             std::pair{DIGITOR_RENDERER_D3D12, std::string_view{"Direct3D12"}}}) {
+    unsigned executed = 0;
+    for (const auto entry : entries) {
         auto backend = digitor::create_native_backend(entry.first);
         if (!backend || !backend->initialize(true)) {
             std::cerr << "BACKEND UNAVAILABLE backend=" << entry.second << '\n';
             continue;
         }
-        if (entry.first == DIGITOR_RENDERER_D3D12) d3d12_available = true;
+        ++executed;
+        const auto info = backend->info();
+        std::cerr << "DEVICE backend=" << entry.second << " identity=\"" << info.device_name << "\"\n";
         all_passed &= exercise(*backend, entry.second);
         backend->shutdown();
     }
-    if (!d3d12_available) {
-        std::cerr << "Direct3D12 is required for the Windows native GPU test.\n";
-        return 1;
-    }
+    if (!executed) { std::cerr << "QUALIFICATION SKIP reason=no usable GPU device\n"; return 77; }
     return all_passed ? 0 : 1;
-#else
-    std::cout << "Native Windows GPU integration test is Windows-only.\n";
-    return 0;
 #endif
 }

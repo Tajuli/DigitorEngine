@@ -58,12 +58,12 @@ DigitorResult CpuBackend::grade_rgba32f(std::span<const Color> source,
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
   return DIGITOR_RESULT_OK;
 }
-DigitorResult CpuBackend::curves_rgba32f(std::span<const Color> source,
+DigitorResult CpuBackend::execute_curves_rgba32f(std::span<const Color> source,
                                          std::span<Color> destination,
                                          const CompiledRgbCurves& curves) noexcept {
   if (source.size()!=destination.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
-  try { note_cpu_curve_reference(); curves.apply(source,destination);
-    provenance_.cpu_curve_invocations=1; return DIGITOR_RESULT_OK; }
+  try { const auto before=cpu_curve_reference_count(); curves.apply(source,destination);
+    provenance_.cpu_curve_invocations=cpu_curve_reference_count()-before; return DIGITOR_RESULT_OK; }
   catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
 }
 

@@ -11,6 +11,7 @@
 #include "digitor/digitor.h"
 #include "digitor/rgb_curves.hpp"
 #include "gpu/execution_provenance.hpp"
+#include "digitor/gpu_frame.hpp"
 #include "platform/platform.hpp"
 
 namespace digitor {
@@ -44,14 +45,30 @@ public:
   virtual DigitorResult grade_rgba32f(std::span<const Color> source,
                                       std::span<Color> destination,
                                       const ColorGrade &parameters) noexcept;
-  virtual DigitorResult curves_rgba32f(std::span<const Color> source,
-                                       std::span<Color> destination,
-                                       const CompiledRgbCurves&) noexcept;
+  DigitorResult curves_rgba32f(std::span<const Color> source,
+                               std::span<Color> destination,
+                               const CompiledRgbCurves&) noexcept;
+  // Live preview contract. Unlike curves_rgba32f (validation/export), this
+  // function cannot return CPU pixels and has no readback fallback.
+  DigitorResult process_curves_gpu(std::span<const Color> source,
+                                   std::uint32_t width, std::uint32_t height,
+                                   std::int64_t timestamp,
+                                   const CompiledRgbCurves&,
+                                   ProcessedGpuFramePtr& out) noexcept;
+  DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
     return provenance_;
   }
-
 protected:
+  static const ProcessedGpuFrame::NativeOwner& native_owner(
+      const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
+  virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
+                                                std::span<Color> destination,
+                                                const CompiledRgbCurves&) noexcept;
+  virtual DigitorResult execute_process_curves_gpu(
+      std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
+      const CompiledRgbCurves&, ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   void begin_grade_provenance(DigitorRendererBackend backend, bool gpu,
                               const char *device, const char *compiler,
                               const char *shader, const char *pipeline) noexcept;

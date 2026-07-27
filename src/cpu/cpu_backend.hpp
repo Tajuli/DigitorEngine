@@ -13,8 +13,8 @@ public:
                              std::vector<uint8_t> &) noexcept override;
   DigitorResult grade_rgba32f(std::span<const Color>, std::span<Color>,
                               const ColorGrade &) noexcept override;
-  DigitorResult curves_rgba32f(std::span<const Color>, std::span<Color>,
-                               const CompiledRgbCurves&) noexcept override;
+  DigitorResult execute_curves_rgba32f(std::span<const Color>, std::span<Color>,
+                                       const CompiledRgbCurves&) noexcept override;
 
 private:
   bool initialized_{false};

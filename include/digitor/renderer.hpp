@@ -6,6 +6,8 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include "digitor/gpu_frame.hpp"
 
 namespace digitor {
 struct PreviewTransform { double zoom{1}; double pan_x{},pan_y{}; double rotation_degrees{}; double scale_x{1},scale_y{1}; };
@@ -14,8 +16,8 @@ using RenderGraphBuilder=std::function<void(RenderGraph&,const RenderRequest&,Vi
 
 // The only owner/executor of the render graph. Preview and export deliberately
 // consume this class rather than maintaining separate rendering pipelines.
-class SharedRenderer { public: explicit SharedRenderer(RenderGraphBuilder={}); VideoFrame render(const RenderRequest&); void set_rgb_curves(std::shared_ptr<const CompiledRgbCurves> curves){curves_=std::move(curves);} RenderGraph& graph(){return graph_;} std::uint64_t graph_generation()const{return generation_;} private:RenderGraphBuilder builder_;RenderGraph graph_;CommandQueue queue_;std::shared_ptr<const CompiledRgbCurves> curves_;std::uint64_t generation_{};};
-class PreviewRenderer { public:explicit PreviewRenderer(SharedRenderer&r,std::size_t cache=8):renderer_(r),cache_(cache){} void set_transform(PreviewTransform t){transform_=t;cache_.clear();} const PreviewTransform&transform()const{return transform_;} std::shared_ptr<VideoFrame> frame(FrameNumber,std::uint32_t,std::uint32_t); private:SharedRenderer&renderer_;PreviewTransform transform_;FrameCache<VideoFrame>cache_;};
+class SharedRenderer { public: explicit SharedRenderer(RenderGraphBuilder={}); VideoFrame render(const RenderRequest&); ProcessedGpuFramePtr render_gpu_preview(const RenderRequest&); void set_rgb_curves(std::shared_ptr<const CompiledRgbCurves> curves){curves_=std::move(curves);} RenderGraph& graph(){return graph_;} std::uint64_t graph_generation()const{return generation_;} private: VideoFrame render_source(const RenderRequest&); RenderGraphBuilder builder_;RenderGraph graph_;CommandQueue queue_;std::shared_ptr<const CompiledRgbCurves> curves_;std::uint64_t generation_{};};
+class PreviewRenderer { public:explicit PreviewRenderer(SharedRenderer&r,std::size_t cache=8):renderer_(r),cache_(cache){} void set_transform(PreviewTransform t){transform_=t;cache_.clear();gpu_cache_.clear();} const PreviewTransform&transform()const{return transform_;} std::shared_ptr<VideoFrame> frame(FrameNumber,std::uint32_t,std::uint32_t); ProcessedGpuFramePtr gpu_frame(FrameNumber,std::uint32_t,std::uint32_t); private:SharedRenderer&renderer_;PreviewTransform transform_;FrameCache<VideoFrame>cache_;std::unordered_map<FrameNumber,ProcessedGpuFramePtr>gpu_cache_;};
 
 enum class ExportFormat { mp4,mov,mkv,png_sequence,tiff_sequence,exr_sequence,image_sequence=png_sequence };
 enum class VideoCodec { h264,h265,av1 };

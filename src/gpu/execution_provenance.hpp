@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include "digitor/gpu_frame.hpp"
 
 namespace digitor {
 
@@ -22,6 +23,8 @@ enum class GpuFailurePoint {
   CommandRecording,
   QueueSubmission,
   Synchronization,
+  PreviewAcquisition,
+  PreviewPresentation,
   Readback,
   DeviceLost,
   OutOfMemory
@@ -58,6 +61,8 @@ struct ExecutionProvenance {
   bool curve_source_bound{}, curve_destination_bound{}, curve_lut_bound{};
   bool curve_parameters_bound{}, curve_identity_bypassed{};
   bool validation_readback_completed{};
+  PreviewSource preview_source{PreviewSource::none};
+  bool direct_preview_consumed{};
   std::uint64_t cpu_curve_invocations{};
   std::uint64_t curve_fallback_invocations{};
   std::string failure_stage;
