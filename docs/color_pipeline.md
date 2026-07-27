@@ -52,3 +52,7 @@ roll, slip, slide, undo/redo, explicit gap queries, and nested timelines. Overwr
 uncovered clip heads/tails, while insert splits clips at the edit point. `schedule(frame)` maps
 an exact timeline frame to source frames and recursively resolves nested clips. A nested
 timeline must use the parent frame rate, preventing fractional scheduling drift.
+
+## RGB Curves parameter v1
+
+The authoritative curve ordering, unbounded scene-linear behavior, alpha policy, and FP32 sampling contract are defined in [rgb_curves.md](rgb_curves.md). Native color grading remains separate; a selected GPU must reject unsupported RGB Curves rather than execute the CPU reference.

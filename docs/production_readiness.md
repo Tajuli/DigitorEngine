@@ -37,3 +37,7 @@ not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
 Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
+
+## RGB Curves readiness
+
+The immutable specification, CPU reference, deterministic LUT/cache, tests, and explicit CPU Render Graph pass are ready. Native backends, preview use, provenance, numerical GPU comparison, and performance qualification remain release blockers. Consequently the project version remains 4.6.1 and this work must not be described as a complete production v4.7.0 release.

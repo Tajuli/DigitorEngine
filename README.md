@@ -142,3 +142,7 @@ FP32 implementations issue real commands, but this audit did not run qualifying
 GPU hardware, so every GPU backend remains **Implemented,
 hardware-unverified**. FP16 is unsupported. Version 4.6.1 is an audit milestone,
 not a production-readiness claim.
+
+### RGB Curves
+
+An immutable FP32 CPU reference, monotone-cubic control-point compiler, deterministic 256/1024/4096-sample LUTs, and explicit CPU Render Graph node are documented in [`docs/rgb_curves.md`](docs/rgb_curves.md). Native GPU curves are truthfully unsupported; there is no CPU fallback after GPU selection.

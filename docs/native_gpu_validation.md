@@ -16,3 +16,7 @@ validation, Metal API validation, or GLES error checking. Present limitations:
 there is no automated debug-message collector, GLES omits an explicit
 framebuffer-completeness check, Vulkan uses host-coherent buffers, and no FP16
 path exists.
+
+## RGB Curves qualification
+
+No native RGB Curves backend has been hardware-qualified. A future successful run must evidence the curve shader and pipeline identities, FP32 LUT creation/cache hit, four bindings, command recording, dispatch/draw, submission, synchronization, output write/readback, and zero GPU-path CPU-reference and fallback calls. Required FP32 provisional thresholds are max absolute `2e-5`, max relative `2e-5`, with RMS, ULP, PSNR, SSIM, first failure, RGBA values, device and driver reported. FP16 is unsupported; RGBA8 boundary qualification is not claimed.

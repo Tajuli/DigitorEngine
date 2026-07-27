@@ -69,3 +69,7 @@ not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
 Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
+
+## RGB Curves
+
+Points retain caller order and must already have strictly increasing x. Coefficients and LUT entries are evaluated in documented source order at endpoint-inclusive sample locations. The C++ build does not enable fast-math; source expressions do not request FMA contraction and do not flush denormals explicitly. Stable identity uses hexadecimal binary32 bits, not locale formatting or `std::hash`. NaN/infinity inputs propagate, finite overflow in LUT compilation fails, and extrapolation is explicit. Cross-platform byte identity is not claimed; future native FP32 qualification uses numerical tolerances.

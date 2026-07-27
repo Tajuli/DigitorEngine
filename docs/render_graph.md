@@ -33,3 +33,7 @@ serialized.
 Graph mutation invalidates compilation. Execution recompiles automatically and records all barriers
 and pass callbacks into one command buffer. This is also how the CPU backend remains the reference
 implementation of the identical scheduling abstraction.
+
+## RGB Curves
+
+`add_rgb_curves_cpu_pass` records an immutable compiled descriptor as an explicit shader-read source and shader-write destination pass. It is pure/cullable, replayable, and participates in normal dependency, barrier, lifetime, and transient-alias analysis. Native GPU curve attachment is currently unsupported rather than hidden outside the graph.
