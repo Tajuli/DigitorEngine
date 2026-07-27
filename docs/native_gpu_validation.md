@@ -20,3 +20,7 @@ path exists.
 ## RGB Curves qualification
 
 No native RGB Curves backend has been hardware-qualified. A future successful run must evidence the curve shader and pipeline identities, FP32 LUT creation/cache hit, four bindings, command recording, dispatch/draw, submission, synchronization, output write/readback, and zero GPU-path CPU-reference and fallback calls. Required FP32 provisional thresholds are max absolute `2e-5`, max relative `2e-5`, with RMS, ULP, PSNR, SSIM, first failure, RGBA values, device and driver reported. FP16 is unsupported; RGBA8 boundary qualification is not claimed.
+
+## Curve provenance contract
+
+Curve runs additionally record compiled and native LUT identities, LUT size/cache disposition, all four bindings, command/dispatch/submission/synchronization/output/readback milestones, identity bypass, failure stage, and separate CPU-curve/fallback counters. Success requires both counters to be zero. Shader compilation, reflection, pipeline, LUT allocation/upload, descriptor, source/destination, recording, submission, synchronization, readback, device-lost and OOM failures must return an explicit error and never claim output.

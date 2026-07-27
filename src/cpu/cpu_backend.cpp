@@ -58,5 +58,12 @@ DigitorResult CpuBackend::grade_rgba32f(std::span<const Color> source,
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
   return DIGITOR_RESULT_OK;
 }
+DigitorResult CpuBackend::curves_rgba32f(std::span<const Color> source,
+                                         std::span<Color> destination,
+                                         const CompiledRgbCurves& curves) noexcept {
+  if (source.size()!=destination.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  try { curves.apply(source,destination); return DIGITOR_RESULT_OK; }
+  catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
+}
 
 } // namespace digitor

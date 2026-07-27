@@ -126,5 +126,12 @@ DigitorResult Engine::grade_rgba32f(std::span<const Color> source,
     return DIGITOR_RESULT_NOT_INITIALIZED;
   return backend_->grade_rgba32f(source, destination, parameters);
 }
+DigitorResult Engine::curves_rgba32f(std::span<const Color> source,
+                                     std::span<Color> destination,
+                                     const CompiledRgbCurves& curves) {
+  std::scoped_lock lock(mutex_);
+  if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
+  return backend_->curves_rgba32f(source,destination,curves);
+}
 
 } // namespace digitor

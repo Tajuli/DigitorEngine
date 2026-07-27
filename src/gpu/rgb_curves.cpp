@@ -94,5 +94,14 @@ void CompiledRgbCurves::apply(std::span<const Color>a,std::span<Color>b)const{if
 std::string CompiledRgbCurves::serialize()const{return identity_;}
 std::size_t CompiledRgbCurves::cache_size(){std::lock_guard lock(cache_mutex);for(auto i=cache.begin();i!=cache.end();)if(i->second.expired())i=cache.erase(i);else ++i;return cache.size();}
 void CompiledRgbCurves::clear_cache(){std::lock_guard lock(cache_mutex);cache.clear();}
+std::string NativeRgbCurvesKey::serialize() const {
+    return "native-rgb-curves:v1;backend=" + std::to_string(static_cast<std::uint32_t>(backend)) +
+      ";device=" + std::to_string(device_identity.size()) + ":" + device_identity +
+      ";compiled=" + std::to_string(compiled_identity.size()) + ":" + compiled_identity +
+      ";lut=" + std::to_string(lut_size) + ";precision=" +
+      std::to_string(static_cast<std::uint32_t>(precision)) + ";interpolation=" +
+      std::to_string(interpolation_version) + ";shader-abi=" + std::to_string(shader_abi_version);
+}
 GraphPass add_rgb_curves_cpu_pass(RenderGraph&g,GraphResource s,GraphResource d,std::shared_ptr<const CompiledRgbCurves> c,std::span<const Color>i,std::span<Color>o){if(!c)throw std::invalid_argument("null compiled RGB curves");RenderPass p;p.name="RGB Curves CPU Reference";p.reads={{s,ResourceState::shader_read}};p.writes={{d,ResourceState::shader_write}};p.side_effect=false;p.execute=[c=std::move(c),i,o](CommandEncoder&){c->apply(i,o);};return g.add_pass(std::move(p));}
+GraphPass add_rgb_curves_pass(RenderGraph&g,GraphResource s,GraphResource d,std::function<void(CommandEncoder&)> execute){if(!execute)throw std::invalid_argument("RGB curves native executor is required");RenderPass p;p.name="RGB Curves Native";p.reads={{s,ResourceState::shader_read}};p.writes={{d,ResourceState::shader_write}};p.side_effect=false;p.execute=std::move(execute);return g.add_pass(std::move(p));}
 } // namespace digitor

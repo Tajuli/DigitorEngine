@@ -13,6 +13,8 @@ enum class GpuFailurePoint {
   ShaderCompilation,
   ReflectionValidation,
   PipelineCreation,
+  LutResourceCreation,
+  LutUpload,
   DescriptorAllocation,
   SourceAllocation,
   DestinationAllocation,
@@ -47,6 +49,18 @@ struct ExecutionProvenance {
   bool device_lost{};
   CacheDisposition shader_pipeline_cache{CacheDisposition::NotApplicable};
   CacheDisposition graph_cache{CacheDisposition::NotApplicable};
+  bool curves_enabled{};
+  std::uint32_t curve_lut_size{};
+  std::string compiled_curve_identity;
+  std::string native_lut_resource_identity;
+  std::string native_curve_shader_identity;
+  CacheDisposition native_lut_cache{CacheDisposition::NotApplicable};
+  bool curve_source_bound{}, curve_destination_bound{}, curve_lut_bound{};
+  bool curve_parameters_bound{}, curve_identity_bypassed{};
+  bool validation_readback_completed{};
+  std::uint64_t cpu_curve_invocations{};
+  std::uint64_t curve_fallback_invocations{};
+  std::string failure_stage;
 };
 
 void set_gpu_failure_point(GpuFailurePoint point) noexcept;

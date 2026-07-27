@@ -44,6 +44,7 @@ add_library(digitor_engine
     src/gpu/video_texture.cpp
     src/gpu/color_pipeline.cpp
     src/gpu/rgb_curves.cpp
+    src/gpu/native_rgb_curves.cpp
     src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp

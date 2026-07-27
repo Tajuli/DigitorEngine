@@ -66,3 +66,30 @@ CI/hardware environment for implemented rows: local Ubuntu GCC 13 CPU-only; no G
 | Preview consumption | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Not implemented |
 | FP32 | implemented | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity/alpha exact | CPU reference only |
 | FP16, if implemented | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Unsupported |
+
+### v4.7 native execution development truth table
+
+Environment: Ubuntu/GCC 13 CPU-only container; no GPU/device/driver execution. The canonical shader source is not hardware evidence. Numerical GPU results are therefore `not measured`, honestly, and version 4.7.0 remains gated.
+
+| Feature | CPU Reference | Vulkan | D3D12 | Metal | GLES | Evidence | Numerical Result | Status |
+|---|---|---|---|---|---|---|---|---|
+| Native FP32 LUT resource | separate CPU LUT | Not implemented | Not implemented | Not implemented | Not implemented | native owner/cache source + CPU test | not measured | Not implemented |
+| 256-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU exact identity | CPU reference only |
+| 1024-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU exact identity | CPU reference only |
+| 4096-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU allocation passes | CPU reference only |
+| Master curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
+| Red curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
+| Green curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
+| Blue curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
+| Master + RGB | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical source order | not measured | CPU reference only |
+| Identity bypass | exact | Not implemented | Not implemented | Not implemented | Not implemented | CPU identity test | zero error CPU | CPU reference only |
+| Negative values | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU extrapolation test | passes CPU | CPU reference only |
+| Over-range values | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU extrapolation test | passes CPU | CPU reference only |
+| Alpha preservation | exact | Not implemented | Not implemented | Not implemented | Not implemented | CPU test/canonical shader | zero error CPU | CPU reference only |
+| Render Graph integration | CPU pass | backend-neutral node | backend-neutral node | backend-neutral node | backend-neutral node | graph pass source | non-numerical | Implemented, hardware-unverified |
+| Native LUT cache | n/a | device-key model | device-key model | device-key model | device-key model | cold/warm/device-key unit test | non-numerical | Implemented, hardware-unverified |
+| Preview consumption | CPU only | Not implemented | Not implemented | Not implemented | Not implemented | none | not measured | Not implemented |
+| Provenance | CPU fields | schema only | schema only | schema only | schema only | provenance source | not measured | Placeholder/stub |
+| Failure injection | CPU validation | Not implemented | Not implemented | Not implemented | Not implemented | enum coverage only | not measured | Not implemented |
+| FP32 | yes | shader contract only | shader contract only | shader contract only | shader contract only | canonical HLSL | not measured | Placeholder/stub |
+| FP16 | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | no implementation | none | Unsupported |

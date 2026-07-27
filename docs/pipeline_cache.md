@@ -7,3 +7,5 @@ A pipeline cache stores owning `shared_ptr<NativePipeline>` objects created by a
 ## RGB Curves caches
 
 Coefficient/LUT compilation uses the deterministic parameter serialization documented in `rgb_curves.md`; LUT size and FP32 precision are key material. Native curve pipeline and native LUT-resource caches are not implemented and are reported unsupported, not simulated with hash-only objects.
+
+Native curve LUT ownership uses a separate bounded LRU. Its stable key includes full compiled curve serialization, quality/domain/extrapolation through that serialization, interpolation version, FP32 precision, shader ABI, backend and device compatibility identity. Concurrent misses deduplicate upload; device identity prevents cross-device reuse. Capacity is 64 and eviction releases shared native ownership safely.
