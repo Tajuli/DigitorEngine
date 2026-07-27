@@ -1,4 +1,35 @@
-# Implementation status — v4.6.1
+# Implementation status — v4.7.0
+
+## RGB Curves direct-preview qualification truth table
+
+No device execution was available while preparing this source change. A
+compiled shader is not an execution result, and validation readback is not
+direct preview consumption. Implemented rows therefore remain
+hardware-unverified until a qualification artifact records execution.
+
+| Backend | Native Curve Shader | Native Texture Output | Direct Preview Consumption | Execution Test | Numerical Metrics | CPU Curve Delta | Environment | Status |
+|---|---|---|---|---|---|---|---|---|
+| Vulkan FP32 | `VulkanBackend::execute_process_curves_gpu` | RGBA32F `VkImage` | GPU image copy | backend-capable, hardware labeled | emitted only when executed | measured around dispatch | not executed here | Implemented, hardware-unverified |
+| D3D12 FP32 | `D3DBackend::execute_process_curves_gpu` | RGBA32F texture UAV | GPU texture copy | backend-capable, hardware labeled | emitted only when executed | measured around dispatch | not executed here | Implemented, hardware-unverified |
+| Metal FP32 | `MetalBackend::execute_process_curves_gpu` | RGBA32F `MTLTexture` | GPU texture blit | macOS entry point | emitted only when executed | measured around dispatch | not executed here | Implemented, hardware-unverified |
+| GLES FP32 | `GlBackend::execute_process_curves_gpu` | retained RGBA32F texture | direct framebuffer sampling | Android entry point | emitted only when executed | measured around draw | not executed here | Implemented, hardware-unverified |
+| CPU FP32 reference | `CompiledRgbCurves::apply` | Not applicable | No | `test_rgb_curves` | deterministic reference assertions | atomic counter increments | Ubuntu CPU | Production implementation, software-adapter verified |
+
+| Backend | Native GPU Preview | Direct GPU Preview Consumption | Normal Preview CPU Readback | Validation Readback |
+|---|---|---|---|---|
+| Vulkan FP32 | retained RGBA32F `VkImage` | GPU copy into preview image | prohibited | Available |
+| D3D12 FP32 | retained RGBA32F texture UAV | GPU copy into preview texture | prohibited | Available |
+| Metal FP32 | RGBA32F `MTLTexture` | GPU-only preview-texture blit | prohibited | Available |
+| GLES FP32 | retained RGBA32F texture | samples retained texture | prohibited | Available |
+| CPU FP32 reference | Not applicable | No | Not applicable | Direct CPU result |
+
+| Backend | Native Texture Output | ProcessedGpuFrame Override | Direct Preview Consumption | Normal Preview Readback | Validation Readback | Evidence | Status |
+|---|---|---|---|---|---|---|---|
+| Vulkan FP32 | RGBA32F `VkImage` | yes | GPU-to-GPU preview image copy | zero by contract | separate buffer readback | `digitor_native_gpu_tests` | Implemented, hardware-unverified |
+| D3D12 FP32 | RGBA32F texture UAV | yes | GPU-to-GPU preview texture copy | zero by contract | separate readback resource | `digitor_native_gpu_tests` | Implemented, hardware-unverified |
+| Metal FP32 | RGBA32F `MTLTexture` | yes | GPU-only preview texture blit | zero by contract | separate buffer validation | `digitor_native_gpu_tests` | Implemented, hardware-unverified |
+| GLES FP32 | retained RGBA32F texture | yes | sampled into current framebuffer | zero by contract | separate `glReadPixels` validation | `digitor_native_gpu_tests` | Implemented, hardware-unverified |
+| CPU FP32 reference | No | not applicable | CPU frame | not applicable | direct | `test_rgb_curves` | Production implementation, software-adapter verified |
 
 The CPU equations in `src/gpu/color.cpp` remain authoritative. The canonical
 compute source is `src/gpu/shaders/color_pipeline.hlsl`; native backend adapters
@@ -39,44 +70,14 @@ Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
 
-## RGB Curves implementation truth table
+## v4.7 native execution detail
 
-CI/hardware environment for implemented rows: local Ubuntu GCC 13 CPU-only; no GPU device or driver was available. `test_rgb_curves` is deterministic non-hardware evidence; exact identity and alpha checks measured zero error. “Unsupported” backend cells have no numerical result and are not verified claims.
-
-| Feature | CPU Reference | Vulkan | D3D12 | Metal | GLES | Test Evidence | Numerical Result | Status |
-|---|---|---|---|---|---|---|---|---|
-| Curve descriptor validation | `compile_one` | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves` malformed cases, Ubuntu GCC 13 CPU | accepted cases exact; invalid rejected | Production implementation, software-adapter verified |
-| Control-point canonicalization | strict caller order | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | deterministic | Production implementation, software-adapter verified |
-| Monotone cubic coefficients | `compile_one` PCHIP | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves` flat/steep sweep, CPU | monotonic within 1e-6 | Production implementation, software-adapter verified |
-| 256-sample FP32 LUT | `CompiledRgbCurves::compile` | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | allocation/identity pass | Production implementation, software-adapter verified |
-| 1024-sample FP32 LUT | default | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | exact identity | Production implementation, software-adapter verified |
-| 4096-sample FP32 LUT | supported | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | size/content pass | Production implementation, software-adapter verified |
-| Master curve | channel-wise | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | alpha exact | CPU reference only |
-| Red curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | G/B isolation exact | CPU reference only |
-| Green curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | identity fixture, CPU | exact identity | CPU reference only |
-| Blue curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | identity fixture, CPU | exact identity | CPU reference only |
-| Master + RGB combined | fixed order | Unsupported | Unsupported | Unsupported | Unsupported | source/order review | not GPU measured | CPU reference only |
-| Negative-value behavior | explicit extrapolation | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity exact | CPU reference only |
-| Over-range behavior | explicit extrapolation | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity exact | CPU reference only |
-| Alpha preservation | bit-preserved | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | zero error | Production implementation, software-adapter verified |
-| Render Graph integration | explicit CPU pass | Unsupported | Unsupported | Unsupported | Unsupported | `add_rgb_curves_cpu_pass` source review | not numerical | CPU reference only |
-| Node-graph contract | immutable schema v1 | Unsupported | Unsupported | Unsupported | Unsupported | serialization/cache test | stable identity | Interface/design only |
-| Pipeline cache | not needed | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Not implemented |
-| LUT-resource cache | CPU weak cache | Unsupported | Unsupported | Unsupported | Unsupported | cold/change/warm `test_rgb_curves` | pointer-equal warm hit | CPU reference only |
-| Preview consumption | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Not implemented |
-| FP32 | implemented | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity/alpha exact | CPU reference only |
-| FP16, if implemented | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Unsupported |
-
-### v4.7 native execution development truth table
-
-Environment: Ubuntu/GCC 13 CPU-only container; no GPU/device/driver execution. The canonical shader source is not hardware evidence. Numerical GPU results are therefore `not measured`, honestly, and version 4.7.0 remains gated.
+Environment: Ubuntu/GCC 13 CPU-only container; no GPU/device/driver execution. The canonical shader source is not hardware evidence. Numerical GPU results are therefore `not measured`, honestly, and the executed metrics remain unavailable on this host.
 
 Metal and OpenGL ES now contain real native curve dispatch paths (runtime shader
 compilation, FP32 LUT binding, ordered Master/R/G/B evaluation, synchronization,
-and readback). They remain hardware-unverified in this Linux environment. Vulkan and D3D12 now also contain native compute dispatch and preview routing.
-All four paths remain hardware-unverified, and persistent native LUT/pipeline object
-reuse still requires platform qualification; consequently the version bump remains
-gated rather than being reported prematurely.
+and retained texture output). They remain hardware-unverified in this Linux environment. Vulkan and D3D12 also contain native texture compute dispatch and GPU-to-GPU preview routing.
+All four paths remain hardware-unverified pending device qualification.
 
 | Feature | CPU Reference | Vulkan | D3D12 | Metal | GLES | Evidence | Numerical Result | Status |
 |---|---|---|---|---|---|---|---|---|
@@ -91,5 +92,5 @@ gated rather than being reported prematurely.
 | Preview consumption | CPU backend only | native curve output | native curve output | native curve output | native curve output | `SharedRenderer::set_rgb_curves` routing | not hardware measured | Implemented, hardware-unverified |
 | Provenance | CPU fields | dispatch/bind/cache/readback | dispatch/bind/cache/readback | dispatch/bind/cache/readback | draw/bind/cache/readback | backend provenance assignments | CPU/fallback count zero by path | Implemented, hardware-unverified |
 | Failure injection | CPU validation | explicit error | explicit error | explicit error | explicit error | failure seam before native work | no CPU fallback | Implemented, hardware-unverified |
-| FP32 | yes | storage buffers | structured buffers | device buffers | float textures | native resource formats | not hardware measured | Implemented, hardware-unverified |
+| FP32 | yes | RGBA32F image | RGBA32F texture | RGBA32F texture | RGBA32F texture | native resource formats | not hardware measured | Implemented, hardware-unverified |
 | FP16 | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | no implementation | none | Unsupported |

@@ -1,7 +1,7 @@
 # DigitorEngine
 
 DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **4.6.1**, but that number is not evidence of production readiness or ABI stability.
+version **4.7.0**, but that number is not evidence of ABI stability beyond the documented C contract.
 The implementation has a CPU reference path, native GPU resource allocation on selected
 platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
 contains the first native preview passes on Metal and OpenGL ES, but does not yet
@@ -149,4 +149,11 @@ An immutable FP32 CPU reference, monotone-cubic control-point compiler, determin
 
 ### RGB Curves native execution development
 
-A single canonical HLSL shader, device-scoped bounded native FP32 LUT cache, backend-neutral Render Graph pass and detailed curve provenance contract are present. Native backend dispatch and hardware qualification are still open, so the advertised engine version intentionally remains 4.6.1 and no Preview = Export claim is made. See [the RGB Curves specification](docs/rgb_curves.md).
+A single canonical HLSL shader, device-scoped bounded native FP32 LUT cache,
+backend-neutral Render Graph pass, native backend dispatch, and measured CPU
+reference accounting are present. Dedicated Windows/macOS qualification and
+Android compile-only jobs report hardware absence honestly. Native curve
+outputs remain in retained RGBA32F textures/images and matching preview
+backends consume them without CPU readback; validation readback stays separate.
+See [the RGB Curves specification](docs/rgb_curves.md) and the exact
+[implementation truth table](docs/implementation_status.md).

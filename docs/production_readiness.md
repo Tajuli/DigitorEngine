@@ -40,6 +40,6 @@ the CPU reference in non-hardware tests.
 
 ## RGB Curves readiness
 
-The immutable specification, CPU reference, deterministic LUT/cache, tests, and explicit CPU Render Graph pass are ready. Native backends, preview use, provenance, numerical GPU comparison, and performance qualification remain release blockers. Consequently the project version remains 4.6.1 and this work must not be described as a complete production v4.7.0 release.
+The immutable specification, CPU reference, deterministic LUT/cache, native processed-frame passes, measured provenance, and direct preview routing form the v4.7.0 implementation. Hardware-unavailable backends remain honestly hardware-unverified until their dedicated qualification jobs produce device metrics; compilation alone is never recorded as execution.
 
 The canonical curve shader, native cache key/ownership model, expanded provenance schema and backend-neutral graph pass now exist. Native backend artifact creation and hardware pixel qualification remain blockers; therefore 4.7.0 is not declared by this revision and Preview = Export remains unclaimed.

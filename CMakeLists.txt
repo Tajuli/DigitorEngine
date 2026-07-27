@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 4.6.1
+    VERSION 4.7.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/rgb_curves.hlsl" DIGITOR_RGB_CURVES_HLSL)
 configure_file(cmake/rgb_curves_shader.hpp.in generated/rgb_curves_shader.hpp @ONLY)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/color_pipeline.hlsl" DIGITOR_COLOR_PIPELINE_HLSL)
+configure_file(cmake/color_pipeline_shader.hpp.in generated/color_pipeline_shader.hpp @ONLY)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +49,7 @@ add_library(digitor_engine
     src/gpu/color_pipeline.cpp
     src/gpu/rgb_curves.cpp
     src/gpu/native_rgb_curves.cpp
+    src/gpu/processed_gpu_frame.cpp
     src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp
@@ -163,7 +166,27 @@ if (WIN32)
 elseif(APPLE)
     target_link_libraries(digitor_engine PRIVATE "-framework Metal" "-framework Foundation")
 elseif(ANDROID)
-    target_link_libraries(digitor_engine PRIVATE dl EGL GLESv2)
+    # GLES 3.0 core entry points (samplers, immutable texture storage, and
+    # buffer-range mapping) are available from API 18. Keep these as PUBLIC
+    # link requirements because digitor_engine may be static and its final
+    # consumer must link the Android NDK stub libraries.
+    if(DEFINED ANDROID_PLATFORM AND ANDROID_PLATFORM MATCHES "android-([0-9]+)")
+        if(CMAKE_MATCH_1 LESS 18)
+            message(FATAL_ERROR "DigitorEngine GLES requires Android API 18 or newer")
+        endif()
+    endif()
+    find_library(DIGITOR_ANDROID_EGL_LIBRARY EGL REQUIRED)
+    find_library(DIGITOR_ANDROID_GLES3_LIBRARY GLESv3 REQUIRED)
+    find_library(DIGITOR_ANDROID_LIBRARY android REQUIRED)
+    find_library(DIGITOR_ANDROID_LOG_LIBRARY log REQUIRED)
+    find_library(DIGITOR_ANDROID_DL_LIBRARY dl REQUIRED)
+    target_link_libraries(digitor_engine PUBLIC
+        ${DIGITOR_ANDROID_EGL_LIBRARY}
+        ${DIGITOR_ANDROID_GLES3_LIBRARY}
+        ${DIGITOR_ANDROID_LIBRARY}
+        ${DIGITOR_ANDROID_LOG_LIBRARY}
+        ${DIGITOR_ANDROID_DL_LIBRARY}
+    )
 endif()
 
 if (MSVC)
@@ -206,7 +229,7 @@ if (DIGITOR_BUILD_TESTS)
     endif()
     add_test(NAME digitor_tests COMMAND digitor_tests)
 
-    if (WIN32)
+    if (WIN32 OR APPLE OR ANDROID)
         add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
         set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
@@ -220,6 +243,7 @@ if (DIGITOR_BUILD_TESTS)
         set_tests_properties(digitor_native_gpu_tests PROPERTIES
             ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
             LABELS "native-gpu;hardware"
+            SKIP_RETURN_CODE 77
         )
     endif()
 

@@ -5,9 +5,15 @@ struct Parameters {
   float temperature, tint, saturation, vibrance, hue;
   uint count;
 };
+#ifdef DIGITOR_VULKAN
+[[vk::binding(0,0)]] StructuredBuffer<float4> input_pixels : register(t0);
+[[vk::binding(1,0)]] RWStructuredBuffer<float4> output_pixels : register(u0);
+[[vk::push_constant]] ConstantBuffer<Parameters> parameters;
+#else
 StructuredBuffer<float4> input_pixels : register(t0);
 RWStructuredBuffer<float4> output_pixels : register(u0);
 ConstantBuffer<Parameters> parameters : register(b0);
+#endif
 
 [numthreads(64, 1, 1)] void main(uint3 id : SV_DispatchThreadID) {
   uint k = id.x;

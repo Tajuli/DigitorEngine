@@ -114,7 +114,7 @@ int main() {
     assert(!digitor::environment_variable("DIGITOR_ENVIRONMENT_VARIABLE_THAT_MUST_NOT_EXIST_7BC2F0A1"));
     const auto path = digitor::environment_variable("PATH");
     assert(path && !path->empty());
-    assert(std::strcmp(digitor_get_version(), "4.5.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "4.7.0") == 0);
     test_editor();
     test_v2();
     test_color_pipeline();

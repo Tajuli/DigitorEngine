@@ -35,6 +35,15 @@ they are not silently substituted with CPU work. Android/iOS are unverified.
 
 ## v4.6.1 native grade qualification
 
+### Android GLES build contract
+
+Android native builds require API level 18 or newer and OpenGL ES 3.0 headers
+and loader symbols. RGB Curves RGBA32F rendering additionally requires a GLES 3
+context advertising `GL_EXT_color_buffer_float`; devices without it return an
+explicit unsupported result. CI configures API 26 and compile/links both
+`arm64-v8a` and `x86_64`; this is compile/link evidence, not runtime hardware
+verification.
+
 The source-level audit and exact qualification truth table are maintained in
 [`grade_rgba32f_execution.md`](grade_rgba32f_execution.md). This host audit did
 not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.

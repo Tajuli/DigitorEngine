@@ -133,5 +133,18 @@ DigitorResult Engine::curves_rgba32f(std::span<const Color> source,
   if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
   return backend_->curves_rgba32f(source,destination,curves);
 }
+DigitorResult Engine::process_curves_gpu(std::span<const Color> source,
+    std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+    const CompiledRgbCurves& curves, ProcessedGpuFramePtr& out) {
+  std::scoped_lock lock(mutex_);
+  out.reset();
+  if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
+  return backend_->process_curves_gpu(source,width,height,timestamp,curves,out);
+}
+DigitorResult Engine::present_gpu_frame(const ProcessedGpuFramePtr& frame) {
+  std::scoped_lock lock(mutex_);
+  if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
+  return backend_->present_gpu_frame(frame);
+}
 
 } // namespace digitor

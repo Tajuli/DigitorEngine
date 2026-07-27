@@ -1,4 +1,18 @@
-# Native GPU validation — v4.6.1
+# Native GPU validation — RGB Curves v4.7.0
+
+The dedicated `native-rgb-curves-qualification.yml` workflow builds and runs
+the hardware-labelled executable on Windows and macOS and uploads its raw log.
+Exit code 77 means **skipped because no usable backend was available**, never a
+passing execution. Android CI is explicitly compile-only and emits a
+machine-readable artifact with `physical_hardware_verified=false`; device and
+emulator execution remains a manual/self-hosted qualification responsibility.
+
+The executable records the backend device identity before dispatch and emits
+maximum absolute and relative error, RMS, PSNR, SSIM, and worst-pixel data.
+The independent CPU reference is evaluated before the measured native interval.
+`IRenderBackend::curves_rgba32f` snapshots the atomic reference counter around
+the native virtual call, so a successful qualification requires a measured zero
+delta and zero fallback calls.
 
 The authoritative audit, call graphs, instrumentation semantics, numerical
 gates, and implementation truth table are in

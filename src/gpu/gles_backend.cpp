@@ -3,25 +3,75 @@
 #include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
 #include <GLES3/gl3.h>
+#include <EGL/egl.h>
 #include <cstring>
 namespace digitor {
 namespace {
 struct GlObject {
   GLuint name;
 };
+struct GlPreviewOwner { GLuint output{},input{},lut{},framebuffer{},program{}; EGLContext context{};
+  ~GlPreviewOwner(){if(eglGetCurrentContext()==context){GLuint t[]{output,input,lut};glDeleteTextures(3,t);if(framebuffer)glDeleteFramebuffers(1,&framebuffer);if(program)glDeleteProgram(program);}}
+};
+GLuint compile_gl(GLenum type,const char*source){GLuint x=glCreateShader(type);glShaderSource(x,1,&source,nullptr);glCompileShader(x);GLint ok=0;glGetShaderiv(x,GL_COMPILE_STATUS,&ok);if(!ok){glDeleteShader(x);return 0;}return x;}
+bool has_gl_extension(const char* required) noexcept {
+  GLint count = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+  for (GLint index = 0; index < count; ++index) {
+    const auto* extension = reinterpret_cast<const char*>(
+        glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index)));
+    if (extension != nullptr && std::strcmp(extension, required) == 0)
+      return true;
+  }
+  return false;
+}
 class GlBackend final : public IRenderBackend {
   DigitorRendererInfo i_{};
+  bool fp32_renderable_{};
 
 public:
   GlBackend() {
     i_.backend = DIGITOR_RENDERER_OPENGL_ES;
     copy_bounded(i_.backend_name, "OpenGL ES");
     copy_bounded(i_.device_name, "Current EGL context");
-    i_.is_gpu = i_.supports_fp32 = 1;
+    i_.is_gpu = 1;
   }
-  bool initialize(bool) override { return glGetString(GL_VERSION) != nullptr; }
+  bool initialize(bool) override {
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
+      return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    GLint major = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    if (major < 3)
+      return false;
+    fp32_renderable_ = has_gl_extension("GL_EXT_color_buffer_float");
+    i_.supports_fp32 = fp32_renderable_ ? 1 : 0;
+    const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    if (renderer != nullptr)
+      copy_bounded(i_.device_name, renderer);
+    return glGetError() == GL_NO_ERROR;
+  }
   void shutdown() noexcept override {}
   DigitorRendererInfo info() const noexcept override { return i_; }
+  DigitorResult execute_process_curves_gpu(std::span<const Color> src,uint32_t width,uint32_t height,int64_t timestamp,const CompiledRgbCurves&cc,ProcessedGpuFramePtr&out)noexcept override{
+    out.reset();auto context=eglGetCurrentContext();begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,"GLES driver","rgb-curves-glsl-es-texture-v1","GL framebuffer texture");
+    if(!fp32_renderable_)return DIGITOR_RESULT_UNSUPPORTED;
+    if(context==EGL_NO_CONTEXT)return DIGITOR_RESULT_NOT_INITIALIZED;if(!width||!height||src.size()!=size_t(width)*height)return DIGITOR_RESULT_INVALID_ARGUMENT;
+    const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
+    const char*fs="#version 300 es\nprecision highp float;precision highp int;in vec2 uv;uniform sampler2D im,lut;uniform vec4 meta0[4],meta1[4];uniform int lutSize;out vec4 color;float cv(int k,float x){vec4 a=meta0[k],b=meta1[k];if(b.w==0.||isnan(x)||isinf(x))return x;if(x<a.x)return b.z==2.?a.z+b.x*(x-a.x):a.z;if(x>a.y)return b.z==2.?a.w+b.y*(x-a.y):a.w;float u=(x-a.x)/(a.y-a.x)*float(lutSize-1);float i=floor(u);return mix(texelFetch(lut,ivec2(int(i),k),0).r,texelFetch(lut,ivec2(min(int(i)+1,lutSize-1),k),0).r,u-i);}void main(){vec4 c=texture(im,uv);float a=c.a;c.r=cv(0,c.r);c.g=cv(0,c.g);c.b=cv(0,c.b);c.r=cv(1,c.r);c.g=cv(2,c.g);c.b=cv(3,c.b);color=vec4(c.rgb,a);}";
+    GLuint v=compile_gl(GL_VERTEX_SHADER,vs),f=compile_gl(GL_FRAGMENT_SHADER,fs);if(!v||!f)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;GLuint p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);glDeleteShader(v);glDeleteShader(f);GLint linked=0;glGetProgramiv(p,GL_LINK_STATUS,&linked);if(!linked){glDeleteProgram(p);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
+    auto owner=std::shared_ptr<GlPreviewOwner>(new(std::nothrow)GlPreviewOwner{});if(!owner){glDeleteProgram(p);return DIGITOR_RESULT_OUT_OF_MEMORY;}owner->program=p;owner->context=context;GLuint tex[3]{};glGenTextures(3,tex);owner->input=tex[0];owner->lut=tex[1];owner->output=tex[2];
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,owner->input);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,width,height);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,width,height,GL_RGBA,GL_FLOAT,src.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    std::vector<float>lut;float m0[16],m1[16];for(int k=0;k<4;k++){const auto&c=cc.curves()[k];lut.insert(lut.end(),c.samples.begin(),c.samples.end());m0[k*4]=c.domain_min;m0[k*4+1]=c.domain_max;m0[k*4+2]=c.first_value;m0[k*4+3]=c.last_value;m1[k*4]=c.slope_before;m1[k*4+1]=c.slope_after;m1[k*4+2]=float(c.extrapolation);m1[k*4+3]=c.enabled&&!c.identity?1.f:0.f;}
+    glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,owner->lut);glTexStorage2D(GL_TEXTURE_2D,1,GL_R32F,cc.lut_size(),4);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,cc.lut_size(),4,GL_RED,GL_FLOAT,lut.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D,owner->output);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,width,height);glGenFramebuffers(1,&owner->framebuffer);glBindFramebuffer(GL_FRAMEBUFFER,owner->framebuffer);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,owner->output,0);if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)return DIGITOR_RESULT_UNSUPPORTED;
+    glUseProgram(p);glUniform1i(glGetUniformLocation(p,"im"),0);glUniform1i(glGetUniformLocation(p,"lut"),1);glUniform1i(glGetUniformLocation(p,"lutSize"),static_cast<GLint>(cc.lut_size()));glUniform4fv(glGetUniformLocation(p,"meta0"),4,m0);glUniform4fv(glGetUniformLocation(p,"meta1"),4,m1);glViewport(0,0,width,height);glDrawArrays(GL_TRIANGLES,0,3);glFlush();if(glGetError()!=GL_NO_ERROR)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    static std::atomic_uint64_t ids{1};auto ready=std::make_shared<std::atomic_bool>(true);out=std::make_shared<ProcessedGpuFrame>(this,DIGITOR_RENDERER_OPENGL_ES,GpuFrameMetadata{width,height,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,GpuFrameAlpha::straight,timestamp,"linear-rgba"},ids++,std::static_pointer_cast<void>(owner),ready,true);provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=provenance_.command_recorded=provenance_.dispatch_or_draw_issued=provenance_.queue_submission_issued=provenance_.output_written=true;provenance_.synchronization_waited=true;provenance_.readback_performed=false;return DIGITOR_RESULT_OK;
+  }
+  DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&frame)noexcept override{
+    if(!frame||eglGetCurrentContext()==EGL_NO_CONTEXT||frame->acquire(this,DIGITOR_RENDERER_OPENGL_ES)!=DIGITOR_RESULT_OK)return DIGITOR_RESULT_INVALID_ARGUMENT;auto o=std::static_pointer_cast<GlPreviewOwner>(native_owner(*frame));if(!o||o->context!=eglGetCurrentContext()){(void)frame->release(this);return DIGITOR_RESULT_INVALID_ARGUMENT;}
+    const char*vs="#version 300 es\nout vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";const char*fs="#version 300 es\nprecision highp float;in vec2 uv;uniform sampler2D im;out vec4 c;void main(){c=texture(im,uv);}";GLuint v=compile_gl(GL_VERTEX_SHADER,vs),f=compile_gl(GL_FRAGMENT_SHADER,fs),p=0;if(v&&f){p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);}glDeleteShader(v);glDeleteShader(f);glBindFramebuffer(GL_FRAMEBUFFER,0);auto m=frame->metadata();glViewport(0,0,m.width,m.height);glUseProgram(p);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,o->output);glUniform1i(glGetUniformLocation(p,"im"),0);glDrawArrays(GL_TRIANGLES,0,3);glFlush();auto result=glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;glDeleteProgram(p);(void)frame->release(this);return result;
+  }
   DigitorResult create_texture(const DigitorTextureDesc &d,
                                void **o) noexcept override {
     *o = nullptr;
@@ -183,9 +233,11 @@ public:
   }
   DigitorResult grade_rgba32f(std::span<const Color> src, std::span<Color> out,
                               const ColorGrade &p) noexcept override {
-    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES, true, info_.device_name,
+    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES, true, i_.device_name,
                            "OpenGL ES driver compiler", "grade-glsl-es-v1",
                            "GL program:grade-v1");
+    if (!fp32_renderable_)
+      return DIGITOR_RESULT_UNSUPPORTED;
     if (gpu_failure_point() != GpuFailurePoint::None)
       return injected_failure(gpu_failure_point());
     if (src.size() != out.size())
@@ -290,10 +342,11 @@ public:
     return error == GL_NO_ERROR ? DIGITOR_RESULT_OK
                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
-  DigitorResult curves_rgba32f(std::span<const Color> src, std::span<Color> out,
+  DigitorResult execute_curves_rgba32f(std::span<const Color> src, std::span<Color> out,
                               const CompiledRgbCurves &cc) noexcept override {
-    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,info_.device_name,
+    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,
       "OpenGL ES driver compiler","rgb-curves-glsl-es-v1","GL program:rgb-curves-v1");
+    if(!fp32_renderable_)return DIGITOR_RESULT_UNSUPPORTED;
     if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
     if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;int pixel_count=0,lut_size=0;if(!checked_size_to_int(src.size(),pixel_count)||!checked_size_to_int(cc.lut_size(),lut_size))return DIGITOR_RESULT_INVALID_ARGUMENT;
     const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
@@ -302,12 +355,12 @@ public:
     GLuint v=compile(GL_VERTEX_SHADER,vs),f=compile(GL_FRAGMENT_SHADER,fs);if(!v||!f)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     GLuint p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);glDeleteShader(v);glDeleteShader(f);GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
     std::vector<float> lut;lut.reserve(size_t(cc.lut_size())*4);float m0[16],m1[16];
-    for(int k=0;k<4;k++){const auto&c=cc.curves()[k];lut.insert(lut.end(),c.samples.begin(),c.samples.end());m0[k*4]=c.domain_min;m0[k*4+1]=c.domain_max;m0[k*4+2]=c.first_value;m0[k*4+3]=c.last_value;m1[k*4]=c.slope_before;m1[k*4+1]=c.slope_after;m1[k*4+2]=float(c.extrapolation);m1[k*4+3]=c.enabled?1.f:0.f;}
+    for(int k=0;k<4;k++){const auto&c=cc.curves()[k];lut.insert(lut.end(),c.samples.begin(),c.samples.end());m0[k*4]=c.domain_min;m0[k*4+1]=c.domain_max;m0[k*4+2]=c.first_value;m0[k*4+3]=c.last_value;m1[k*4]=c.slope_before;m1[k*4+1]=c.slope_after;m1[k*4+2]=float(c.extrapolation);m1[k*4+3]=c.enabled&&!c.identity?1.f:0.f;}
     GLuint tex[3],fb;glGenTextures(3,tex);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,tex[0]);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,pixel_count,1);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,pixel_count,1,GL_RGBA,GL_FLOAT,src.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
     glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,tex[1]);glTexStorage2D(GL_TEXTURE_2D,1,GL_R32F,lut_size,4);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,lut_size,4,GL_RED,GL_FLOAT,lut.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
     glBindTexture(GL_TEXTURE_2D,tex[2]);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,pixel_count,1);glGenFramebuffers(1,&fb);glBindFramebuffer(GL_FRAMEBUFFER,fb);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,tex[2],0);
     glUseProgram(p);glUniform1i(glGetUniformLocation(p,"im"),0);glUniform1i(glGetUniformLocation(p,"lut"),1);glUniform1i(glGetUniformLocation(p,"lutSize"),lut_size);glUniform4fv(glGetUniformLocation(p,"meta0"),4,m0);glUniform4fv(glGetUniformLocation(p,"meta1"),4,m1);glViewport(0,0,pixel_count,1);glDrawArrays(GL_TRIANGLES,0,3);
-    provenance_.source_upload_performed=provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.curves_enabled=true;provenance_.curve_lut_size=cc.lut_size();provenance_.compiled_curve_identity=cc.identity();provenance_.native_curve_shader_identity="rgb-curves-glsl-es-v1";provenance_.native_lut_resource_identity=cc.identity()+":"+info_.device_name;provenance_.native_lut_cache=CacheDisposition::Miss;provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true;
+    provenance_.source_upload_performed=provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.curves_enabled=true;provenance_.curve_lut_size=cc.lut_size();provenance_.compiled_curve_identity=cc.identity();provenance_.native_curve_shader_identity="rgb-curves-glsl-es-v1";provenance_.native_lut_resource_identity=cc.identity()+":"+i_.device_name;provenance_.native_lut_cache=CacheDisposition::Miss;provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true;
     glReadPixels(0,0,pixel_count,1,GL_RGBA,GL_FLOAT,out.data());glFinish();provenance_.queue_submission_issued=provenance_.synchronization_waited=provenance_.output_written=provenance_.readback_performed=provenance_.validation_readback_completed=true;GLenum err=glGetError();glDeleteFramebuffers(1,&fb);glDeleteTextures(3,tex);glDeleteProgram(p);return err==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   void destroy_texture(void *p) noexcept override {

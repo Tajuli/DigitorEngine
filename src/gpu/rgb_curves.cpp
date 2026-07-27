@@ -1,4 +1,5 @@
 #include "digitor/rgb_curves.hpp"
+#include "gpu/execution_provenance.hpp"
 #include "core/numeric_utils.hpp"
 
 #include <algorithm>
@@ -93,7 +94,7 @@ std::shared_ptr<const CompiledRgbCurves> CompiledRgbCurves::compile(const RgbCur
     auto v=std::shared_ptr<CompiledRgbCurves>(new CompiledRgbCurves);v->lut_size_=p.lut_size;v->identity_=key;v->curves_={compile_one(p.master,p.lut_size),compile_one(p.red,p.lut_size),compile_one(p.green,p.lut_size),compile_one(p.blue,p.lut_size)};
     std::lock_guard lock(cache_mutex);auto& slot=cache[key];if(auto hit=slot.lock())return hit;slot=v;return v;
 }
-Color CompiledRgbCurves::apply(Color c)const noexcept{c.r=sample(curves_[0],c.r);c.g=sample(curves_[0],c.g);c.b=sample(curves_[0],c.b);c.r=sample(curves_[1],c.r);c.g=sample(curves_[2],c.g);c.b=sample(curves_[3],c.b);return c;}
+Color CompiledRgbCurves::apply(Color c)const noexcept{note_cpu_curve_reference();c.r=sample(curves_[0],c.r);c.g=sample(curves_[0],c.g);c.b=sample(curves_[0],c.b);c.r=sample(curves_[1],c.r);c.g=sample(curves_[2],c.g);c.b=sample(curves_[3],c.b);return c;}
 void CompiledRgbCurves::apply(std::span<const Color>a,std::span<Color>b)const{if(a.size()!=b.size())throw std::invalid_argument("RGB curve image sizes differ");for(std::size_t i=0;i<a.size();++i)b[i]=apply(a[i]);}
 std::string CompiledRgbCurves::serialize()const{return identity_;}
 std::size_t CompiledRgbCurves::cache_size(){std::lock_guard lock(cache_mutex);for(auto i=cache.begin();i!=cache.end();)if(i->second.expired())i=cache.erase(i);else ++i;return cache.size();}
