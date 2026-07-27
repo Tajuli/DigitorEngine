@@ -11,7 +11,7 @@ NativeRgbCurvesParameters native_rgb_curves_parameters(
     const auto& c = compiled.curves()[i];
     result.curves[i] = {c.domain_min, c.domain_max, c.first_value, c.last_value,
       c.slope_before, c.slope_after, static_cast<std::uint32_t>(c.extrapolation),
-      c.enabled ? 1u : 0u};
+      c.enabled && !c.identity ? 1u : 0u};
   }
   result.lut_size = compiled.lut_size(); result.pixel_count = count;
   return result;

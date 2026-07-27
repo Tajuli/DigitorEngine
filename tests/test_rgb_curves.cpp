@@ -23,7 +23,9 @@ void test_rgb_curves(){using namespace digitor;
  std::uint32_t checked=0;assert(checked_size_to_uint32(42,checked)&&checked==42);
  if constexpr(sizeof(std::size_t)>sizeof(std::uint32_t))assert(!checked_size_to_uint32(std::size_t{std::numeric_limits<std::uint32_t>::max()}+1,checked));
  RgbCurvesParameters p;auto identity=CompiledRgbCurves::compile(p);Color a{-.25f,1.5f,.375f,.37f};auto b=identity->apply(a);assert(b.r==a.r&&b.g==a.g&&b.b==a.b&&b.a==a.a);assert(cpu_curve_reference_count()==counter_before+1);
+ auto identity_native=native_rgb_curves_parameters(*identity,1);for(const auto&meta:identity_native.curves)assert(meta.enabled==0);
  p.red.points={{0,0},{.25f,.1f},{.5f,.8f},{1,1}};auto curve=CompiledRgbCurves::compile(p);auto hit=CompiledRgbCurves::compile(p);assert(curve==hit&&curve->lut_size()==1024&&curve->identity()==curve->serialize());b=curve->apply(a);assert(b.g==a.g&&b.b==a.b&&b.a==a.a);
+ auto curve_native=native_rgb_curves_parameters(*curve,1);assert(curve_native.curves[0].enabled==0&&curve_native.curves[1].enabled==1&&curve_native.curves[2].enabled==0&&curve_native.curves[3].enabled==0);
  p.lut_size=256;assert(CompiledRgbCurves::compile(p)!=curve);p.lut_size=4096;assert(CompiledRgbCurves::compile(p)->curves()[1].samples.size()==4096);
  RgbCurvesParameters flat;flat.master.points={{0,0},{.3f,.2f},{.7f,.2f},{1,1}};auto f=CompiledRgbCurves::compile(flat);float last=-1;for(int n=0;n<=100;n++){float v=f->apply({n/100.f,0,0,1}).r;assert(v+1e-6f>=last);last=v;}
  RgbCurvesParameters ext;ext.master.points={{0,.1f},{1,.9f}};auto e=CompiledRgbCurves::compile(ext);b=e->apply({-.5f,1.5f,.5f,.2f});assert(b.r<.1f&&b.g>.9f&&b.a==.2f);

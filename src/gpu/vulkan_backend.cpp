@@ -4,6 +4,7 @@
 #include "gpu/native_rgb_curves.hpp"
 #include "digitor/shader.hpp"
 #include "rgb_curves_shader.hpp"
+#include "color_pipeline_shader.hpp"
 #include <cstring>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -274,8 +275,8 @@ public:
   }
   DigitorResult grade_rgba32f(std::span<const Color> src, std::span<Color> out,
                               const ColorGrade &p) noexcept override {
-    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, info_.device_name,
-                           "checked-in SPIR-V", "grade_spirv.inc:main",
+    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, i_.device_name,
+                           shader_compiler_.identity().c_str(), "color_pipeline.hlsl:main",
                            "VkComputePipeline:grade-v1");
     if (gpu_failure_point() != GpuFailurePoint::None)
       return injected_failure(gpu_failure_point());
@@ -354,10 +355,15 @@ public:
     pli.pPushConstantRanges = &range;
     VkPipelineLayout pipelineLayout{};
     vkCreatePipelineLayout(d_, &pli, nullptr, &pipelineLayout);
-#include "gpu/shaders/grade_spirv.inc"
+    ShaderCompileRequest grade_request{.source=digitor_color_pipeline_hlsl,
+      .entry_point="main",.source_name="color_pipeline.hlsl",
+      .target_profile="cs_6_0",.stage=ShaderStage::compute,
+      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}}};
+    const auto grade_binary=shader_cache_.get_or_compile(shader_compiler_,grade_request);
+    if(!grade_binary){cleanup();vkDestroyPipelineLayout(d_,pipelineLayout,nullptr);vkDestroyDescriptorSetLayout(d_,layout,nullptr);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
     VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    si.codeSize = grade_spv_len;
-    si.pCode = reinterpret_cast<const uint32_t *>(grade_spv);
+    si.codeSize = grade_binary.binary.size();
+    si.pCode = reinterpret_cast<const uint32_t *>(grade_binary.binary.data());
     VkShaderModule shader{};
     vkCreateShaderModule(d_, &si, nullptr, &shader);
     VkComputePipelineCreateInfo ci{
@@ -453,13 +459,13 @@ public:
   }
   DigitorResult execute_curves_rgba32f(std::span<const Color> src, std::span<Color> out,
                                const CompiledRgbCurves &curves) noexcept override {
-    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, info_.device_name,
+    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, i_.device_name,
                            shader_compiler_.identity().c_str(), "rgb_curves.hlsl:main",
                            "VkComputePipeline:rgb-curves-v1");
     provenance_.curves_enabled=true; provenance_.curve_lut_size=curves.lut_size();
     provenance_.compiled_curve_identity=curves.identity();
     provenance_.native_curve_shader_identity="rgb_curves.hlsl:abi-v1";
-    provenance_.native_lut_resource_identity=curves.identity()+":"+info_.device_name;
+    provenance_.native_lut_resource_identity=curves.identity()+":"+i_.device_name;
     if (gpu_failure_point()!=GpuFailurePoint::None) return injected_failure(gpu_failure_point());
     if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;std::uint32_t pixel_count=0;if(!checked_size_to_uint32(src.size(),pixel_count))return DIGITOR_RESULT_INVALID_ARGUMENT;
     ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",

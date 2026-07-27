@@ -80,7 +80,7 @@ public:
         [input replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:source.data() bytesPerRow:width*sizeof(Color)];
         struct M{float lo,hi,first,last,sb,sa;uint32_t extrap,enabled;};struct P{M m[4];uint32_t size,w,h;}p{};
         std::vector<float> lut;lut.reserve(std::size_t(compiled.lut_size())*4);
-        for(unsigned k=0;k<4;k++){const auto&c=compiled.curves()[k];p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,uint32_t(c.extrapolation),c.enabled?1u:0u};lut.insert(lut.end(),c.samples.begin(),c.samples.end());}
+        for(unsigned k=0;k<4;k++){const auto&c=compiled.curves()[k];p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,uint32_t(c.extrapolation),c.enabled&&!c.identity?1u:0u};lut.insert(lut.end(),c.samples.begin(),c.samples.end());}
         p.size=compiled.lut_size();p.w=width;p.h=height;id<MTLBuffer> lb=[device_ newBufferWithBytes:lut.data() length:lut.size()*sizeof(float) options:MTLResourceStorageModeShared];if(!lb)return DIGITOR_RESULT_OUT_OF_MEMORY;
         id<MTLCommandBuffer> command=[queue commandBuffer];id<MTLComputeCommandEncoder> e=[command computeCommandEncoder];
         [e setComputePipelineState:pipe];[e setTexture:input atIndex:0];[e setTexture:output atIndex:1];[e setBuffer:lb offset:0 atIndex:0];[e setBytes:&p length:sizeof(p) atIndex:1];
@@ -299,7 +299,7 @@ public:
             std::vector<float> lut; lut.reserve(size_t(compiled.lut_size())*4);
             for (unsigned k=0;k<4;k++) { const auto& c=compiled.curves()[k];
                 p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,
-                        static_cast<uint32_t>(c.extrapolation),c.enabled?1u:0u};
+                        static_cast<uint32_t>(c.extrapolation),c.enabled&&!c.identity?1u:0u};
                 lut.insert(lut.end(),c.samples.begin(),c.samples.end()); }
             p.size=compiled.lut_size();
             if (!checked_size_to_uint32(source.size(), p.count))
