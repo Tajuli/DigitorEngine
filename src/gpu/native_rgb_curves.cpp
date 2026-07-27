@@ -4,6 +4,25 @@
 
 namespace digitor {
 
+NativeRgbCurvesParameters native_rgb_curves_parameters(
+    const CompiledRgbCurves& compiled, std::uint32_t count) noexcept {
+  NativeRgbCurvesParameters result{};
+  for (std::size_t i = 0; i != 4; ++i) {
+    const auto& c = compiled.curves()[i];
+    result.curves[i] = {c.domain_min, c.domain_max, c.first_value, c.last_value,
+      c.slope_before, c.slope_after, static_cast<std::uint32_t>(c.extrapolation),
+      c.enabled ? 1u : 0u};
+  }
+  result.lut_size = compiled.lut_size(); result.pixel_count = count;
+  return result;
+}
+std::vector<float> native_rgb_curves_lut(const CompiledRgbCurves& compiled) {
+  std::vector<float> result; result.reserve(std::size_t(compiled.lut_size()) * 4);
+  for (const auto& curve : compiled.curves())
+    result.insert(result.end(), curve.samples.begin(), curve.samples.end());
+  return result;
+}
+
 NativeRgbCurvesCache::Lookup NativeRgbCurvesCache::get_or_create(
     const NativeRgbCurvesKey& key, const Factory& factory) {
   const auto stable = key.serialize();

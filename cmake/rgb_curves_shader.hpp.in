@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char digitor_rgb_curves_hlsl[] = R"DIGITOR_HLSL(@DIGITOR_RGB_CURVES_HLSL@)DIGITOR_HLSL";

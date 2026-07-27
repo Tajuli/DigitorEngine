@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -16,11 +17,19 @@
 #include <vector>
 
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
+#include "gpu/native_rgb_curves.hpp"
+#include "digitor/shader.hpp"
+#include "rgb_curves_shader.hpp"
 
 namespace digitor {
 namespace {
 using Microsoft::WRL::ComPtr;
+
+bool checked_uint(std::size_t value, UINT& result) noexcept {
+  return checked_size_cast(value, result);
+}
 
 struct D3DObject {
   ComPtr<ID3D12Resource> resource;
@@ -349,6 +358,9 @@ public:
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (source.empty())
       return DIGITOR_RESULT_OK;
+    UINT source_count = 0;
+    if (!checked_uint(source.size(), source_count))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
     static constexpr char shader[] =
         R"(struct P{float exposure,contrast,gamma_,lift,gain,offset_,temperature,tint,saturation,vibrance,hue;uint count;}; StructuredBuffer<float4> input:register(t0); RWStructuredBuffer<float4> output:register(u0); ConstantBuffer<P> p:register(b0); [numthreads(64,1,1)]void main(uint3 id:SV_DispatchThreadID){uint k=id.x;if(k>=p.count)return;float4 c=input[k];float3 x=c.rgb;float t=p.temperature*.1;x.r+=t;x.b-=t;x.g+=p.tint*.1;float l=dot(x,float3(.2126,.7152,.0722));float v=1+p.vibrance*(1-(max(x.r,max(x.g,x.b))-min(x.r,min(x.g,x.b))));x=l+(x-l)*(p.saturation*v);x=(x-.5)*p.contrast+.5;x=(x+p.lift)*p.gain+p.offset_;x*=exp2(p.exposure);x=sign(x)*pow(abs(x),1/max(.001,p.gamma_));float a=p.hue*.0174532925199433,co=cos(a),s=sin(a);float3 r=x;x=float3((.213+co*.787-s*.213)*r.r+(.715-co*.715-s*.715)*r.g+(.072-co*.072+s*.928)*r.b,(.213-co*.213+s*.143)*r.r+(.715+co*.285+s*.140)*r.g+(.072-co*.072-s*.283)*r.b,(.213-co*.213-s*.787)*r.r+(.715-co*.715+s*.715)*r.g+(.072+co*.928+s*.072)*r.b);output[k]=float4(x,c.a);})";
     ComPtr<ID3DBlob> bytecode, errors;
@@ -432,15 +444,16 @@ public:
     sd.Format = DXGI_FORMAT_UNKNOWN;
     sd.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
     sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    sd.Buffer.NumElements = static_cast<UINT>(source.size());
-    sd.Buffer.StructureByteStride = sizeof(Color);
+    sd.Buffer.NumElements = source_count;
+    static_assert(sizeof(Color) <= UINT_MAX);
+    sd.Buffer.StructureByteStride = static_cast<UINT>(sizeof(Color));
     device_->CreateShaderResourceView(input.Get(), &sd, cpu);
     cpu.ptr += stride;
     D3D12_UNORDERED_ACCESS_VIEW_DESC ud{};
     ud.Format = DXGI_FORMAT_UNKNOWN;
     ud.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-    ud.Buffer.NumElements = static_cast<UINT>(source.size());
-    ud.Buffer.StructureByteStride = sizeof(Color);
+    ud.Buffer.NumElements = source_count;
+    ud.Buffer.StructureByteStride = static_cast<UINT>(sizeof(Color));
     device_->CreateUnorderedAccessView(output.Get(), nullptr, &ud, cpu);
     allocator_->Reset();
     list_->Reset(allocator_.Get(), pipeline.Get());
@@ -456,7 +469,7 @@ public:
       uint32_t n;
     } push{{p.exposure, p.contrast, p.gamma, p.lift, p.gain, p.offset,
             p.temperature, p.tint, p.saturation, p.vibrance, p.hue},
-           static_cast<uint32_t>(source.size())};
+           source_count};
     list_->SetComputeRoot32BitConstants(2, 12, &push, 0);
     list_->Dispatch((push.n + 63) / 64, 1, 1);
     provenance_.command_recorded = true;
@@ -485,6 +498,19 @@ public:
     provenance_.cpu_color_reference_invocations =
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
     return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult curves_rgba32f(std::span<const Color> source,std::span<Color> out,
+                               const CompiledRgbCurves& curves) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_D3D12,true,info_.device_name,
+      shader_compiler_.identity().c_str(),"rgb_curves.hlsl:main","ID3D12PipelineState:rgb-curves-v1");
+    provenance_.curves_enabled=true;provenance_.curve_lut_size=curves.lut_size();provenance_.compiled_curve_identity=curves.identity();provenance_.native_curve_shader_identity="rgb_curves.hlsl:DXIL-abi-v1";provenance_.native_lut_resource_identity=curves.identity()+":"+info_.device_name;
+    if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());if(source.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(source.empty())return DIGITOR_RESULT_OK;UINT source_count=0;if(!checked_uint(source.size(),source_count))return DIGITOR_RESULT_INVALID_ARGUMENT;
+    ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",.source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,.backend=ShaderBackend::d3d12};auto shader=shader_cache_.get_or_compile(shader_compiler_,request);if(!shader){provenance_.failure_stage="DXIL compilation";return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}provenance_.shader_pipeline_cache=CacheDisposition::Hit;
+    D3D12_DESCRIPTOR_RANGE ranges[2]{};ranges[0]={D3D12_DESCRIPTOR_RANGE_TYPE_SRV,2,0};ranges[1]={D3D12_DESCRIPTOR_RANGE_TYPE_UAV,1,0};D3D12_ROOT_PARAMETER roots[3]{};roots[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;roots[0].DescriptorTable={1,&ranges[0]};roots[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;roots[1].DescriptorTable={1,&ranges[1]};roots[2].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;static_assert(sizeof(NativeRgbCurvesParameters)/4<=UINT_MAX);constexpr UINT parameter_dwords=static_cast<UINT>(sizeof(NativeRgbCurvesParameters)/4);roots[2].Constants={0,0,parameter_dwords};D3D12_ROOT_SIGNATURE_DESC rd{3,roots,0,nullptr,D3D12_ROOT_SIGNATURE_FLAG_NONE};ComPtr<ID3DBlob> sig,error;if(FAILED(D3D12SerializeRootSignature(&rd,D3D_ROOT_SIGNATURE_VERSION_1,&sig,&error)))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;ComPtr<ID3D12RootSignature> root;if(FAILED(device_->CreateRootSignature(0,sig->GetBufferPointer(),sig->GetBufferSize(),IID_PPV_ARGS(&root))))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};pd.pRootSignature=root.Get();pd.CS={shader.binary.data(),shader.binary.size()};ComPtr<ID3D12PipelineState> pipeline;if(FAILED(device_->CreateComputePipelineState(&pd,IID_PPV_ARGS(&pipeline))))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    const auto lut=native_rgb_curves_lut(curves);UINT lut_count=0;if(!checked_uint(lut.size(),lut_count))return DIGITOR_RESULT_INVALID_ARGUMENT;const auto params=native_rgb_curves_parameters(curves,source_count);const UINT64 pixel_bytes=static_cast<UINT64>(source.size_bytes()),lut_bytes=static_cast<UINT64>(lut.size()*sizeof(float));auto make=[&](UINT64 bytes,D3D12_HEAP_TYPE type,D3D12_RESOURCE_STATES state,D3D12_RESOURCE_FLAGS flags,ComPtr<ID3D12Resource>&r){D3D12_HEAP_PROPERTIES hp{};hp.Type=type;D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=bytes;d.Height=1;d.DepthOrArraySize=d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;d.Flags=flags;return device_->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,state,nullptr,IID_PPV_ARGS(&r));};ComPtr<ID3D12Resource>input,lut_resource,output,readback;if(FAILED(make(pixel_bytes,D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ,D3D12_RESOURCE_FLAG_NONE,input))||FAILED(make(lut_bytes,D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ,D3D12_RESOURCE_FLAG_NONE,lut_resource))||FAILED(make(pixel_bytes,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,output))||FAILED(make(pixel_bytes,D3D12_HEAP_TYPE_READBACK,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_FLAG_NONE,readback)))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;void*m=nullptr;D3D12_RANGE none{0,0};input->Map(0,&none,&m);std::memcpy(m,source.data(),pixel_bytes);input->Unmap(0,nullptr);lut_resource->Map(0,&none,&m);std::memcpy(m,lut.data(),lut_bytes);lut_resource->Unmap(0,nullptr);provenance_.source_upload_performed=true;
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,3,D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};ComPtr<ID3D12DescriptorHeap>heap;if(FAILED(device_->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&heap))))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;auto cpu=heap->GetCPUDescriptorHandleForHeapStart();UINT stride=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);D3D12_SHADER_RESOURCE_VIEW_DESC sd{};sd.Format=DXGI_FORMAT_UNKNOWN;sd.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;sd.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;sd.Buffer.NumElements=source_count;static_assert(sizeof(Color)<=UINT_MAX);sd.Buffer.StructureByteStride=static_cast<UINT>(sizeof(Color));device_->CreateShaderResourceView(input.Get(),&sd,cpu);cpu.ptr+=stride;sd.Buffer.NumElements=lut_count;static_assert(sizeof(float)<=UINT_MAX);sd.Buffer.StructureByteStride=static_cast<UINT>(sizeof(float));device_->CreateShaderResourceView(lut_resource.Get(),&sd,cpu);cpu.ptr+=stride;D3D12_UNORDERED_ACCESS_VIEW_DESC ud{};ud.Format=DXGI_FORMAT_UNKNOWN;ud.ViewDimension=D3D12_UAV_DIMENSION_BUFFER;ud.Buffer.NumElements=source_count;ud.Buffer.StructureByteStride=static_cast<UINT>(sizeof(Color));device_->CreateUnorderedAccessView(output.Get(),nullptr,&ud,cpu);
+    allocator_->Reset();list_->Reset(allocator_.Get(),pipeline.Get());ID3D12DescriptorHeap*heaps[]{heap.Get()};list_->SetDescriptorHeaps(1,heaps);list_->SetComputeRootSignature(root.Get());auto gpu=heap->GetGPUDescriptorHandleForHeapStart();list_->SetComputeRootDescriptorTable(0,gpu);gpu.ptr+=2*stride;list_->SetComputeRootDescriptorTable(1,gpu);list_->SetComputeRoot32BitConstants(2,parameter_dwords,&params,0);list_->Dispatch((params.pixel_count+63)/64,1,1);provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true;D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;barrier.Transition={output.Get(),0,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COPY_SOURCE};list_->ResourceBarrier(1,&barrier);list_->CopyResource(readback.Get(),output.Get());if(FAILED(list_->Close()))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;ID3D12CommandList*lists[]{list_.Get()};queue_->ExecuteCommandLists(1,lists);provenance_.queue_submission_issued=true;auto status=signal_and_wait();if(status!=DIGITOR_RESULT_OK)return status;provenance_.synchronization_waited=true;D3D12_RANGE read{0,static_cast<SIZE_T>(pixel_bytes)};if(FAILED(readback->Map(0,&read,&m)))return DIGITOR_RESULT_BACKEND_UNAVAILABLE;std::memcpy(out.data(),m,pixel_bytes);readback->Unmap(0,&none);provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.native_lut_cache=CacheDisposition::Miss;provenance_.output_written=provenance_.readback_performed=provenance_.validation_readback_completed=true;return DIGITOR_RESULT_OK;
   }
 
   DigitorResult create_texture(const DigitorTextureDesc &desc,
@@ -616,6 +642,8 @@ private:
   ComPtr<ID3D12RootSignature> root_signature_;
   ComPtr<ID3D12DescriptorHeap> srv_heap_;
   ComPtr<ID3D12DescriptorHeap> rtv_heap_;
+  ShaderCompiler shader_compiler_{};
+  ShaderCache shader_cache_{};
   DigitorRendererInfo info_{};
 };
 } // namespace

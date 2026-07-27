@@ -1,5 +1,9 @@
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
+#include "gpu/native_rgb_curves.hpp"
+#include "digitor/shader.hpp"
+#include "rgb_curves_shader.hpp"
 #include <cstring>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -28,6 +32,8 @@ class VulkanBackend final : public IRenderBackend {
   uint32_t family_{};
   VkCommandPool pool_{};
   VkPhysicalDeviceMemoryProperties mp_{};
+  ShaderCompiler shader_compiler_{};
+  ShaderCache shader_cache_{};
   DigitorRendererInfo i_{};
   uint32_t mem(uint32_t bits, VkMemoryPropertyFlags flags) {
     for (uint32_t n = 0; n < mp_.memoryTypeCount; n++)
@@ -257,6 +263,9 @@ public:
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
       return DIGITOR_RESULT_OK;
+    std::uint32_t pixel_count = 0;
+    if (!checked_size_to_uint32(src.size(), pixel_count))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
     VkBuffer bufs[2]{};
     VkDeviceMemory memory[2]{};
     auto cleanup = [&] {
@@ -384,7 +393,7 @@ public:
       uint32_t n;
     } push{{p.exposure, p.contrast, p.gamma, p.lift, p.gain, p.offset,
             p.temperature, p.tint, p.saturation, p.vibrance, p.hue},
-           static_cast<uint32_t>(src.size())};
+           pixel_count};
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(push), &push);
     vkCmdDispatch(cmd, (push.n + 63) / 64, 1, 1);
@@ -421,6 +430,36 @@ public:
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
     return vr == VK_SUCCESS ? DIGITOR_RESULT_OK
                             : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  DigitorResult curves_rgba32f(std::span<const Color> src, std::span<Color> out,
+                               const CompiledRgbCurves &curves) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, info_.device_name,
+                           shader_compiler_.identity().c_str(), "rgb_curves.hlsl:main",
+                           "VkComputePipeline:rgb-curves-v1");
+    provenance_.curves_enabled=true; provenance_.curve_lut_size=curves.lut_size();
+    provenance_.compiled_curve_identity=curves.identity();
+    provenance_.native_curve_shader_identity="rgb_curves.hlsl:abi-v1";
+    provenance_.native_lut_resource_identity=curves.identity()+":"+info_.device_name;
+    if (gpu_failure_point()!=GpuFailurePoint::None) return injected_failure(gpu_failure_point());
+    if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;std::uint32_t pixel_count=0;if(!checked_size_to_uint32(src.size(),pixel_count))return DIGITOR_RESULT_INVALID_ARGUMENT;
+    ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",
+      .source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,
+      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}}};
+    const auto binary=shader_cache_.get_or_compile(shader_compiler_,request);
+    if(!binary){provenance_.failure_stage="SPIR-V generation";return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
+    provenance_.shader_pipeline_cache=CacheDisposition::Hit;
+    VkBuffer buffers[4]{};VkDeviceMemory memories[4]{};VkDescriptorSetLayout set_layout{};
+    VkPipelineLayout pipeline_layout{};VkShaderModule module{};VkPipeline pipeline{};
+    VkDescriptorPool descriptor_pool{};VkCommandBuffer command{};
+    auto cleanup=[&]{if(command)vkFreeCommandBuffers(d_,pool_,1,&command);if(descriptor_pool)vkDestroyDescriptorPool(d_,descriptor_pool,nullptr);if(pipeline)vkDestroyPipeline(d_,pipeline,nullptr);if(module)vkDestroyShaderModule(d_,module,nullptr);if(pipeline_layout)vkDestroyPipelineLayout(d_,pipeline_layout,nullptr);if(set_layout)vkDestroyDescriptorSetLayout(d_,set_layout,nullptr);for(int i=0;i<4;i++){if(buffers[i])vkDestroyBuffer(d_,buffers[i],nullptr);if(memories[i])vkFreeMemory(d_,memories[i],nullptr);}};
+    const auto lut=native_rgb_curves_lut(curves);const auto parameters=native_rgb_curves_parameters(curves,pixel_count);
+    const VkDeviceSize sizes[]{src.size_bytes(),out.size_bytes(),lut.size()*sizeof(float),sizeof(parameters)};
+    for(int i=0;i<4;i++){VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizes[i];bi.usage=i==3?VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT:VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;if(vkCreateBuffer(d_,&bi,nullptr,&buffers[i])!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkMemoryRequirements req{};vkGetBufferMemoryRequirements(d_,buffers[i],&req);auto type=mem(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=type;if(type==UINT32_MAX||vkAllocateMemory(d_,&ai,nullptr,&memories[i])!=VK_SUCCESS||vkBindBufferMemory(d_,buffers[i],memories[i],0)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}}
+    void*m=nullptr;vkMapMemory(d_,memories[0],0,sizes[0],0,&m);std::memcpy(m,src.data(),sizes[0]);vkUnmapMemory(d_,memories[0]);vkMapMemory(d_,memories[2],0,sizes[2],0,&m);std::memcpy(m,lut.data(),sizes[2]);vkUnmapMemory(d_,memories[2]);vkMapMemory(d_,memories[3],0,sizes[3],0,&m);std::memcpy(m,&parameters,sizes[3]);vkUnmapMemory(d_,memories[3]);provenance_.source_upload_performed=true;
+    VkDescriptorSetLayoutBinding bindings[4]{};for(uint32_t i=0;i<4;i++){bindings[i].binding=i;bindings[i].descriptorType=i==3?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}VkDescriptorSetLayoutCreateInfo sli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};sli.bindingCount=4;sli.pBindings=bindings;if(vkCreateDescriptorSetLayout(d_,&sli,nullptr,&set_layout)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pli.setLayoutCount=1;pli.pSetLayouts=&set_layout;if(vkCreatePipelineLayout(d_,&pli,nullptr,&pipeline_layout)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
+    VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};smi.codeSize=binary.binary.size();smi.pCode=reinterpret_cast<const uint32_t*>(binary.binary.data());if(vkCreateShaderModule(d_,&smi,nullptr,&module)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkComputePipelineCreateInfo pci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};pci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};pci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;pci.stage.module=module;pci.stage.pName="main";pci.layout=pipeline_layout;if(vkCreateComputePipelines(d_,VK_NULL_HANDLE,1,&pci,nullptr,&pipeline)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
+    VkDescriptorPoolSize pool_sizes[2]{{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dpi.maxSets=1;dpi.poolSizeCount=2;dpi.pPoolSizes=pool_sizes;if(vkCreateDescriptorPool(d_,&dpi,nullptr,&descriptor_pool)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkDescriptorSetAllocateInfo dai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};dai.descriptorPool=descriptor_pool;dai.descriptorSetCount=1;dai.pSetLayouts=&set_layout;VkDescriptorSet set{};if(vkAllocateDescriptorSets(d_,&dai,&set)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkDescriptorBufferInfo infos[4]{};VkWriteDescriptorSet writes[4]{};for(uint32_t i=0;i<4;i++){infos[i]={buffers[i],0,sizes[i]};writes[i]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};writes[i].dstSet=set;writes[i].dstBinding=i;writes[i].descriptorCount=1;writes[i].descriptorType=i==3?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;writes[i].pBufferInfo=&infos[i];}vkUpdateDescriptorSets(d_,4,writes,0,nullptr);provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.native_lut_cache=CacheDisposition::Miss;
+    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cai.commandPool=pool_;cai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cai.commandBufferCount=1;if(vkAllocateCommandBuffers(d_,&cai,&command)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};vkBeginCommandBuffer(command,&cbi);vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,0,1,&set,0,nullptr);vkCmdDispatch(command,(parameters.pixel_count+63)/64,1,1);VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);vkEndCommandBuffer(command);provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true;VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&command;VkResult result=vkQueueSubmit(queue_,1,&submit,VK_NULL_HANDLE);if(result==VK_SUCCESS){provenance_.queue_submission_issued=true;result=vkQueueWaitIdle(queue_);}if(result==VK_SUCCESS){provenance_.synchronization_waited=true;vkMapMemory(d_,memories[1],0,sizes[1],0,&m);std::memcpy(out.data(),m,sizes[1]);vkUnmapMemory(d_,memories[1]);provenance_.output_written=provenance_.readback_performed=provenance_.validation_readback_completed=true;}cleanup();provenance_.native_error_code=result;return result==VK_SUCCESS?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   DigitorResult create_texture(const DigitorTextureDesc &a,
                                void **o) noexcept override {

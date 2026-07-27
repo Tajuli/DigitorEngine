@@ -11,6 +11,19 @@
 
 namespace digitor {
 
+struct alignas(16) NativeRgbCurveMeta {
+  float lo, hi, first, last, slope_before, slope_after;
+  std::uint32_t extrapolation, enabled;
+};
+struct alignas(16) NativeRgbCurvesParameters {
+  NativeRgbCurveMeta curves[4];
+  std::uint32_t lut_size, pixel_count;
+  std::uint32_t padding[2]{};
+};
+NativeRgbCurvesParameters native_rgb_curves_parameters(
+    const CompiledRgbCurves&, std::uint32_t pixel_count) noexcept;
+std::vector<float> native_rgb_curves_lut(const CompiledRgbCurves&);
+
 // Type-erased owner; the deleter is supplied by the backend and therefore runs
 // before its device is destroyed. The CPU compiled-LUT cache owns none of this.
 struct NativeRgbCurvesResource {

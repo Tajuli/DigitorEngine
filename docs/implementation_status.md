@@ -71,25 +71,25 @@ CI/hardware environment for implemented rows: local Ubuntu GCC 13 CPU-only; no G
 
 Environment: Ubuntu/GCC 13 CPU-only container; no GPU/device/driver execution. The canonical shader source is not hardware evidence. Numerical GPU results are therefore `not measured`, honestly, and version 4.7.0 remains gated.
 
+Metal and OpenGL ES now contain real native curve dispatch paths (runtime shader
+compilation, FP32 LUT binding, ordered Master/R/G/B evaluation, synchronization,
+and readback). They remain hardware-unverified in this Linux environment. Vulkan and D3D12 now also contain native compute dispatch and preview routing.
+All four paths remain hardware-unverified, and persistent native LUT/pipeline object
+reuse still requires platform qualification; consequently the version bump remains
+gated rather than being reported prematurely.
+
 | Feature | CPU Reference | Vulkan | D3D12 | Metal | GLES | Evidence | Numerical Result | Status |
 |---|---|---|---|---|---|---|---|---|
-| Native FP32 LUT resource | separate CPU LUT | Not implemented | Not implemented | Not implemented | Not implemented | native owner/cache source + CPU test | not measured | Not implemented |
-| 256-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU exact identity | CPU reference only |
-| 1024-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU exact identity | CPU reference only |
-| 4096-sample LUT execution | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU deterministic test | CPU allocation passes | CPU reference only |
-| Master curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
-| Red curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
-| Green curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
-| Blue curve | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical shader source, not executed | not measured | CPU reference only |
-| Master + RGB | yes | Not implemented | Not implemented | Not implemented | Not implemented | canonical source order | not measured | CPU reference only |
-| Identity bypass | exact | Not implemented | Not implemented | Not implemented | Not implemented | CPU identity test | zero error CPU | CPU reference only |
-| Negative values | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU extrapolation test | passes CPU | CPU reference only |
-| Over-range values | yes | Not implemented | Not implemented | Not implemented | Not implemented | CPU extrapolation test | passes CPU | CPU reference only |
-| Alpha preservation | exact | Not implemented | Not implemented | Not implemented | Not implemented | CPU test/canonical shader | zero error CPU | CPU reference only |
+| Native FP32 LUT resource | separate CPU LUT | storage buffer | upload buffer SRV | MTLBuffer | R32F texture | native backend source | not hardware measured | Implemented, hardware-unverified |
+| 256/1024/4096 LUT execution | yes | compute dispatch | compute dispatch | compute dispatch | framebuffer draw | native dispatch source; CPU deterministic fixtures | GPU not measured on this host | Implemented, hardware-unverified |
+| Master + Red + Green + Blue | fixed order | fixed order | fixed order | fixed order | fixed order | canonical HLSL and translated native shaders | GPU not measured on this host | Implemented, hardware-unverified |
+| Negative/over-range values | yes | parameter-buffer extrapolation | root-constant extrapolation | constant-buffer extrapolation | uniform extrapolation | native shader source | GPU not measured on this host | Implemented, hardware-unverified |
+| Alpha preservation | exact | preserved | preserved | preserved | preserved | native shader source | GPU not measured on this host | Implemented, hardware-unverified |
 | Render Graph integration | CPU pass | backend-neutral node | backend-neutral node | backend-neutral node | backend-neutral node | graph pass source | non-numerical | Implemented, hardware-unverified |
+| Persistent shader artifact cache | n/a | SPIR-V by compiler/device key | DXIL by compiler/device key | driver cache | driver cache | `ShaderCompiler` persistent cache | non-numerical | Implemented, hardware-unverified |
 | Native LUT cache | n/a | device-key model | device-key model | device-key model | device-key model | cold/warm/device-key unit test | non-numerical | Implemented, hardware-unverified |
-| Preview consumption | CPU only | Not implemented | Not implemented | Not implemented | Not implemented | none | not measured | Not implemented |
-| Provenance | CPU fields | schema only | schema only | schema only | schema only | provenance source | not measured | Placeholder/stub |
-| Failure injection | CPU validation | Not implemented | Not implemented | Not implemented | Not implemented | enum coverage only | not measured | Not implemented |
-| FP32 | yes | shader contract only | shader contract only | shader contract only | shader contract only | canonical HLSL | not measured | Placeholder/stub |
+| Preview consumption | CPU backend only | native curve output | native curve output | native curve output | native curve output | `SharedRenderer::set_rgb_curves` routing | not hardware measured | Implemented, hardware-unverified |
+| Provenance | CPU fields | dispatch/bind/cache/readback | dispatch/bind/cache/readback | dispatch/bind/cache/readback | draw/bind/cache/readback | backend provenance assignments | CPU/fallback count zero by path | Implemented, hardware-unverified |
+| Failure injection | CPU validation | explicit error | explicit error | explicit error | explicit error | failure seam before native work | no CPU fallback | Implemented, hardware-unverified |
+| FP32 | yes | storage buffers | structured buffers | device buffers | float textures | native resource formats | not hardware measured | Implemented, hardware-unverified |
 | FP16 | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | no implementation | none | Unsupported |

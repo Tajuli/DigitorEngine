@@ -6,6 +6,7 @@
 
 #include "gpu/gpu_backend.hpp"
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 
 namespace digitor {
 namespace {
@@ -208,7 +209,9 @@ public:
             provenance_.source_upload_performed = true;
             id<MTLCommandBuffer> command = [queue commandBuffer];
             id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
-            uint32_t count = static_cast<uint32_t>(source.size());
+            uint32_t count = 0;
+            if (!checked_size_to_uint32(source.size(), count))
+                return DIGITOR_RESULT_INVALID_ARGUMENT;
             [encoder setComputePipelineState:pipeline]; [encoder setBuffer:input offset:0 atIndex:0];
             [encoder setBuffer:output offset:0 atIndex:1]; [encoder setBytes:&p length:sizeof(p) atIndex:2];
             [encoder setBytes:&count length:sizeof(count) atIndex:3];
@@ -222,6 +225,57 @@ public:
             provenance_.output_written = true; provenance_.readback_performed = true;
             provenance_.cpu_color_reference_invocations =
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
+            return DIGITOR_RESULT_OK;
+        }
+    }
+
+    DigitorResult curves_rgba32f(std::span<const Color> source, std::span<Color> out,
+                                 const CompiledRgbCurves& compiled) noexcept override {
+        begin_grade_provenance(DIGITOR_RENDERER_METAL, true, info_.device_name,
+                               "Metal runtime compiler", "rgb-curves-msl-v1:curves",
+                               "MTLComputePipelineState:rgb-curves-v1");
+        if (gpu_failure_point() != GpuFailurePoint::None) return injected_failure(gpu_failure_point());
+        if (source.size() != out.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+        if (source.empty()) return DIGITOR_RESULT_OK;
+        @autoreleasepool {
+            static NSString* code = @"#include <metal_stdlib>\nusing namespace metal;\n"
+              "struct M{float lo,hi,first,last,sb,sa;uint extrap,enabled;};struct P{M m[4];uint size,count;};"
+              "float cv(device const float*l,constant P&p,uint k,float x){M m=p.m[k];if(!m.enabled||!isfinite(x))return x;if(x<m.lo)return m.extrap==2?m.first+m.sb*(x-m.lo):m.first;if(x>m.hi)return m.extrap==2?m.last+m.sa*(x-m.hi):m.last;float u=(x-m.lo)/(m.hi-m.lo)*float(p.size-1);uint a=min(uint(u),p.size-1),b=min(a+1,p.size-1);return mix(l[k*p.size+a],l[k*p.size+b],u-float(a));}"
+              "kernel void curves(device const float4*i[[buffer(0)]],device float4*o[[buffer(1)]],device const float*l[[buffer(2)]],constant P&p[[buffer(3)]],uint k[[thread_position_in_grid]]){if(k>=p.count)return;float4 c=i[k];float a=c.a;c.r=cv(l,p,0,c.r);c.g=cv(l,p,0,c.g);c.b=cv(l,p,0,c.b);c.r=cv(l,p,1,c.r);c.g=cv(l,p,2,c.g);c.b=cv(l,p,3,c.b);c.a=a;o[k]=c;}";
+            struct M { float lo,hi,first,last,sb,sa; uint32_t extrap,enabled; };
+            struct P { M m[4]; uint32_t size,count; } p{};
+            std::vector<float> lut; lut.reserve(size_t(compiled.lut_size())*4);
+            for (unsigned k=0;k<4;k++) { const auto& c=compiled.curves()[k];
+                p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,
+                        static_cast<uint32_t>(c.extrapolation),c.enabled?1u:0u};
+                lut.insert(lut.end(),c.samples.begin(),c.samples.end()); }
+            p.size=compiled.lut_size();
+            if (!checked_size_to_uint32(source.size(), p.count))
+                return DIGITOR_RESULT_INVALID_ARGUMENT;
+            NSError* error=nil; id<MTLLibrary> lib=[device_ newLibraryWithSource:code options:nil error:&error];
+            id<MTLFunction> fn=[lib newFunctionWithName:@"curves"];
+            id<MTLComputePipelineState> pipe=fn?[device_ newComputePipelineStateWithFunction:fn error:&error]:nil;
+            id<MTLCommandQueue> queue=[device_ newCommandQueue];
+            id<MTLBuffer> in=[device_ newBufferWithBytes:source.data() length:source.size_bytes() options:MTLResourceStorageModeShared];
+            id<MTLBuffer> dst=[device_ newBufferWithLength:out.size_bytes() options:MTLResourceStorageModeShared];
+            id<MTLBuffer> l=[device_ newBufferWithBytes:lut.data() length:lut.size()*sizeof(float) options:MTLResourceStorageModeShared];
+            if(!pipe||!queue||!in||!dst||!l)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            provenance_.source_upload_performed=true; provenance_.curves_enabled=true;
+            provenance_.curve_lut_size=compiled.lut_size(); provenance_.compiled_curve_identity=compiled.identity();
+            provenance_.native_curve_shader_identity="rgb-curves-msl-v1:curves";
+            provenance_.native_lut_resource_identity=compiled.identity()+":"+info_.device_name;
+            provenance_.native_lut_cache=CacheDisposition::Miss; provenance_.curve_source_bound=true;
+            provenance_.curve_destination_bound=true; provenance_.curve_lut_bound=true; provenance_.curve_parameters_bound=true;
+            id<MTLCommandBuffer> command=[queue commandBuffer]; id<MTLComputeCommandEncoder> e=[command computeCommandEncoder];
+            [e setComputePipelineState:pipe]; [e setBuffer:in offset:0 atIndex:0]; [e setBuffer:dst offset:0 atIndex:1];
+            [e setBuffer:l offset:0 atIndex:2]; [e setBytes:&p length:sizeof(p) atIndex:3];
+            NSUInteger group=std::min<NSUInteger>(pipe.maxTotalThreadsPerThreadgroup,64);
+            [e dispatchThreads:MTLSizeMake(p.count,1,1) threadsPerThreadgroup:MTLSizeMake(group,1,1)];
+            provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true; [e endEncoding]; [command commit];
+            provenance_.queue_submission_issued=true; [command waitUntilCompleted]; provenance_.synchronization_waited=true;
+            if(command.status!=MTLCommandBufferStatusCompleted)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            std::memcpy(out.data(),dst.contents,out.size_bytes()); provenance_.output_written=provenance_.readback_performed=true;
+            provenance_.validation_readback_completed=true;
             return DIGITOR_RESULT_OK;
         }
     }

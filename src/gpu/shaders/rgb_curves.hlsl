@@ -1,10 +1,17 @@
 // Canonical RGB Curves shader ABI v1. Backend artifacts are generated from
 // this source; do not duplicate the curve mathematics in backend code.
 struct CurveMeta { float lo, hi, first, last; float slopeBefore, slopeAfter; uint extrapolation, enabled; };
+#ifdef DIGITOR_VULKAN
+[[vk::binding(0,0)]] StructuredBuffer<float4> sourcePixels : register(t0);
+[[vk::binding(2,0)]] StructuredBuffer<float> curveLuts : register(t1);
+[[vk::binding(1,0)]] RWStructuredBuffer<float4> destinationPixels : register(u0);
+[[vk::binding(3,0)]] cbuffer Parameters : register(b0) { CurveMeta curves[4]; uint lutSize; uint pixelCount; };
+#else
 StructuredBuffer<float4> sourcePixels : register(t0);
 StructuredBuffer<float> curveLuts : register(t1); // master, red, green, blue
 RWStructuredBuffer<float4> destinationPixels : register(u0);
 cbuffer Parameters : register(b0) { CurveMeta curves[4]; uint lutSize; uint pixelCount; };
+#endif
 
 float sampleCurve(uint curve, float x) {
   CurveMeta m = curves[curve];

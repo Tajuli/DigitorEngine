@@ -62,7 +62,8 @@ DigitorResult CpuBackend::curves_rgba32f(std::span<const Color> source,
                                          std::span<Color> destination,
                                          const CompiledRgbCurves& curves) noexcept {
   if (source.size()!=destination.size()) return DIGITOR_RESULT_INVALID_ARGUMENT;
-  try { curves.apply(source,destination); return DIGITOR_RESULT_OK; }
+  try { note_cpu_curve_reference(); curves.apply(source,destination);
+    provenance_.cpu_curve_invocations=1; return DIGITOR_RESULT_OK; }
   catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
 }
 

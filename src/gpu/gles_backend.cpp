@@ -1,5 +1,6 @@
 #ifdef __ANDROID__
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
 #include <GLES3/gl3.h>
 #include <cstring>
@@ -191,6 +192,9 @@ public:
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
       return DIGITOR_RESULT_OK;
+    int pixel_count = 0;
+    if (!checked_size_to_int(src.size(), pixel_count))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
     const char *vs =
         "#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 "
         "q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.0-"
@@ -241,15 +245,15 @@ public:
     GLuint input, target, fb;
     glGenTextures(1, &input);
     glBindTexture(GL_TEXTURE_2D, input);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, src.size(), 1);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src.size(), 1, GL_RGBA, GL_FLOAT,
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, pixel_count, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, pixel_count, 1, GL_RGBA, GL_FLOAT,
                     src.data());
     provenance_.source_upload_performed = true;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glGenTextures(1, &target);
     glBindTexture(GL_TEXTURE_2D, target);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, src.size(), 1);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, pixel_count, 1);
     glGenFramebuffers(1, &fb);
     glBindFramebuffer(GL_FRAMEBUFFER, fb);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -266,11 +270,11 @@ public:
                           p.saturation, p.vibrance, p.hue};
     for (int k = 0; k < 11; k++)
       glUniform1f(glGetUniformLocation(prog, names[k]), vals[k]);
-    glViewport(0, 0, src.size(), 1);
+    glViewport(0, 0, pixel_count, 1);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     provenance_.command_recorded = true;
     provenance_.dispatch_or_draw_issued = true;
-    glReadPixels(0, 0, src.size(), 1, GL_RGBA, GL_FLOAT, out.data());
+    glReadPixels(0, 0, pixel_count, 1, GL_RGBA, GL_FLOAT, out.data());
     glFinish();
     provenance_.queue_submission_issued = true;
     provenance_.synchronization_waited = true;
@@ -285,6 +289,26 @@ public:
     glDeleteProgram(prog);
     return error == GL_NO_ERROR ? DIGITOR_RESULT_OK
                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  DigitorResult curves_rgba32f(std::span<const Color> src, std::span<Color> out,
+                              const CompiledRgbCurves &cc) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,info_.device_name,
+      "OpenGL ES driver compiler","rgb-curves-glsl-es-v1","GL program:rgb-curves-v1");
+    if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
+    if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;int pixel_count=0,lut_size=0;if(!checked_size_to_int(src.size(),pixel_count)||!checked_size_to_int(cc.lut_size(),lut_size))return DIGITOR_RESULT_INVALID_ARGUMENT;
+    const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
+    const char*fs="#version 300 es\nprecision highp float;precision highp int;in vec2 uv;uniform sampler2D im,lut;uniform vec4 meta0[4],meta1[4];uniform int lutSize;out vec4 color;float cv(int k,float x){vec4 a=meta0[k],b=meta1[k];if(b.w==0.||isnan(x)||isinf(x))return x;if(x<a.x)return b.z==2.?a.z+b.x*(x-a.x):a.z;if(x>a.y)return b.z==2.?a.w+b.y*(x-a.y):a.w;float u=(x-a.x)/(a.y-a.x)*float(lutSize-1);float i=floor(u);return mix(texelFetch(lut,ivec2(int(i),k),0).r,texelFetch(lut,ivec2(min(int(i)+1,lutSize-1),k),0).r,u-i);}void main(){vec4 c=texture(im,uv);float a=c.a;c.r=cv(0,c.r);c.g=cv(0,c.g);c.b=cv(0,c.b);c.r=cv(1,c.r);c.g=cv(2,c.g);c.b=cv(3,c.b);color=vec4(c.rgb,a);}";
+    auto compile=[](GLenum t,const char*s){GLuint x=glCreateShader(t);glShaderSource(x,1,&s,nullptr);glCompileShader(x);GLint ok=0;glGetShaderiv(x,GL_COMPILE_STATUS,&ok);if(!ok){glDeleteShader(x);return GLuint(0);}return x;};
+    GLuint v=compile(GL_VERTEX_SHADER,vs),f=compile(GL_FRAGMENT_SHADER,fs);if(!v||!f)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    GLuint p=glCreateProgram();glAttachShader(p,v);glAttachShader(p,f);glLinkProgram(p);glDeleteShader(v);glDeleteShader(f);GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
+    std::vector<float> lut;lut.reserve(size_t(cc.lut_size())*4);float m0[16],m1[16];
+    for(int k=0;k<4;k++){const auto&c=cc.curves()[k];lut.insert(lut.end(),c.samples.begin(),c.samples.end());m0[k*4]=c.domain_min;m0[k*4+1]=c.domain_max;m0[k*4+2]=c.first_value;m0[k*4+3]=c.last_value;m1[k*4]=c.slope_before;m1[k*4+1]=c.slope_after;m1[k*4+2]=float(c.extrapolation);m1[k*4+3]=c.enabled?1.f:0.f;}
+    GLuint tex[3],fb;glGenTextures(3,tex);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,tex[0]);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,pixel_count,1);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,pixel_count,1,GL_RGBA,GL_FLOAT,src.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,tex[1]);glTexStorage2D(GL_TEXTURE_2D,1,GL_R32F,lut_size,4);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,lut_size,4,GL_RED,GL_FLOAT,lut.data());glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D,tex[2]);glTexStorage2D(GL_TEXTURE_2D,1,GL_RGBA32F,pixel_count,1);glGenFramebuffers(1,&fb);glBindFramebuffer(GL_FRAMEBUFFER,fb);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,tex[2],0);
+    glUseProgram(p);glUniform1i(glGetUniformLocation(p,"im"),0);glUniform1i(glGetUniformLocation(p,"lut"),1);glUniform1i(glGetUniformLocation(p,"lutSize"),lut_size);glUniform4fv(glGetUniformLocation(p,"meta0"),4,m0);glUniform4fv(glGetUniformLocation(p,"meta1"),4,m1);glViewport(0,0,pixel_count,1);glDrawArrays(GL_TRIANGLES,0,3);
+    provenance_.source_upload_performed=provenance_.curve_source_bound=provenance_.curve_destination_bound=provenance_.curve_lut_bound=provenance_.curve_parameters_bound=true;provenance_.curves_enabled=true;provenance_.curve_lut_size=cc.lut_size();provenance_.compiled_curve_identity=cc.identity();provenance_.native_curve_shader_identity="rgb-curves-glsl-es-v1";provenance_.native_lut_resource_identity=cc.identity()+":"+info_.device_name;provenance_.native_lut_cache=CacheDisposition::Miss;provenance_.command_recorded=provenance_.dispatch_or_draw_issued=true;
+    glReadPixels(0,0,pixel_count,1,GL_RGBA,GL_FLOAT,out.data());glFinish();provenance_.queue_submission_issued=provenance_.synchronization_waited=provenance_.output_written=provenance_.readback_performed=provenance_.validation_readback_completed=true;GLenum err=glGetError();glDeleteFramebuffers(1,&fb);glDeleteTextures(3,tex);glDeleteProgram(p);return err==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   void destroy_texture(void *p) noexcept override {
     auto *x = (GlObject *)p;
