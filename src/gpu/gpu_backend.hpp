@@ -9,6 +9,7 @@
 
 #include "digitor/color.hpp"
 #include "digitor/digitor.h"
+#include "gpu/execution_provenance.hpp"
 #include "platform/platform.hpp"
 
 namespace digitor {
@@ -42,6 +43,16 @@ public:
   virtual DigitorResult grade_rgba32f(std::span<const Color> source,
                                       std::span<Color> destination,
                                       const ColorGrade &parameters) noexcept;
+  [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
+    return provenance_;
+  }
+
+protected:
+  void begin_grade_provenance(DigitorRendererBackend backend, bool gpu,
+                              const char *device, const char *compiler,
+                              const char *shader, const char *pipeline) noexcept;
+  DigitorResult injected_failure(GpuFailurePoint point) noexcept;
+  ExecutionProvenance provenance_{};
 };
 
 [[nodiscard]] bool gpu_validation_requested() noexcept;

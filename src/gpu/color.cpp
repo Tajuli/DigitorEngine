@@ -1,5 +1,6 @@
 #include "digitor/color.hpp"
 #include "core/engine.hpp"
+#include "gpu/execution_provenance.hpp"
 #include <algorithm>
 #include <cmath>
 namespace digitor {
@@ -44,6 +45,7 @@ Color grade_color(Color c, const ColorGrade &p) {
   return {x[0], x[1], x[2], c.a};
 }
 void grade_image_cpu(const Color *i, Color *o, size_t n, const ColorGrade &p) {
+  note_cpu_color_reference();
   for (size_t k = 0; k < n; ++k)
     o[k] = grade_color(i[k], p);
 }

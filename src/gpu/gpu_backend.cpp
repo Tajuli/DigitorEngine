@@ -6,6 +6,7 @@
 #include <array>
 #include <cstring>
 #include <optional>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,38 @@
 #endif
 
 namespace digitor {
+namespace {
+std::atomic<GpuFailurePoint> failure_point{GpuFailurePoint::None};
+std::atomic<std::uint64_t> cpu_reference_count{0};
+}
+void set_gpu_failure_point(GpuFailurePoint point) noexcept { failure_point.store(point); }
+GpuFailurePoint gpu_failure_point() noexcept { return failure_point.load(); }
+void note_cpu_color_reference() noexcept { ++cpu_reference_count; }
+std::uint64_t cpu_color_reference_count() noexcept { return cpu_reference_count.load(); }
+void reset_cpu_color_reference_count() noexcept { cpu_reference_count.store(0); }
+void IRenderBackend::begin_grade_provenance(
+    DigitorRendererBackend backend, bool gpu, const char *device,
+    const char *compiler, const char *shader, const char *pipeline) noexcept {
+  provenance_ = {};
+  provenance_.selected_backend = backend;
+  provenance_.gpu_execution = gpu;
+  provenance_.native_device_identity = device ? device : "";
+  provenance_.compiler_identity = compiler ? compiler : "";
+  provenance_.compiled_shader_identity = shader ? shader : "";
+  provenance_.native_pipeline_identity = pipeline ? pipeline : "";
+  provenance_.cpu_color_reference_invocations = cpu_color_reference_count();
+}
+DigitorResult IRenderBackend::injected_failure(GpuFailurePoint point) noexcept {
+  if (failure_point.load() != point)
+    return DIGITOR_RESULT_OK;
+  failure_point.store(GpuFailurePoint::None);
+  provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
+  provenance_.native_error_code = -static_cast<std::int64_t>(point);
+  provenance_.device_lost = point == GpuFailurePoint::DeviceLost;
+  return point == GpuFailurePoint::OutOfMemory ? DIGITOR_RESULT_OUT_OF_MEMORY
+                                               : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+}
 bool gpu_validation_requested() noexcept {
   const auto value = environment_variable("DIGITOR_GPU_VALIDATION");
   return value && value->front() != '0';

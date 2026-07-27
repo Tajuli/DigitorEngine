@@ -182,6 +182,11 @@ public:
   }
   DigitorResult grade_rgba32f(std::span<const Color> src, std::span<Color> out,
                               const ColorGrade &p) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES, true, info_.device_name,
+                           "OpenGL ES driver compiler", "grade-glsl-es-v1",
+                           "GL program:grade-v1");
+    if (gpu_failure_point() != GpuFailurePoint::None)
+      return injected_failure(gpu_failure_point());
     if (src.size() != out.size())
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
@@ -239,6 +244,7 @@ public:
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, src.size(), 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, src.size(), 1, GL_RGBA, GL_FLOAT,
                     src.data());
+    provenance_.source_upload_performed = true;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glGenTextures(1, &target);
@@ -262,8 +268,16 @@ public:
       glUniform1f(glGetUniformLocation(prog, names[k]), vals[k]);
     glViewport(0, 0, src.size(), 1);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    provenance_.command_recorded = true;
+    provenance_.dispatch_or_draw_issued = true;
     glReadPixels(0, 0, src.size(), 1, GL_RGBA, GL_FLOAT, out.data());
     glFinish();
+    provenance_.queue_submission_issued = true;
+    provenance_.synchronization_waited = true;
+    provenance_.output_written = true;
+    provenance_.readback_performed = true;
+    provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
     GLenum error = glGetError();
     glDeleteFramebuffers(1, &fb);
     glDeleteTextures(1, &target);

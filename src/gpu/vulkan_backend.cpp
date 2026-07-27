@@ -248,6 +248,11 @@ public:
   }
   DigitorResult grade_rgba32f(std::span<const Color> src, std::span<Color> out,
                               const ColorGrade &p) noexcept override {
+    begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, info_.device_name,
+                           "checked-in SPIR-V", "grade_spirv.inc:main",
+                           "VkComputePipeline:grade-v1");
+    if (gpu_failure_point() != GpuFailurePoint::None)
+      return injected_failure(gpu_failure_point());
     if (src.size() != out.size())
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
@@ -294,6 +299,7 @@ public:
     vkMapMemory(d_, memory[0], 0, bytes, 0, &m);
     std::memcpy(m, src.data(), bytes);
     vkUnmapMemory(d_, memory[0]);
+    provenance_.source_upload_performed = true;
     VkDescriptorSetLayoutBinding bindings[2]{};
     for (uint32_t k = 0; k < 2; k++) {
       bindings[k].binding = k;
@@ -382,6 +388,8 @@ public:
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(push), &push);
     vkCmdDispatch(cmd, (push.n + 63) / 64, 1, 1);
+    provenance_.command_recorded = true;
+    provenance_.dispatch_or_draw_issued = true;
     vkEndCommandBuffer(cmd);
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
@@ -389,11 +397,17 @@ public:
     if (vr == VK_SUCCESS)
       vr = vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE);
     if (vr == VK_SUCCESS)
+      provenance_.queue_submission_issued = true;
+    if (vr == VK_SUCCESS)
       vr = vkQueueWaitIdle(queue_);
+    if (vr == VK_SUCCESS)
+      provenance_.synchronization_waited = true;
     if (vr == VK_SUCCESS) {
       vkMapMemory(d_, memory[1], 0, bytes, 0, &m);
       std::memcpy(out.data(), m, bytes);
       vkUnmapMemory(d_, memory[1]);
+      provenance_.output_written = true;
+      provenance_.readback_performed = true;
     }
     vkFreeCommandBuffers(d_, pool_, 1, &cmd);
     vkDestroyDescriptorPool(d_, pool, nullptr);
@@ -402,6 +416,9 @@ public:
     vkDestroyPipelineLayout(d_, pipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(d_, layout, nullptr);
     cleanup();
+    provenance_.native_error_code = static_cast<std::int64_t>(vr);
+    provenance_.cpu_color_reference_invocations =
+      cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
     return vr == VK_SUCCESS ? DIGITOR_RESULT_OK
                             : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }

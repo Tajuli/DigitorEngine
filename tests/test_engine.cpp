@@ -31,6 +31,58 @@ private:
     DigitorRendererInfo info_{};
 };
 
+class FailureBackend final : public digitor::IRenderBackend {
+public:
+    bool initialize(bool) override { return true; }
+    void shutdown() noexcept override {}
+    DigitorRendererInfo info() const noexcept override { return {}; }
+    DigitorResult grade_rgba32f(std::span<const digitor::Color>,
+        std::span<digitor::Color>, const digitor::ColorGrade&) noexcept override {
+        begin_grade_provenance(DIGITOR_RENDERER_VULKAN, true, "test-device",
+            "test-compiler", "test-shader", "test-pipeline");
+        return injected_failure(digitor::gpu_failure_point());
+    }
+};
+
+void test_execution_provenance_and_failure_injection() {
+    digitor::CpuBackend cpu;
+    cpu.initialize(true);
+    digitor::reset_cpu_color_reference_count();
+    std::array<digitor::Color, 1> input{{{.17f, .43f, 1.2f, .37f}}}, output{};
+    assert(cpu.grade_rgba32f(input, output, {}) == DIGITOR_RESULT_OK);
+    const auto& cp = cpu.execution_provenance();
+    assert(!cp.gpu_execution && cp.selected_backend == DIGITOR_RENDERER_CPU);
+    assert(cp.cpu_color_reference_invocations == 1 && cp.output_written);
+
+    FailureBackend gpu;
+    constexpr std::array points{
+        digitor::GpuFailurePoint::ShaderCompilation,
+        digitor::GpuFailurePoint::ReflectionValidation,
+        digitor::GpuFailurePoint::PipelineCreation,
+        digitor::GpuFailurePoint::DescriptorAllocation,
+        digitor::GpuFailurePoint::SourceAllocation,
+        digitor::GpuFailurePoint::DestinationAllocation,
+        digitor::GpuFailurePoint::Upload,
+        digitor::GpuFailurePoint::CommandRecording,
+        digitor::GpuFailurePoint::QueueSubmission,
+        digitor::GpuFailurePoint::Synchronization,
+        digitor::GpuFailurePoint::Readback,
+        digitor::GpuFailurePoint::DeviceLost,
+        digitor::GpuFailurePoint::OutOfMemory};
+    for (auto point : points) {
+        output[0] = {.91f, .82f, .73f, .64f};
+        digitor::set_gpu_failure_point(point);
+        const auto result = gpu.grade_rgba32f(input, output, {});
+        assert(result != DIGITOR_RESULT_OK);
+        assert(output[0].r == .91f && output[0].a == .64f);
+        const auto& p = gpu.execution_provenance();
+        assert(p.gpu_execution && !p.output_written && !p.readback_performed);
+        assert(p.cpu_fallback_invocations == 0);
+        assert(p.cpu_color_reference_invocations == 0);
+        assert(p.device_lost == (point == digitor::GpuFailurePoint::DeviceLost));
+    }
+}
+
 void test_preferred_backend_selection() {
     std::vector<DigitorRendererBackend> attempts;
     auto backend = digitor::select_gpu_backend(digitor::HostPlatform::Windows,
@@ -75,6 +127,7 @@ int main() {
     { digitor::Color in{.2f,.4f,.6f,1},gpu{}; digitor::ColorGrade grade; grade.exposure=1; grade.saturation=.8f; digitor::CommandBuffer b; digitor::CommandEncoder e(b); digitor::grade_image_gpu(e,&in,&gpu,1,grade); e.finish(); digitor::CommandQueue q; bool rejected=false; try{q.submit(b);}catch(const std::runtime_error&){rejected=true;} assert(rejected); }
     test_preferred_backend_selection();
     test_unavailable_backend_fallback();
+    test_execution_provenance_and_failure_injection();
 
     { digitor::CpuBackend backend; std::vector<uint8_t> input{1,2,3,4}, output;
       assert(backend.initialize(true));

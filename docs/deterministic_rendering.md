@@ -60,3 +60,12 @@ functions use their documented signed extension. GLES shaders must use `highp`;
 FP16 and FP32 results are reported separately. Cross-GPU bit identity is not
 claimed. A report must include maximum absolute/relative/RMS errors, PSNR, SSIM,
 first failure, backend, operation and spaces.
+
+## v4.6.1 native grade qualification
+
+The source-level audit and exact qualification truth table are maintained in
+[`grade_rgba32f_execution.md`](grade_rgba32f_execution.md). This host audit did
+not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
+Native compilation is not reported as pixel validation; FP16 is unsupported.
+The internal provenance/failure seams prove that failures do not silently run
+the CPU reference in non-hardware tests.
