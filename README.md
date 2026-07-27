@@ -108,6 +108,12 @@ matching FFmpeg runtime DLLs beside the application. On macOS deploy matching dy
 `@rpath` install names or require the Homebrew runtime. Configuration never downloads or vendors binaries.
 The summary says “enabled and linked”, “unavailable”, or fails when `DIGITOR_REQUIRE_FFMPEG=ON`.
 
+Engine compilation requires only the five development libraries, exposed to CMake as
+`DIGITOR_FFMPEG_LIBRARIES`; it never requires the `ffmpeg` command-line program. The independently
+discovered `DIGITOR_FFMPEG_CLI` is optional. Set `-DDIGITOR_GENERATE_TEST_MEDIA=ON` to require that
+program and generate the optional MP4/MOV/MKV/WAV fixture set. The option defaults to `OFF`; without
+the CLI, media tests continue with repository-owned Y4M/WAV source fixtures and malformed input.
+
 Generated media fixtures are created by `scripts/generate_media_fixtures.sh` from FFmpeg lavfi sources;
 MP4/H.264, MOV, MKV, WAV, and malformed inputs are never opaque checked-in binaries. Determinism and future
 plugin design are specified in [deterministic rendering](docs/deterministic_rendering.md) and

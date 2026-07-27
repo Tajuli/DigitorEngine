@@ -54,9 +54,9 @@ jobs:
       - if: runner.os == 'Windows'
         run: vcpkg install ffmpeg:x64-windows
       - if: runner.os != 'Windows'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON -DDIGITOR_GENERATE_TEST_MEDIA=ON
       - if: runner.os == 'Windows'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_REQUIRE_FFMPEG=ON -DDIGITOR_GENERATE_TEST_MEDIA=OFF -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
       - run: cmake --build build --config Release --parallel 2
       - run: ctest --test-dir build -C Release --output-on-failure -LE hardware
 

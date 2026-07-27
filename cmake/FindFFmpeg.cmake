@@ -26,6 +26,11 @@ foreach(_component IN ITEMS avcodec avformat avutil swscale swresample)
   list(APPEND _ffmpeg_required "FFmpeg_${_upper}_LIBRARY")
 endforeach()
 set(FFmpeg_LIBRARIES "${_ffmpeg_libraries}")
+# Public result for callers that need the concrete development-library set.
+# This deliberately contains libraries only; the optional CLI is discovered
+# separately as DIGITOR_FFMPEG_CLI by the top-level project.
+set(DIGITOR_FFMPEG_LIBRARIES "${_ffmpeg_libraries}" CACHE STRING
+  "FFmpeg development libraries (avcodec, avformat, avutil, swscale, swresample)" FORCE)
 set(FFmpeg_VERSION "${PC_FFMPEG_VERSION}")
 if(NOT FFmpeg_VERSION)
   set(FFmpeg_VERSION "unknown")

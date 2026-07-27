@@ -14,6 +14,7 @@ option(DIGITOR_BUILD_TESTS "Build DigitorEngine tests" ON)
 option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development packages are available" ON)
 option(DIGITOR_REQUIRE_FFMPEG "Fail configuration when FFmpeg is unavailable" OFF)
+option(DIGITOR_GENERATE_TEST_MEDIA "Generate optional container fixtures with the FFmpeg CLI" OFF)
 option(DIGITOR_WARNINGS_AS_ERRORS "Treat warnings in DigitorEngine-owned code as errors" OFF)
 
 if(DIGITOR_REQUIRE_FFMPEG AND NOT DIGITOR_ENABLE_FFMPEG)
@@ -52,6 +53,8 @@ set(DIGITOR_FFMPEG_STATUS "disabled")
 if(DIGITOR_ENABLE_FFMPEG)
     find_package(FFmpeg QUIET COMPONENTS avcodec avformat avutil swscale swresample)
     if(FFmpeg_FOUND)
+        set(DIGITOR_FFMPEG_LIBRARIES "${FFmpeg_LIBRARIES}" CACHE STRING
+            "FFmpeg development libraries linked by DigitorEngine" FORCE)
         target_link_libraries(digitor_engine PRIVATE FFmpeg::FFmpeg)
         target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
         set(DIGITOR_FFMPEG_STATUS "enabled and linked (${FFmpeg_VERSION})")
@@ -63,6 +66,20 @@ if(DIGITOR_ENABLE_FFMPEG)
     endif()
 endif()
 message(STATUS "DigitorEngine FFmpeg: ${DIGITOR_FFMPEG_STATUS}")
+
+# The command-line program is a test-fixture tool, not an engine dependency.
+# Discover it independently and require it only when generation is requested.
+find_program(DIGITOR_FFMPEG_CLI NAMES ffmpeg DOC "Optional FFmpeg command-line fixture generator")
+if(DIGITOR_GENERATE_TEST_MEDIA AND NOT DIGITOR_FFMPEG_CLI)
+    message(FATAL_ERROR
+        "DIGITOR_GENERATE_TEST_MEDIA=ON requires the optional ffmpeg command-line executable")
+elseif(DIGITOR_GENERATE_TEST_MEDIA)
+    message(STATUS "DigitorEngine FFmpeg CLI: ${DIGITOR_FFMPEG_CLI} (test fixture generation enabled)")
+elseif(DIGITOR_FFMPEG_CLI)
+    message(STATUS "DigitorEngine FFmpeg CLI: ${DIGITOR_FFMPEG_CLI} (test fixture generation disabled)")
+else()
+    message(STATUS "DigitorEngine FFmpeg CLI: unavailable (test fixture generation disabled)")
+endif()
 
 if(WIN32)
     target_sources(digitor_engine PRIVATE src/gpu/d3d12_backend.cpp)
@@ -177,7 +194,6 @@ if (DIGITOR_BUILD_TESTS)
     endif()
 
     if(FFmpeg_FOUND)
-        find_program(FFMPEG_EXECUTABLE ffmpeg REQUIRED)
         add_executable(digitor_media_tests tests/test_media.cpp)
         set_target_properties(digitor_media_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
@@ -187,10 +203,19 @@ if (DIGITOR_BUILD_TESTS)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/malformed.txt"
                 "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
-            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_media_fixtures.sh"
-                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
             VERBATIM
         )
+        if(DIGITOR_GENERATE_TEST_MEDIA)
+            add_custom_command(TARGET digitor_media_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E env
+                    "FFMPEG_EXECUTABLE=${DIGITOR_FFMPEG_CLI}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_media_fixtures.sh"
+                    "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+                VERBATIM)
+        else()
+            message(STATUS
+                "DigitorEngine media tests: optional MP4/MOV/MKV fixtures will not be generated")
+        endif()
         add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
         set_tests_properties(digitor_media_tests PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
