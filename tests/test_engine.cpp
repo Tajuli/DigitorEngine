@@ -16,6 +16,7 @@ void test_editor();
 void test_v2();
 void test_color_pipeline();
 void test_render_export();
+void test_render_graph();
 
 namespace {
 class FakeBackend final : public digitor::IRenderBackend {
@@ -53,11 +54,12 @@ void test_unavailable_backend_fallback() {
 }
 
 int main() {
-    assert(std::strcmp(digitor_get_version(), "4.3.0") == 0);
+    assert(std::strcmp(digitor_get_version(), "4.4.0") == 0);
     test_editor();
     test_v2();
     test_color_pipeline();
     test_render_export();
+    test_render_graph();
 
     { digitor::CommandQueue q; digitor::CommandBuffer b; digitor::CommandEncoder e(b); int value=0; e.dispatch([&]{value=7;}); e.finish(); digitor::Fence f; q.submit(b,&f,2); assert(value==7 && f.value()==2); }
     { digitor::ShaderCompiler c; digitor::ShaderCache cache; auto& s=cache.get_or_compile(c,digitor::ShaderLanguage::glsl,digitor::ShaderStage::compute,"layout(binding=2, local_size_x=8) in; void main(){}"); assert(s.reflection.bindings[0].binding==2 && s.reflection.workgroup_size[0]==8); assert(cache.size()==1); }

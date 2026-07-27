@@ -1,111 +1,259 @@
 #include "digitor/render_graph.hpp"
 
 #include <algorithm>
-#include <limits>
+#include <queue>
+#include <sstream>
 #include <stdexcept>
-#include <unordered_map>
+#include <unordered_set>
 
 namespace digitor {
 namespace {
-constexpr auto invalid_pass = std::numeric_limits<std::uint32_t>::max();
+std::uint64_t append_hash(std::uint64_t hash, std::string_view value) {
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
 
-std::uint32_t checked_index(std::size_t value, const char* collection) {
-    if (value > std::numeric_limits<std::uint32_t>::max())
-        throw std::length_error(std::string(collection) + " exceeds 32-bit graph limits");
-    return static_cast<std::uint32_t>(value);
+void validate_use(const ResourceUse& use, std::size_t count) {
+    if (!use.resource || use.resource > count) throw std::out_of_range("render graph resource");
+    if (use.state == ResourceState::undefined) throw std::logic_error("resource use has undefined state");
 }
 } // namespace
 
-GraphResource RenderGraph::create_transient(uint64_t size) {
-    if (!size) throw std::invalid_argument("zero-sized transient");
+GraphResource RenderGraph::create_resource(GraphResourceDesc desc) {
+    if (!desc.size) {
+        if (!desc.width || !desc.height) throw std::invalid_argument("zero-sized graph resource");
+        desc.size = static_cast<std::uint64_t>(desc.width) * desc.height;
+    }
     if (resources_.size() >= std::numeric_limits<GraphResource>::max()) return 0;
-    resources_.push_back({size, invalid_pass, 0, 0});
+    TransientResource lifetime{desc.size, invalid_graph_pass, 0, 0, desc.type, desc.transient};
+    resources_.push_back({std::move(desc), lifetime, invalid_graph_pass, false});
+    compiled_ = false;
     return static_cast<GraphResource>(resources_.size());
 }
 
-uint32_t RenderGraph::add_pass(RenderPass pass) {
-    if (pass.name.empty() || !pass.execute) throw std::invalid_argument("invalid pass");
-    if (passes_.size() >= invalid_pass) return invalid_pass;
-    const auto index = static_cast<std::uint32_t>(passes_.size());
+GraphResource RenderGraph::import_resource(GraphResourceDesc desc) {
+    desc.transient = false;
+    if (desc.initial_state == ResourceState::undefined) desc.initial_state = ResourceState::common;
+    return create_resource(std::move(desc));
+}
+
+GraphResource RenderGraph::create_transient(std::uint64_t size) {
+    GraphResourceDesc description;
+    description.size = size;
+    return create_resource(std::move(description));
+}
+
+GraphPass RenderGraph::add_pass(RenderPass pass) {
+    if (pass.name.empty() || !pass.execute) throw std::invalid_argument("invalid render pass");
+    if (passes_.size() >= invalid_graph_pass) return invalid_graph_pass;
     passes_.push_back(std::move(pass));
-    return index;
+    compiled_ = false;
+    return static_cast<GraphPass>(passes_.size() - 1);
+}
+
+void RenderGraph::add_dependency(GraphPass before, GraphPass after) {
+    if (before >= passes_.size() || after >= passes_.size() || before == after)
+        throw std::invalid_argument("invalid render pass dependency");
+    explicit_edges_.emplace_back(before, after);
+    compiled_ = false;
+}
+
+void RenderGraph::export_resource(GraphResource resource) {
+    if (!resource || resource > resources_.size()) throw std::out_of_range("render graph resource");
+    resources_[resource - 1].exported = true;
+    compiled_ = false;
+}
+
+void RenderGraph::release_resource(GraphResource resource, GraphPass after_pass) {
+    if (!resource || resource > resources_.size() || after_pass >= passes_.size())
+        throw std::out_of_range("resource release");
+    resources_[resource - 1].release_after = after_pass;
+    compiled_ = false;
 }
 
 void RenderGraph::compile() {
-    order_.clear();
-    barriers_.clear();
-    const auto pass_count = checked_index(passes_.size(), "pass count");
-    const auto resource_count = checked_index(resources_.size(), "resource count");
-    std::vector<std::vector<uint32_t>> edges(passes_.size());
-    std::vector<uint32_t> degree(passes_.size());
-    std::unordered_map<GraphResource, uint32_t> writer;
-    for (uint32_t i = 0; i < pass_count; ++i) {
-        for (auto use : passes_[i].reads) {
-            if (!use.resource || use.resource > resource_count) throw std::out_of_range("resource");
-            if (writer.contains(use.resource)) { edges[writer[use.resource]].push_back(i); ++degree[i]; }
+    const auto pass_count = passes_.size();
+    order_.clear(); barriers_.clear(); schedule_.clear();
+    culled_.assign(pass_count, false);
+    for (auto& resource : resources_) {
+        resource.lifetime.first_pass = invalid_graph_pass;
+        resource.lifetime.last_pass = 0;
+        resource.lifetime.alias_slot = 0;
+    }
+
+    std::vector<std::vector<GraphPass>> edges(pass_count), reverse(pass_count);
+    auto add_edge = [&](GraphPass from, GraphPass to) {
+        if (from == to) return;
+        auto& list = edges[from];
+        if (std::find(list.begin(), list.end(), to) == list.end()) {
+            list.push_back(to); reverse[to].push_back(from);
         }
-        for (auto use : passes_[i].writes) {
-            if (!use.resource || use.resource > resource_count) throw std::out_of_range("resource");
-            if (writer.contains(use.resource)) { edges[writer[use.resource]].push_back(i); ++degree[i]; }
-            writer[use.resource] = i;
+    };
+    for (const auto& [from, to] : explicit_edges_) add_edge(from, to);
+
+    std::vector<GraphPass> last_writer(resources_.size(), invalid_graph_pass);
+    std::vector<std::vector<GraphPass>> readers(resources_.size());
+    for (GraphPass pass = 0; pass < pass_count; ++pass) {
+        std::unordered_set<GraphResource> read_set, write_set;
+        for (const auto& use : passes_[pass].reads) {
+            validate_use(use, resources_.size());
+            if (!read_set.insert(use.resource).second) throw std::logic_error("duplicate resource read");
+            const auto index = use.resource - 1;
+            if (last_writer[index] != invalid_graph_pass) add_edge(last_writer[index], pass);
+            else if (resources_[index].desc.transient)
+                throw std::logic_error("transient resource read before write");
+            readers[index].push_back(pass);
         }
-        for (auto use : passes_[i].reads) {
-            auto& resource = resources_[use.resource - 1];
-            resource.first_pass = std::min(resource.first_pass, i);
-            resource.last_pass = i;
-        }
-        for (auto use : passes_[i].writes) {
-            auto& resource = resources_[use.resource - 1];
-            resource.first_pass = std::min(resource.first_pass, i);
-            resource.last_pass = i;
+        for (const auto& use : passes_[pass].writes) {
+            validate_use(use, resources_.size());
+            if (!write_set.insert(use.resource).second || read_set.contains(use.resource))
+                throw std::logic_error("duplicate resource write");
+            const auto index = use.resource - 1;
+            if (last_writer[index] != invalid_graph_pass) add_edge(last_writer[index], pass);
+            for (const auto reader : readers[index]) add_edge(reader, pass);
+            readers[index].clear();
+            last_writer[index] = pass;
         }
     }
-    for (uint32_t i = 0; i < pass_count; ++i) if (!degree[i]) order_.push_back(i);
-    for (std::size_t q = 0; q < order_.size(); ++q)
-        for (auto destination : edges[order_[q]])
-            if (--degree[destination] == 0) order_.push_back(destination);
-    if (order_.size() != passes_.size()) throw std::logic_error("render graph cycle");
 
-    for (uint32_t i = 0; i < resource_count; ++i) {
-        uint32_t slot = 0;
+    // Retain externally observable passes and recursively retain their producers.
+    std::vector<bool> live(pass_count, false);
+    std::vector<GraphPass> stack;
+    for (GraphPass pass = 0; pass < pass_count; ++pass) if (passes_[pass].side_effect) stack.push_back(pass);
+    for (std::size_t resource = 0; resource < resources_.size(); ++resource)
+        if (resources_[resource].exported && last_writer[resource] != invalid_graph_pass)
+            stack.push_back(last_writer[resource]);
+    while (!stack.empty()) {
+        const auto pass = stack.back(); stack.pop_back();
+        if (live[pass]) continue;
+        live[pass] = true;
+        stack.insert(stack.end(), reverse[pass].begin(), reverse[pass].end());
+    }
+    for (GraphPass pass = 0; pass < pass_count; ++pass) culled_[pass] = !live[pass];
+
+    std::vector<std::uint32_t> degree(pass_count);
+    for (GraphPass from = 0; from < pass_count; ++from) if (live[from])
+        for (const auto to : edges[from]) if (live[to]) ++degree[to];
+    std::priority_queue<GraphPass, std::vector<GraphPass>, std::greater<>> ready;
+    for (GraphPass pass = 0; pass < pass_count; ++pass) if (live[pass] && degree[pass] == 0) ready.push(pass);
+    while (!ready.empty()) {
+        const auto from = ready.top(); ready.pop(); order_.push_back(from);
+        auto destinations = edges[from];
+        std::sort(destinations.begin(), destinations.end());
+        for (const auto to : destinations) if (live[to] && --degree[to] == 0) ready.push(to);
+    }
+    if (order_.size() != static_cast<std::size_t>(std::count(live.begin(), live.end(), true)))
+        throw std::logic_error("render graph dependency cycle");
+
+    std::vector<GraphPass> position(pass_count, invalid_graph_pass);
+    for (GraphPass index = 0; index < order_.size(); ++index) position[order_[index]] = index;
+    for (GraphPass index = 0; index < order_.size(); ++index) {
+        const auto pass = order_[index];
+        auto track = [&](const ResourceUse& use) {
+            auto& record = resources_[use.resource - 1];
+            if (record.release_after != invalid_graph_pass && pass > record.release_after)
+                throw std::logic_error("resource used after release");
+            record.lifetime.first_pass = std::min(record.lifetime.first_pass, index);
+            record.lifetime.last_pass = std::max(record.lifetime.last_pass, index);
+        };
+        for (const auto& use : passes_[pass].reads) track(use);
+        for (const auto& use : passes_[pass].writes) track(use);
+    }
+
+    // First-fit allocation is deterministic; only compatible transient resources alias.
+    for (std::size_t index = 0; index < resources_.size(); ++index) {
+        auto& current = resources_[index];
+        if (!current.desc.transient || current.lifetime.first_pass == invalid_graph_pass) {
+            current.lifetime.alias_slot = static_cast<std::uint32_t>(index); continue;
+        }
+        std::uint32_t slot = 0;
         for (;; ++slot) {
             bool clash = false;
-            for (uint32_t j = 0; j < i; ++j)
-                if (resources_[j].alias_slot == slot &&
-                    !(resources_[j].last_pass < resources_[i].first_pass ||
-                      resources_[i].last_pass < resources_[j].first_pass)) {
-                    clash = true;
-                    break;
+            for (std::size_t prior = 0; prior < index; ++prior) {
+                const auto& candidate = resources_[prior];
+                const bool overlap = !(candidate.lifetime.last_pass < current.lifetime.first_pass ||
+                                       current.lifetime.last_pass < candidate.lifetime.first_pass);
+                if (candidate.desc.transient && candidate.lifetime.alias_slot == slot &&
+                    (candidate.desc.type != current.desc.type || candidate.desc.size < current.desc.size || overlap)) {
+                    clash = true; break;
                 }
+            }
             if (!clash) break;
         }
-        resources_[i].alias_slot = slot;
+        current.lifetime.alias_slot = slot;
     }
-    std::unordered_map<GraphResource, ResourceState> states;
-    for (auto pass_index : order_) {
+
+    std::vector<ResourceState> states;
+    states.reserve(resources_.size());
+    for (const auto& resource : resources_) states.push_back(resource.desc.initial_state);
+    for (const auto pass : order_) {
         PipelineBarrier barrier;
-        auto uses = passes_[pass_index].reads;
-        uses.insert(uses.end(), passes_[pass_index].writes.begin(), passes_[pass_index].writes.end());
-        for (auto use : uses) {
-            const auto before = states.contains(use.resource) ? states[use.resource] : ResourceState::undefined;
+        auto transition = [&](const ResourceUse& use) {
+            auto& before = states[use.resource - 1];
             if (before != use.state) {
                 barrier.transitions.push_back({use.resource, before, use.state});
-                states[use.resource] = use.state;
+                before = use.state;
             }
-        }
-        barriers_.push_back(std::move(barrier));
+        };
+        for (const auto& use : passes_[pass].reads) transition(use);
+        for (const auto& use : passes_[pass].writes) transition(use);
+        barriers_.push_back(barrier);
+        std::vector<GraphPass> dependencies;
+        for (const auto dependency : reverse[pass]) if (live[dependency]) dependencies.push_back(dependency);
+        std::sort(dependencies.begin(), dependencies.end());
+        schedule_.push_back({pass, std::move(dependencies), std::move(barrier), 0});
     }
+
+    hash_ = 1469598103934665603ull;
+    for (const auto pass : order_) {
+        hash_ = append_hash(hash_, passes_[pass].name);
+        for (const auto& use : passes_[pass].reads)
+            hash_ = append_hash(hash_, std::to_string(use.resource) + "r" + std::to_string(static_cast<int>(use.state)));
+        for (const auto& use : passes_[pass].writes)
+            hash_ = append_hash(hash_, std::to_string(use.resource) + "w" + std::to_string(static_cast<int>(use.state)));
+    }
+    compiled_ = true;
 }
 
 void RenderGraph::execute(CommandQueue& queue) {
-    if (order_.size() != passes_.size()) compile();
+    if (!compiled_) compile();
     CommandBuffer buffer;
     CommandEncoder encoder(buffer);
-    for (std::size_t i = 0; i < order_.size(); ++i) {
-        if (!barriers_[i].transitions.empty()) encoder.barrier(barriers_[i]);
-        passes_[order_[i]].execute(encoder);
+    for (std::size_t index = 0; index < order_.size(); ++index) {
+        if (!barriers_[index].transitions.empty()) encoder.barrier(barriers_[index]);
+        passes_[order_[index]].execute(encoder);
     }
     encoder.finish();
     queue.submit(buffer);
+}
+
+const TransientResource& RenderGraph::transient(GraphResource resource) const {
+    if (!resource || resource > resources_.size()) throw std::out_of_range("render graph resource");
+    return resources_[resource - 1].lifetime;
+}
+
+const GraphResourceDesc& RenderGraph::resource_desc(GraphResource resource) const {
+    if (!resource || resource > resources_.size()) throw std::out_of_range("render graph resource");
+    return resources_[resource - 1].desc;
+}
+
+bool RenderGraph::is_culled(GraphPass pass) const {
+    if (pass >= passes_.size()) throw std::out_of_range("render graph pass");
+    return compiled_ && culled_[pass];
+}
+
+std::string RenderGraph::replay_description() const {
+    if (!compiled_) throw std::logic_error("render graph is not compiled");
+    std::ostringstream output;
+    output << "render-graph-v1 " << hash_ << '\n';
+    for (std::size_t index = 0; index < schedule_.size(); ++index) {
+        output << index << ' ' << passes_[schedule_[index].pass].name << " deps";
+        for (const auto dependency : schedule_[index].dependencies) output << ' ' << dependency;
+        output << " barriers " << schedule_[index].barrier.transitions.size() << '\n';
+    }
+    return output.str();
 }
 } // namespace digitor

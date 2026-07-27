@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 4.3.0
+    VERSION 4.4.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -165,6 +165,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_v2.cpp
         tests/test_color_pipeline.cpp
         tests/test_render_export.cpp
+        tests/test_render_graph.cpp
     )
     set_target_properties(digitor_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
