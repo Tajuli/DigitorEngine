@@ -1,4 +1,5 @@
 #include "digitor/rgb_curves.hpp"
+#include "core/numeric_utils.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -29,7 +30,10 @@ std::string key_for(const RgbCurvesParameters& p) {
         append_u32(s, static_cast<std::uint32_t>(c->interpolation));
         append_u32(s, static_cast<std::uint32_t>(c->extrapolation));
         append_float(s, c->domain_min); append_float(s, c->domain_max);
-        append_u32(s, static_cast<std::uint32_t>(c->points.size()));
+        std::uint32_t point_count = 0;
+        if (!checked_size_to_uint32(c->points.size(), point_count))
+            throw std::invalid_argument("RGB curve point count exceeds uint32_t");
+        append_u32(s, point_count);
         for (auto q : c->points) { append_float(s, q.x); append_float(s, q.y); }
     }
     return s;

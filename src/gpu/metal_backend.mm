@@ -6,6 +6,7 @@
 
 #include "gpu/gpu_backend.hpp"
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 
 namespace digitor {
 namespace {
@@ -208,7 +209,9 @@ public:
             provenance_.source_upload_performed = true;
             id<MTLCommandBuffer> command = [queue commandBuffer];
             id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
-            uint32_t count = static_cast<uint32_t>(source.size());
+            uint32_t count = 0;
+            if (!checked_size_to_uint32(source.size(), count))
+                return DIGITOR_RESULT_INVALID_ARGUMENT;
             [encoder setComputePipelineState:pipeline]; [encoder setBuffer:input offset:0 atIndex:0];
             [encoder setBuffer:output offset:0 atIndex:1]; [encoder setBytes:&p length:sizeof(p) atIndex:2];
             [encoder setBytes:&count length:sizeof(count) atIndex:3];
@@ -246,7 +249,9 @@ public:
                 p.m[k]={c.domain_min,c.domain_max,c.first_value,c.last_value,c.slope_before,c.slope_after,
                         static_cast<uint32_t>(c.extrapolation),c.enabled?1u:0u};
                 lut.insert(lut.end(),c.samples.begin(),c.samples.end()); }
-            p.size=compiled.lut_size(); p.count=static_cast<uint32_t>(source.size());
+            p.size=compiled.lut_size();
+            if (!checked_size_to_uint32(source.size(), p.count))
+                return DIGITOR_RESULT_INVALID_ARGUMENT;
             NSError* error=nil; id<MTLLibrary> lib=[device_ newLibraryWithSource:code options:nil error:&error];
             id<MTLFunction> fn=[lib newFunctionWithName:@"curves"];
             id<MTLComputePipelineState> pipe=fn?[device_ newComputePipelineStateWithFunction:fn error:&error]:nil;

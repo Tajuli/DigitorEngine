@@ -1,4 +1,5 @@
 #include "core/string_utils.hpp"
+#include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
 #include "gpu/native_rgb_curves.hpp"
 #include "digitor/shader.hpp"
@@ -262,6 +263,9 @@ public:
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
       return DIGITOR_RESULT_OK;
+    std::uint32_t pixel_count = 0;
+    if (!checked_size_to_uint32(src.size(), pixel_count))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
     VkBuffer bufs[2]{};
     VkDeviceMemory memory[2]{};
     auto cleanup = [&] {
@@ -389,7 +393,7 @@ public:
       uint32_t n;
     } push{{p.exposure, p.contrast, p.gamma, p.lift, p.gain, p.offset,
             p.temperature, p.tint, p.saturation, p.vibrance, p.hue},
-           static_cast<uint32_t>(src.size())};
+           pixel_count};
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(push), &push);
     vkCmdDispatch(cmd, (push.n + 63) / 64, 1, 1);
@@ -437,7 +441,7 @@ public:
     provenance_.native_curve_shader_identity="rgb_curves.hlsl:abi-v1";
     provenance_.native_lut_resource_identity=curves.identity()+":"+info_.device_name;
     if (gpu_failure_point()!=GpuFailurePoint::None) return injected_failure(gpu_failure_point());
-    if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;
+    if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;std::uint32_t pixel_count=0;if(!checked_size_to_uint32(src.size(),pixel_count))return DIGITOR_RESULT_INVALID_ARGUMENT;
     ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",
       .source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,
       .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}}};
@@ -448,7 +452,7 @@ public:
     VkPipelineLayout pipeline_layout{};VkShaderModule module{};VkPipeline pipeline{};
     VkDescriptorPool descriptor_pool{};VkCommandBuffer command{};
     auto cleanup=[&]{if(command)vkFreeCommandBuffers(d_,pool_,1,&command);if(descriptor_pool)vkDestroyDescriptorPool(d_,descriptor_pool,nullptr);if(pipeline)vkDestroyPipeline(d_,pipeline,nullptr);if(module)vkDestroyShaderModule(d_,module,nullptr);if(pipeline_layout)vkDestroyPipelineLayout(d_,pipeline_layout,nullptr);if(set_layout)vkDestroyDescriptorSetLayout(d_,set_layout,nullptr);for(int i=0;i<4;i++){if(buffers[i])vkDestroyBuffer(d_,buffers[i],nullptr);if(memories[i])vkFreeMemory(d_,memories[i],nullptr);}};
-    const auto lut=native_rgb_curves_lut(curves);const auto parameters=native_rgb_curves_parameters(curves,static_cast<uint32_t>(src.size()));
+    const auto lut=native_rgb_curves_lut(curves);const auto parameters=native_rgb_curves_parameters(curves,pixel_count);
     const VkDeviceSize sizes[]{src.size_bytes(),out.size_bytes(),lut.size()*sizeof(float),sizeof(parameters)};
     for(int i=0;i<4;i++){VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=sizes[i];bi.usage=i==3?VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT:VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;if(vkCreateBuffer(d_,&bi,nullptr,&buffers[i])!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}VkMemoryRequirements req{};vkGetBufferMemoryRequirements(d_,buffers[i],&req);auto type=mem(req.memoryTypeBits,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=type;if(type==UINT32_MAX||vkAllocateMemory(d_,&ai,nullptr,&memories[i])!=VK_SUCCESS||vkBindBufferMemory(d_,buffers[i],memories[i],0)!=VK_SUCCESS){cleanup();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}}
     void*m=nullptr;vkMapMemory(d_,memories[0],0,sizes[0],0,&m);std::memcpy(m,src.data(),sizes[0]);vkUnmapMemory(d_,memories[0]);vkMapMemory(d_,memories[2],0,sizes[2],0,&m);std::memcpy(m,lut.data(),sizes[2]);vkUnmapMemory(d_,memories[2]);vkMapMemory(d_,memories[3],0,sizes[3],0,&m);std::memcpy(m,&parameters,sizes[3]);vkUnmapMemory(d_,memories[3]);provenance_.source_upload_performed=true;
