@@ -41,3 +41,7 @@ not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
 Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
+
+## RGB Curves
+
+The CPU FP32 reference is implemented on supported desktop hosts. Vulkan, D3D12, Metal, and OpenGL ES native curve execution are currently **Unsupported** and have no hardware evidence. Compilation on a platform does not change that classification; Android/iOS are not verified.

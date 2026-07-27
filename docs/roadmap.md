@@ -34,3 +34,7 @@ not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
 Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
+
+## v4.7 RGB Curves qualification remaining
+
+The curve math, CPU reference, LUT cache, and CPU graph contract are implemented. Release requires real backend shaders/resources/dispatch on Vulkan, D3D12, Metal, and GLES, native provenance and numerical/performance qualification. Wheels, qualifier, 3D LUT, UI, timeline, codecs, and export formats are explicitly out of this item.

@@ -38,3 +38,31 @@ not execute qualifying Vulkan, D3D12, Metal, GLES, Android, or iOS hardware.
 Native compilation is not reported as pixel validation; FP16 is unsupported.
 The internal provenance/failure seams prove that failures do not silently run
 the CPU reference in non-hardware tests.
+
+## RGB Curves implementation truth table
+
+CI/hardware environment for implemented rows: local Ubuntu GCC 13 CPU-only; no GPU device or driver was available. `test_rgb_curves` is deterministic non-hardware evidence; exact identity and alpha checks measured zero error. “Unsupported” backend cells have no numerical result and are not verified claims.
+
+| Feature | CPU Reference | Vulkan | D3D12 | Metal | GLES | Test Evidence | Numerical Result | Status |
+|---|---|---|---|---|---|---|---|---|
+| Curve descriptor validation | `compile_one` | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves` malformed cases, Ubuntu GCC 13 CPU | accepted cases exact; invalid rejected | Production implementation, software-adapter verified |
+| Control-point canonicalization | strict caller order | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | deterministic | Production implementation, software-adapter verified |
+| Monotone cubic coefficients | `compile_one` PCHIP | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves` flat/steep sweep, CPU | monotonic within 1e-6 | Production implementation, software-adapter verified |
+| 256-sample FP32 LUT | `CompiledRgbCurves::compile` | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | allocation/identity pass | Production implementation, software-adapter verified |
+| 1024-sample FP32 LUT | default | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | exact identity | Production implementation, software-adapter verified |
+| 4096-sample FP32 LUT | supported | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | size/content pass | Production implementation, software-adapter verified |
+| Master curve | channel-wise | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | alpha exact | CPU reference only |
+| Red curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | G/B isolation exact | CPU reference only |
+| Green curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | identity fixture, CPU | exact identity | CPU reference only |
+| Blue curve | independent | Unsupported | Unsupported | Unsupported | Unsupported | identity fixture, CPU | exact identity | CPU reference only |
+| Master + RGB combined | fixed order | Unsupported | Unsupported | Unsupported | Unsupported | source/order review | not GPU measured | CPU reference only |
+| Negative-value behavior | explicit extrapolation | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity exact | CPU reference only |
+| Over-range behavior | explicit extrapolation | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity exact | CPU reference only |
+| Alpha preservation | bit-preserved | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | zero error | Production implementation, software-adapter verified |
+| Render Graph integration | explicit CPU pass | Unsupported | Unsupported | Unsupported | Unsupported | `add_rgb_curves_cpu_pass` source review | not numerical | CPU reference only |
+| Node-graph contract | immutable schema v1 | Unsupported | Unsupported | Unsupported | Unsupported | serialization/cache test | stable identity | Interface/design only |
+| Pipeline cache | not needed | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Not implemented |
+| LUT-resource cache | CPU weak cache | Unsupported | Unsupported | Unsupported | Unsupported | cold/change/warm `test_rgb_curves` | pointer-equal warm hit | CPU reference only |
+| Preview consumption | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Not implemented |
+| FP32 | implemented | Unsupported | Unsupported | Unsupported | Unsupported | `test_rgb_curves`, CPU | identity/alpha exact | CPU reference only |
+| FP16, if implemented | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | none | none | Unsupported |

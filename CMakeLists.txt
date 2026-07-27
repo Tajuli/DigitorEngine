@@ -43,6 +43,7 @@ add_library(digitor_engine
     src/gpu/color_science.cpp
     src/gpu/video_texture.cpp
     src/gpu/color_pipeline.cpp
+    src/gpu/rgb_curves.cpp
     src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp
@@ -186,6 +187,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_editor.cpp
         tests/test_v2.cpp
         tests/test_color_pipeline.cpp
+        tests/test_rgb_curves.cpp
         tests/test_color_science.cpp
         tests/test_render_export.cpp
         tests/test_render_graph.cpp
@@ -259,6 +261,10 @@ if (DIGITOR_BUILD_TESTS)
         target_compile_options(digitor_c_header_test PRIVATE -UNDEBUG)
     endif()
     add_test(NAME digitor_c_header_test COMMAND digitor_c_header_test)
+
+    # Informational only: intentionally not registered with CTest.
+    add_executable(digitor_rgb_curves_benchmark benchmarks/rgb_curves_benchmark.cpp)
+    target_link_libraries(digitor_rgb_curves_benchmark PRIVATE Digitor::Engine)
 endif()
 
 include(GNUInstallDirs)
