@@ -95,7 +95,7 @@ public:
   DigitorRendererInfo info() const noexcept override { return i_; }
   DigitorResult execute_process_curves_gpu(std::span<const Color>src,uint32_t width,uint32_t height,int64_t timestamp,const CompiledRgbCurves&curves,ProcessedGpuFramePtr&out)noexcept override{
     out.reset();begin_grade_provenance(DIGITOR_RENDERER_VULKAN,true,i_.device_name,shader_compiler_.identity().c_str(),"rgb_curves.hlsl:texture","VkImage RGB curves");if(!width||!height||src.size()!=size_t(width)*height)return DIGITOR_RESULT_INVALID_ARGUMENT;
-    ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",.source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,.backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"},{"DIGITOR_TEXTURE_OUTPUT","1"}}};auto binary=shader_cache_.get_or_compile(shader_compiler_,request);if(!binary)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",.source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,.backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"},{"DIGITOR_TEXTURE_OUTPUT","1"}},.include_roots={},.specialization_constants={},.optimization=ShaderOptimization::performance,.debug_info=false};auto binary=shader_cache_.get_or_compile(shader_compiler_,request);if(!binary)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     auto owner=std::shared_ptr<VkPreviewOwner>(new(std::nothrow)VkPreviewOwner{});if(!owner)return DIGITOR_RESULT_OUT_OF_MEMORY;owner->device=d_;
     auto image=[&](VkImageUsageFlags usage,VkImage&i,VkDeviceMemory&m){VkImageCreateInfo c{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};c.imageType=VK_IMAGE_TYPE_2D;c.extent={width,height,1};c.mipLevels=c.arrayLayers=1;c.format=VK_FORMAT_R32G32B32A32_SFLOAT;c.tiling=VK_IMAGE_TILING_OPTIMAL;c.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;c.samples=VK_SAMPLE_COUNT_1_BIT;c.sharingMode=VK_SHARING_MODE_EXCLUSIVE;c.usage=usage;if(vkCreateImage(d_,&c,nullptr,&i)!=VK_SUCCESS)return false;VkMemoryRequirements r{};vkGetImageMemoryRequirements(d_,i,&r);auto mt=mem(r.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=r.size;a.memoryTypeIndex=mt;return mt!=UINT32_MAX&&vkAllocateMemory(d_,&a,nullptr,&m)==VK_SUCCESS&&vkBindImageMemory(d_,i,m,0)==VK_SUCCESS;};
     if(!image(VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,owner->source,owner->source_memory)||!image(VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,owner->output,owner->output_memory)||!image(VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,owner->preview,owner->preview_memory))return DIGITOR_RESULT_OUT_OF_MEMORY;
@@ -358,7 +358,9 @@ public:
     ShaderCompileRequest grade_request{.source=digitor_color_pipeline_hlsl,
       .entry_point="main",.source_name="color_pipeline.hlsl",
       .target_profile="cs_6_0",.stage=ShaderStage::compute,
-      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}}};
+      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}},
+      .include_roots={},.specialization_constants={},
+      .optimization=ShaderOptimization::performance,.debug_info=false};
     const auto grade_binary=shader_cache_.get_or_compile(shader_compiler_,grade_request);
     if(!grade_binary){cleanup();vkDestroyPipelineLayout(d_,pipelineLayout,nullptr);vkDestroyDescriptorSetLayout(d_,layout,nullptr);return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
     VkShaderModuleCreateInfo si{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -470,7 +472,9 @@ public:
     if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;std::uint32_t pixel_count=0;if(!checked_size_to_uint32(src.size(),pixel_count))return DIGITOR_RESULT_INVALID_ARGUMENT;
     ShaderCompileRequest request{.source=digitor_rgb_curves_hlsl,.entry_point="main",
       .source_name="rgb_curves.hlsl",.target_profile="cs_6_0",.stage=ShaderStage::compute,
-      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}}};
+      .backend=ShaderBackend::vulkan,.macros={{"DIGITOR_VULKAN","1"}},
+      .include_roots={},.specialization_constants={},
+      .optimization=ShaderOptimization::performance,.debug_info=false};
     const auto binary=shader_cache_.get_or_compile(shader_compiler_,request);
     if(!binary){provenance_.failure_stage="SPIR-V generation";return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}
     provenance_.shader_pipeline_cache=CacheDisposition::Hit;

@@ -166,7 +166,27 @@ if (WIN32)
 elseif(APPLE)
     target_link_libraries(digitor_engine PRIVATE "-framework Metal" "-framework Foundation")
 elseif(ANDROID)
-    target_link_libraries(digitor_engine PRIVATE dl EGL GLESv2)
+    # GLES 3.0 core entry points (samplers, immutable texture storage, and
+    # buffer-range mapping) are available from API 18. Keep these as PUBLIC
+    # link requirements because digitor_engine may be static and its final
+    # consumer must link the Android NDK stub libraries.
+    if(DEFINED ANDROID_PLATFORM AND ANDROID_PLATFORM MATCHES "android-([0-9]+)")
+        if(CMAKE_MATCH_1 LESS 18)
+            message(FATAL_ERROR "DigitorEngine GLES requires Android API 18 or newer")
+        endif()
+    endif()
+    find_library(DIGITOR_ANDROID_EGL_LIBRARY EGL REQUIRED)
+    find_library(DIGITOR_ANDROID_GLES3_LIBRARY GLESv3 REQUIRED)
+    find_library(DIGITOR_ANDROID_LIBRARY android REQUIRED)
+    find_library(DIGITOR_ANDROID_LOG_LIBRARY log REQUIRED)
+    find_library(DIGITOR_ANDROID_DL_LIBRARY dl REQUIRED)
+    target_link_libraries(digitor_engine PUBLIC
+        ${DIGITOR_ANDROID_EGL_LIBRARY}
+        ${DIGITOR_ANDROID_GLES3_LIBRARY}
+        ${DIGITOR_ANDROID_LIBRARY}
+        ${DIGITOR_ANDROID_LOG_LIBRARY}
+        ${DIGITOR_ANDROID_DL_LIBRARY}
+    )
 endif()
 
 if (MSVC)

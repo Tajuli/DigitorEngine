@@ -14,21 +14,48 @@ struct GlPreviewOwner { GLuint output{},input{},lut{},framebuffer{},program{}; E
   ~GlPreviewOwner(){if(eglGetCurrentContext()==context){GLuint t[]{output,input,lut};glDeleteTextures(3,t);if(framebuffer)glDeleteFramebuffers(1,&framebuffer);if(program)glDeleteProgram(program);}}
 };
 GLuint compile_gl(GLenum type,const char*source){GLuint x=glCreateShader(type);glShaderSource(x,1,&source,nullptr);glCompileShader(x);GLint ok=0;glGetShaderiv(x,GL_COMPILE_STATUS,&ok);if(!ok){glDeleteShader(x);return 0;}return x;}
+bool has_gl_extension(const char* required) noexcept {
+  GLint count = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+  for (GLint index = 0; index < count; ++index) {
+    const auto* extension = reinterpret_cast<const char*>(
+        glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index)));
+    if (extension != nullptr && std::strcmp(extension, required) == 0)
+      return true;
+  }
+  return false;
+}
 class GlBackend final : public IRenderBackend {
   DigitorRendererInfo i_{};
+  bool fp32_renderable_{};
 
 public:
   GlBackend() {
     i_.backend = DIGITOR_RENDERER_OPENGL_ES;
     copy_bounded(i_.backend_name, "OpenGL ES");
     copy_bounded(i_.device_name, "Current EGL context");
-    i_.is_gpu = i_.supports_fp32 = 1;
+    i_.is_gpu = 1;
   }
-  bool initialize(bool) override { return glGetString(GL_VERSION) != nullptr; }
+  bool initialize(bool) override {
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
+      return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    GLint major = 0;
+    glGetIntegerv(GL_MAJOR_VERSION, &major);
+    if (major < 3)
+      return false;
+    fp32_renderable_ = has_gl_extension("GL_EXT_color_buffer_float");
+    i_.supports_fp32 = fp32_renderable_ ? 1 : 0;
+    const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    if (renderer != nullptr)
+      copy_bounded(i_.device_name, renderer);
+    return glGetError() == GL_NO_ERROR;
+  }
   void shutdown() noexcept override {}
   DigitorRendererInfo info() const noexcept override { return i_; }
   DigitorResult execute_process_curves_gpu(std::span<const Color> src,uint32_t width,uint32_t height,int64_t timestamp,const CompiledRgbCurves&cc,ProcessedGpuFramePtr&out)noexcept override{
     out.reset();auto context=eglGetCurrentContext();begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,"GLES driver","rgb-curves-glsl-es-texture-v1","GL framebuffer texture");
+    if(!fp32_renderable_)return DIGITOR_RESULT_UNSUPPORTED;
     if(context==EGL_NO_CONTEXT)return DIGITOR_RESULT_NOT_INITIALIZED;if(!width||!height||src.size()!=size_t(width)*height)return DIGITOR_RESULT_INVALID_ARGUMENT;
     const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
     const char*fs="#version 300 es\nprecision highp float;precision highp int;in vec2 uv;uniform sampler2D im,lut;uniform vec4 meta0[4],meta1[4];uniform int lutSize;out vec4 color;float cv(int k,float x){vec4 a=meta0[k],b=meta1[k];if(b.w==0.||isnan(x)||isinf(x))return x;if(x<a.x)return b.z==2.?a.z+b.x*(x-a.x):a.z;if(x>a.y)return b.z==2.?a.w+b.y*(x-a.y):a.w;float u=(x-a.x)/(a.y-a.x)*float(lutSize-1);float i=floor(u);return mix(texelFetch(lut,ivec2(int(i),k),0).r,texelFetch(lut,ivec2(min(int(i)+1,lutSize-1),k),0).r,u-i);}void main(){vec4 c=texture(im,uv);float a=c.a;c.r=cv(0,c.r);c.g=cv(0,c.g);c.b=cv(0,c.b);c.r=cv(1,c.r);c.g=cv(2,c.g);c.b=cv(3,c.b);color=vec4(c.rgb,a);}";
@@ -209,6 +236,8 @@ public:
     begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES, true, i_.device_name,
                            "OpenGL ES driver compiler", "grade-glsl-es-v1",
                            "GL program:grade-v1");
+    if (!fp32_renderable_)
+      return DIGITOR_RESULT_UNSUPPORTED;
     if (gpu_failure_point() != GpuFailurePoint::None)
       return injected_failure(gpu_failure_point());
     if (src.size() != out.size())
@@ -317,6 +346,7 @@ public:
                               const CompiledRgbCurves &cc) noexcept override {
     begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,
       "OpenGL ES driver compiler","rgb-curves-glsl-es-v1","GL program:rgb-curves-v1");
+    if(!fp32_renderable_)return DIGITOR_RESULT_UNSUPPORTED;
     if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
     if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;int pixel_count=0,lut_size=0;if(!checked_size_to_int(src.size(),pixel_count)||!checked_size_to_int(cc.lut_size(),lut_size))return DIGITOR_RESULT_INVALID_ARGUMENT;
     const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
