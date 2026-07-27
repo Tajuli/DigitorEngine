@@ -1,4 +1,5 @@
 #include "digitor/renderer.hpp"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>

@@ -27,8 +27,9 @@ const char* digitor_get_version(void) {
 
 DigitorResult digitor_create_texture(DigitorRenderContext* context, const DigitorTextureDesc* desc,
                                      DigitorTexture** out_texture) {
-    if (context == nullptr || desc == nullptr || out_texture == nullptr || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (out_texture == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
     *out_texture = nullptr;
+    if (context == nullptr || desc == nullptr || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     digitor::Texture* resource = nullptr;
     const auto result = context->impl->create_texture(*desc, &resource);
     if (result != DIGITOR_RESULT_OK) return result;
@@ -46,8 +47,9 @@ DigitorResult digitor_destroy_texture(DigitorTexture* texture) {
 
 DigitorResult digitor_create_buffer(DigitorRenderContext* context, const DigitorBufferDesc* desc,
                                     DigitorBuffer** out_buffer) {
-    if (context == nullptr || desc == nullptr || out_buffer == nullptr || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (out_buffer == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
     *out_buffer = nullptr;
+    if (context == nullptr || desc == nullptr || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     digitor::Buffer* resource = nullptr;
     const auto result = context->impl->create_buffer(*desc, &resource);
     if (result != DIGITOR_RESULT_OK) return result;
@@ -65,7 +67,9 @@ DigitorResult digitor_destroy_buffer(DigitorBuffer* buffer) {
 
 DigitorResult digitor_map_buffer(DigitorBuffer* buffer, uint64_t offset, uint64_t size,
                                  void** out_data) {
-    if (!buffer || !out_data) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (!out_data) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_data = nullptr;
+    if (!buffer) return DIGITOR_RESULT_INVALID_ARGUMENT;
     { std::scoped_lock lock(handles_mutex); if (!buffers.count(buffer)) return DIGITOR_RESULT_INVALID_ARGUMENT; }
     return buffer->impl->map(offset, size, out_data);
 }
@@ -78,8 +82,10 @@ DigitorResult digitor_unmap_buffer(DigitorBuffer* buffer) {
 
 DigitorResult digitor_create_sampler(DigitorRenderContext* context, const DigitorSamplerDesc* desc,
                                      DigitorSampler** out_sampler) {
-    if (!context || !desc || !out_sampler || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
-    *out_sampler = nullptr; digitor::Sampler* resource = nullptr;
+    if (!out_sampler) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_sampler = nullptr;
+    if (!context || !desc || !registered(contexts, context)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    digitor::Sampler* resource = nullptr;
     auto result = context->impl->create_sampler(*desc, &resource); if (result != DIGITOR_RESULT_OK) return result;
     try { *out_sampler = new DigitorSampler{resource}; register_handle(samplers, *out_sampler); }
     catch (const std::bad_alloc&) { delete resource; return DIGITOR_RESULT_OUT_OF_MEMORY; }
@@ -128,6 +134,7 @@ DigitorResult digitor_create_render_context(
     if (out_context == nullptr) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
+    *out_context = nullptr;
 
     digitor::RenderContext* internal = nullptr;
     const DigitorResult result =

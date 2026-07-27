@@ -14,6 +14,14 @@ option(DIGITOR_BUILD_TESTS "Build DigitorEngine tests" ON)
 option(DIGITOR_BUILD_EXAMPLES "Build DigitorEngine examples" ON)
 option(DIGITOR_ENABLE_FFMPEG "Enable FFmpeg-backed media I/O when development packages are available" ON)
 option(DIGITOR_REQUIRE_FFMPEG "Fail configuration when FFmpeg is unavailable" OFF)
+option(DIGITOR_GENERATE_TEST_MEDIA "Generate optional container fixtures with the FFmpeg CLI" OFF)
+option(DIGITOR_WARNINGS_AS_ERRORS "Treat warnings in DigitorEngine-owned code as errors" OFF)
+
+if(DIGITOR_REQUIRE_FFMPEG AND NOT DIGITOR_ENABLE_FFMPEG)
+    message(FATAL_ERROR "DIGITOR_REQUIRE_FFMPEG=ON conflicts with DIGITOR_ENABLE_FFMPEG=OFF")
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 add_library(digitor_engine
     src/core/engine.cpp
@@ -41,22 +49,36 @@ add_library(digitor_engine
     src/render/validation.cpp
 )
 
+set(DIGITOR_FFMPEG_STATUS "disabled")
 if(DIGITOR_ENABLE_FFMPEG)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET libavcodec libavformat libavutil libswscale libswresample)
-        if(FFMPEG_FOUND)
-            target_link_libraries(digitor_engine PRIVATE PkgConfig::FFMPEG)
-            target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
-        endif()
+    find_package(FFmpeg QUIET COMPONENTS avcodec avformat avutil swscale swresample)
+    if(FFmpeg_FOUND)
+        set(DIGITOR_FFMPEG_LIBRARIES "${FFmpeg_LIBRARIES}" CACHE STRING
+            "FFmpeg development libraries linked by DigitorEngine" FORCE)
+        target_link_libraries(digitor_engine PRIVATE FFmpeg::FFmpeg)
+        target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_FFMPEG=1)
+        set(DIGITOR_FFMPEG_STATUS "enabled and linked (${FFmpeg_VERSION})")
     endif()
-    if(DIGITOR_REQUIRE_FFMPEG AND NOT FFMPEG_FOUND)
+    if(DIGITOR_REQUIRE_FFMPEG AND NOT FFmpeg_FOUND)
         message(FATAL_ERROR "FFmpeg development libraries (avformat, avcodec, avutil, swscale, swresample) are required")
-    elseif(NOT FFMPEG_FOUND)
-        message(STATUS "FFmpeg not found: real media decoder API will report unavailable")
-    else()
-        message(STATUS "FFmpeg ${FFMPEG_VERSION} discovered with pkg-config")
+    elseif(NOT FFmpeg_FOUND)
+        set(DIGITOR_FFMPEG_STATUS "unavailable (decoder API reports unavailable)")
     endif()
+endif()
+message(STATUS "DigitorEngine FFmpeg: ${DIGITOR_FFMPEG_STATUS}")
+
+# The command-line program is a test-fixture tool, not an engine dependency.
+# Discover it independently and require it only when generation is requested.
+find_program(DIGITOR_FFMPEG_CLI NAMES ffmpeg DOC "Optional FFmpeg command-line fixture generator")
+if(DIGITOR_GENERATE_TEST_MEDIA AND NOT DIGITOR_FFMPEG_CLI)
+    message(FATAL_ERROR
+        "DIGITOR_GENERATE_TEST_MEDIA=ON requires the optional ffmpeg command-line executable")
+elseif(DIGITOR_GENERATE_TEST_MEDIA)
+    message(STATUS "DigitorEngine FFmpeg CLI: ${DIGITOR_FFMPEG_CLI} (test fixture generation enabled)")
+elseif(DIGITOR_FFMPEG_CLI)
+    message(STATUS "DigitorEngine FFmpeg CLI: ${DIGITOR_FFMPEG_CLI} (test fixture generation disabled)")
+else()
+    message(STATUS "DigitorEngine FFmpeg CLI: unavailable (test fixture generation disabled)")
 endif()
 
 if(WIN32)
@@ -64,6 +86,10 @@ if(WIN32)
 elseif(APPLE)
     enable_language(OBJCXX)
     target_sources(digitor_engine PRIVATE src/gpu/metal_backend.mm)
+    # Metal uses explicit bridge ownership for opaque native handles. ARC is
+    # intentionally limited to this Objective-C++ translation unit.
+    set_source_files_properties(src/gpu/metal_backend.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
 elseif(ANDROID)
     target_sources(digitor_engine PRIVATE src/gpu/gles_backend.cpp)
 else()
@@ -80,6 +106,10 @@ if(WIN32 OR ANDROID OR UNIX)
 endif()
 
 add_library(Digitor::Engine ALIAS digitor_engine)
+
+# Express the language requirement on the target as well as the project
+# default so it propagates through build-tree and installed consumers.
+target_compile_features(digitor_engine PUBLIC cxx_std_20)
 
 target_include_directories(digitor_engine
     PUBLIC
@@ -111,12 +141,19 @@ endif()
 
 if (MSVC)
     target_compile_options(digitor_engine PRIVATE /W4 /permissive-)
+    if(DIGITOR_WARNINGS_AS_ERRORS)
+        target_compile_options(digitor_engine PRIVATE /WX)
+    endif()
 else()
     target_compile_options(digitor_engine PRIVATE -Wall -Wextra -Wpedantic)
+    if(DIGITOR_WARNINGS_AS_ERRORS)
+        target_compile_options(digitor_engine PRIVATE -Werror)
+    endif()
 endif()
 
 if (DIGITOR_BUILD_EXAMPLES)
     add_executable(digitor_info examples/digitor_info.cpp)
+    set_target_properties(digitor_info PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_info PRIVATE Digitor::Engine)
 endif()
 
@@ -129,6 +166,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_color_pipeline.cpp
         tests/test_render_export.cpp
     )
+    set_target_properties(digitor_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
     target_include_directories(digitor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if (MSVC)
@@ -140,6 +178,7 @@ if (DIGITOR_BUILD_TESTS)
 
     if (WIN32)
         add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
+        set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
         target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         if (MSVC)
@@ -154,8 +193,9 @@ if (DIGITOR_BUILD_TESTS)
         )
     endif()
 
-    if(FFMPEG_FOUND)
+    if(FFmpeg_FOUND)
         add_executable(digitor_media_tests tests/test_media.cpp)
+        set_target_properties(digitor_media_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
         add_custom_command(TARGET digitor_media_tests POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -165,6 +205,17 @@ if (DIGITOR_BUILD_TESTS)
                 "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
             VERBATIM
         )
+        if(DIGITOR_GENERATE_TEST_MEDIA)
+            add_custom_command(TARGET digitor_media_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E env
+                    "FFMPEG_EXECUTABLE=${DIGITOR_FFMPEG_CLI}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_media_fixtures.sh"
+                    "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+                VERBATIM)
+        else()
+            message(STATUS
+                "DigitorEngine media tests: optional MP4/MOV/MKV fixtures will not be generated")
+        endif()
         add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
         set_tests_properties(digitor_media_tests PROPERTIES
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
@@ -187,6 +238,7 @@ if (DIGITOR_BUILD_TESTS)
 endif()
 
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 install(TARGETS digitor_engine
     EXPORT DigitorEngineTargets
@@ -202,3 +254,14 @@ install(EXPORT DigitorEngineTargets
     NAMESPACE Digitor::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine
 )
+
+configure_package_config_file(cmake/DigitorEngineConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}" COMPATIBILITY SameMajorVersion)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")

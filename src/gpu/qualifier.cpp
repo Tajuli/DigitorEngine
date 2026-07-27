@@ -1,4 +1,5 @@
 #include "digitor/qualifier.hpp"
+#include "core/numeric_utils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -69,7 +70,7 @@ void HslQualifier::sample(std::span<const Color> colors) {
         sine += std::sin(h * tau); cosine += std::cos(h * tau); saturation += s; luminance += l;
     }
     float hue = static_cast<float>(std::atan2(sine, cosine) / tau); if (hue < 0.0f) hue += 1.0f;
-    const float count = static_cast<float>(colors.size());
+    const float count = checked_size_to_float(colors.size());
     settings_.hue = {hue, hue, 0.05f};
     settings_.saturation = {static_cast<float>(saturation) / count, static_cast<float>(saturation) / count, 0.1f};
     settings_.luminance = {static_cast<float>(luminance) / count, static_cast<float>(luminance) / count, 0.1f};
@@ -89,12 +90,12 @@ std::vector<float> HslQualifier::matte_cpu(std::span<const Color> input, uint32_
         auto source = matte; const float amount = std::clamp(settings_.denoise, 0.0f, 1.0f);
         for (uint32_t y=0;y<height;++y) for(uint32_t x=0;x<width;++x) {
             std::array<float,9> window{};std::size_t count{};
-            for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){auto yy=std::clamp<int>(static_cast<int>(y)+dy,0,height-1);auto xx=std::clamp<int>(static_cast<int>(x)+dx,0,width-1);window[count++]=source[yy*width+xx];}
+            for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){auto yy=std::clamp<int>(static_cast<int>(y)+dy,0,static_cast<int>(height)-1);auto xx=std::clamp<int>(static_cast<int>(x)+dx,0,static_cast<int>(width)-1);window[count++]=source[static_cast<std::size_t>(yy)*width+static_cast<std::size_t>(xx)];}
             std::nth_element(window.begin(),window.begin()+4,window.end()); matte[y*width+x]+=amount*(window[4]-matte[y*width+x]);
         }
     }
     const auto radius=static_cast<uint32_t>(std::ceil(settings_.blur));
-    if(radius&&width&&height){auto source=matte;for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x<width;++x){double sum{};std::size_t count{};for(int dy=-static_cast<int>(radius);dy<=static_cast<int>(radius);++dy)for(int dx=-static_cast<int>(radius);dx<=static_cast<int>(radius);++dx){auto yy=std::clamp<int>(static_cast<int>(y)+dy,0,height-1);auto xx=std::clamp<int>(static_cast<int>(x)+dx,0,width-1);sum+=source[yy*width+xx];++count;}matte[y*width+x]=static_cast<float>(sum/count);}}
+    if(radius&&width&&height){auto source=matte;for(uint32_t y=0;y<height;++y)for(uint32_t x=0;x<width;++x){double sum{};std::size_t count{};for(int dy=-static_cast<int>(radius);dy<=static_cast<int>(radius);++dy)for(int dx=-static_cast<int>(radius);dx<=static_cast<int>(radius);++dx){auto yy=std::clamp<int>(static_cast<int>(y)+dy,0,static_cast<int>(height)-1);auto xx=std::clamp<int>(static_cast<int>(x)+dx,0,static_cast<int>(width)-1);sum+=source[static_cast<std::size_t>(yy)*width+static_cast<std::size_t>(xx)];++count;}matte[y*width+x]=static_cast<float>(sum/checked_size_to_double(count));}}
     return matte;
 }
 

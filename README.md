@@ -92,3 +92,30 @@ out of scope.
 ## 4.x render, export, and Flutter SDK
 
 Preview and export now consume one `SharedRenderer` render graph. Pixel regression helpers expose PSNR and SSIM and validate the exact pre-encode pixels. FFmpeg-backed exports support MP4, MOV, Matroska, PNG/TIFF/EXR sequences and H.264, H.265, or AV1 video, with encoder draining, muxing, cancellation, and progress callbacks. The C ABI exposes a non-blocking Flutter SDK session and native RGBA texture bridge for Windows, Android, iOS, and macOS; see `flutter/digitor_sdk/example`. AAC is selected through `ExportSettings::audio_codec` when an audio source is attached.
+
+## Stabilization build and FFmpeg dependency policy
+
+All desktop configurations are exercised with tests/examples enabled and FFmpeg disabled; dedicated jobs
+require FFmpeg. `DIGITOR_WARNINGS_AS_ERRORS=ON` applies strictness only to engine-owned compilation.
+Install verification uses `cmake --install` followed by pure C and C++ projects using the exported package.
+
+FFmpeg discovery first accepts pkg-config and also accepts `-DDIGITOR_FFMPEG_ROOT=/sdk/ffmpeg`. Linux users
+install their distribution's `libavcodec`, `libavformat`, `libavutil`, `libswscale`, and `libswresample`
+development packages. Homebrew `ffmpeg` plus `pkg-config` is supported on macOS. A Windows SDK root must
+contain `include/libavcodec/avcodec.h` and `lib` (or `lib64`) import/static libraries named `avcodec`,
+`avformat`, `avutil`, `swscale`, and `swresample` (optional `lib` prefix). Shared deployments must copy the
+matching FFmpeg runtime DLLs beside the application. On macOS deploy matching dylibs with corrected
+`@rpath` install names or require the Homebrew runtime. Configuration never downloads or vendors binaries.
+The summary says “enabled and linked”, “unavailable”, or fails when `DIGITOR_REQUIRE_FFMPEG=ON`.
+
+Engine compilation requires only the five development libraries, exposed to CMake as
+`DIGITOR_FFMPEG_LIBRARIES`; it never requires the `ffmpeg` command-line program. The independently
+discovered `DIGITOR_FFMPEG_CLI` is optional. Set `-DDIGITOR_GENERATE_TEST_MEDIA=ON` to require that
+program and generate the optional MP4/MOV/MKV/WAV fixture set. The option defaults to `OFF`; without
+the CLI, media tests continue with repository-owned Y4M/WAV source fixtures and malformed input.
+
+Generated media fixtures are created by `scripts/generate_media_fixtures.sh` from FFmpeg lavfi sources;
+MP4/H.264, MOV, MKV, WAV, and malformed inputs are never opaque checked-in binaries. Determinism and future
+plugin design are specified in [deterministic rendering](docs/deterministic_rendering.md) and
+[plugin architecture](docs/plugin_architecture.md). Current qualification limits are in
+[production readiness](docs/production_readiness.md); long-term ABI stability is not claimed.

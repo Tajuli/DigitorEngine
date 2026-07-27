@@ -3,6 +3,7 @@
 #include <array>
 #include <algorithm>
 #include <cstring>
+#include "core/string_utils.hpp"
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -57,12 +58,7 @@ DigitorResult IRenderBackend::render_rgba8(uint32_t, uint32_t,
 }
 namespace {
 
-void copy_text(char* destination, std::size_t size, const char* source) {
-    if (source != nullptr && size != 0) {
-        std::strncpy(destination, source, size - 1);
-        destination[size - 1] = '\0';
-    }
-}
+
 
 class DeviceBackend final : public IRenderBackend {
 public:
@@ -78,8 +74,8 @@ private:
                               const char* device_name, bool compute, bool fp16) {
     DigitorRendererInfo info{};
     info.backend = backend;
-    copy_text(info.backend_name, sizeof(info.backend_name), backend_name);
-    copy_text(info.device_name, sizeof(info.device_name), device_name);
+    copy_bounded(info.backend_name, backend_name != nullptr ? std::string_view(backend_name) : std::string_view{});
+    copy_bounded(info.device_name, device_name != nullptr ? std::string_view(device_name) : std::string_view{});
     info.is_gpu = 1;
     info.supports_compute = compute;
     info.supports_fp16 = fp16;

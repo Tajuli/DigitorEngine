@@ -1,9 +1,15 @@
 # Media decoding
 
 DigitorEngine's optional media subsystem is a real FFmpeg demux/software-decode path. CMake uses
-pkg-config to discover **libavformat, libavcodec, libavutil, libswscale, and libswresample** as one
-imported target. `DIGITOR_REQUIRE_FFMPEG=ON` is recommended for distributions that promise media
-support; the API throws a clear build-capability error otherwise.
+pkg-config or `DIGITOR_FFMPEG_ROOT` to discover **libavformat, libavcodec, libavutil, libswscale,
+and libswresample** as one imported target. The concrete library result is available as
+`DIGITOR_FFMPEG_LIBRARIES`. `DIGITOR_REQUIRE_FFMPEG=ON` is recommended for distributions that
+promise media support; the API throws a clear build-capability error otherwise.
+
+The engine never depends on the `ffmpeg` command-line executable. CMake discovers it separately
+as the optional `DIGITOR_FFMPEG_CLI`. `DIGITOR_GENERATE_TEST_MEDIA` defaults to `OFF`; enabling it
+requires the CLI and generates MP4/MOV/MKV/WAV test containers. With generation disabled, media
+tests use the repository-owned deterministic Y4M/WAV source fixtures and malformed fixture.
 
 `open_video_decoder` and `open_audio_decoder` open and probe the container and use FFmpeg's best
 stream selection. Decoding uses the send-packet/receive-frame state machine, skips unrelated

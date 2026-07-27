@@ -1,4 +1,12 @@
-# Implementation status audit
+# Implementation status
+
+> **Stabilization qualification update:** Desktop GCC/Clang/MSVC/Apple Clang Debug/Release and
+> static/shared jobs, strict engine warnings, required/disabled FFmpeg jobs, sanitizers, installation,
+> and installed C/C++ consumers are now configured in CI. Generated FFmpeg tests cover MP4/H.264, MOV,
+> MKV, WAV, seek/decode/timestamps/EOF and malformed input. This is configured evidence until each job
+> completes on the associated runner; hardware GPU verification remains separate. See
+> `production_readiness.md` for the controlling status vocabulary and current ABI limitations.
+ audit
 
 **Audit baseline:** v2 audit commit `4ae03d4`, formerly reporting `2.0.0`.
 The v3 scoped native-preview changes are documented in `docs/native_gpu_pipeline.md`.

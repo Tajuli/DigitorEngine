@@ -1,4 +1,5 @@
 #include "digitor/renderer.hpp"
+#include "core/numeric_utils.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -9,8 +10,8 @@ namespace {
 void compatible(const VideoFrame&a,const VideoFrame&b){if(a.width!=b.width||a.height!=b.height||a.pixels.size()!=b.pixels.size())throw std::invalid_argument("incompatible frames");}
 double channel(const Color&p,int c){return c==0?p.r:c==1?p.g:c==2?p.b:p.a;}
 }
-double calculate_psnr(const VideoFrame&a,const VideoFrame&b){compatible(a,b);if(a.pixels.empty())return std::numeric_limits<double>::infinity();double error=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<4;++c){const double d=channel(a.pixels[i],c)-channel(b.pixels[i],c);error+=d*d;}error/=a.pixels.size()*4;if(error==0)return std::numeric_limits<double>::infinity();return 10*std::log10(1/error);}
-double calculate_ssim(const VideoFrame&a,const VideoFrame&b){compatible(a,b);if(a.pixels.empty())return 1;const size_t n=a.pixels.size()*3;double mx=0,my=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<3;++c){mx+=channel(a.pixels[i],c);my+=channel(b.pixels[i],c);}mx/=n;my/=n;double vx=0,vy=0,cov=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<3;++c){double x=channel(a.pixels[i],c)-mx,y=channel(b.pixels[i],c)-my;vx+=x*x;vy+=y*y;cov+=x*y;}const double divisor=n>1?n-1:1;vx/=divisor;vy/=divisor;cov/=divisor;constexpr double c1=.01*.01,c2=.03*.03;return ((2*mx*my+c1)*(2*cov+c2))/((mx*mx+my*my+c1)*(vx+vy+c2));}
+double calculate_psnr(const VideoFrame&a,const VideoFrame&b){compatible(a,b);if(a.pixels.empty())return std::numeric_limits<double>::infinity();double error=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<4;++c){const double d=channel(a.pixels[i],c)-channel(b.pixels[i],c);error+=d*d;}error/=checked_size_to_double(a.pixels.size())*4.0;if(error==0)return std::numeric_limits<double>::infinity();return 10*std::log10(1/error);}
+double calculate_ssim(const VideoFrame&a,const VideoFrame&b){compatible(a,b);if(a.pixels.empty())return 1;const size_t n=a.pixels.size()*3;double mx=0,my=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<3;++c){mx+=channel(a.pixels[i],c);my+=channel(b.pixels[i],c);}const double sample_count=checked_size_to_double(n);mx/=sample_count;my/=sample_count;double vx=0,vy=0,cov=0;for(size_t i=0;i<a.pixels.size();++i)for(int c=0;c<3;++c){double x=channel(a.pixels[i],c)-mx,y=channel(b.pixels[i],c)-my;vx+=x*x;vy+=y*y;cov+=x*y;}const double divisor=checked_size_to_double(n>1?n-1:1);vx/=divisor;vy/=divisor;cov/=divisor;constexpr double c1=.01*.01,c2=.03*.03;return ((2*mx*my+c1)*(2*cov+c2))/((mx*mx+my*my+c1)*(vx+vy+c2));}
 PixelValidation validate_pixels(const VideoFrame&a,const VideoFrame&b,double p,double s){compatible(a,b);PixelValidation r;r.psnr=calculate_psnr(a,b);r.ssim=calculate_ssim(a,b);for(size_t i=0;i<a.pixels.size();++i)if(a.pixels[i].r!=b.pixels[i].r||a.pixels[i].g!=b.pixels[i].g||a.pixels[i].b!=b.pixels[i].b||a.pixels[i].a!=b.pixels[i].a)++r.differing_pixels;r.passed=r.psnr>=p&&r.ssim>=s;return r;}
 PixelValidation validate_preview_export(SharedRenderer&r,const RenderRequest&q,double p,double s){auto preencode=r.render(q);const VideoFrame preview=preencode;return validate_pixels(preview,preencode,p,s);}
 }
