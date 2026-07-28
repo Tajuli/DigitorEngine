@@ -18,7 +18,6 @@ struct GlPipelineOwner { GLuint program{};EGLContext context{};~GlPipelineOwner(
 struct GlConsumerOwner { GLuint texture{},framebuffer{};EGLContext context{};
  ~GlConsumerOwner(){if(eglGetCurrentContext()==context){if(framebuffer)glDeleteFramebuffers(1,&framebuffer);if(texture)glDeleteTextures(1,&texture);}}
 };
-GLuint compile_gl(GLenum type,const char*source){GLuint x=glCreateShader(type);glShaderSource(x,1,&source,nullptr);glCompileShader(x);GLint ok=0;glGetShaderiv(x,GL_COMPILE_STATUS,&ok);if(!ok){glDeleteShader(x);return 0;}return x;}
 bool has_gl_extension(const char* required) noexcept {
   GLint count = 0;
   glGetIntegerv(GL_NUM_EXTENSIONS, &count);
@@ -32,8 +31,21 @@ bool has_gl_extension(const char* required) noexcept {
 }
 class GlBackend final : public IRenderBackend {
   NativePipelineCache pipeline_cache_{8};
+  GLuint compile_gl(GLenum type,const char*source) noexcept {
+    const auto creation = type == GL_VERTEX_SHADER ? GpuFailurePoint::VertexShaderCreation
+                                                    : GpuFailurePoint::FragmentShaderCreation;
+    const auto compilation = type == GL_VERTEX_SHADER ? GpuFailurePoint::VertexShaderCompilation
+                                                       : GpuFailurePoint::FragmentShaderCompilation;
+    if(inject_at(creation,type==GL_VERTEX_SHADER?"glCreateShader(vertex)":"glCreateShader(fragment)")!=DIGITOR_RESULT_OK)return 0;
+    GLuint x=glCreateShader(type);
+    if(!x)return 0;
+    glShaderSource(x,1,&source,nullptr);
+    if(inject_at(compilation,type==GL_VERTEX_SHADER?"glCompileShader(vertex)":"glCompileShader(fragment)")!=DIGITOR_RESULT_OK){glDeleteShader(x);return 0;}
+    glCompileShader(x);GLint ok=0;glGetShaderiv(x,GL_COMPILE_STATUS,&ok);
+    if(!ok){glDeleteShader(x);return 0;}return x;
+  }
   std::shared_ptr<GlPipelineOwner> color_program(bool curves,const char*vs,const char*fs)noexcept{
-    auto context=eglGetCurrentContext();std::string identity=curves?"rgb-curves:gles3:nearest-clamp":"primary-wheels:gles3:nearest-clamp";if(gpu_failure_point()==GpuFailurePoint::PipelineCreation)identity += ":injected-create";NativePipelineCacheKey key{DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(context),identity,1,GpuPrecisionMode::Float32,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};return std::static_pointer_cast<GlPipelineOwner>(pipeline_cache_.get_or_create(key,[&]()->NativePipelineCache::Object{if(gpu_failure_point()==GpuFailurePoint::ShaderCompilation){(void)injected_failure(GpuFailurePoint::ShaderCompilation);return {};}GLuint v=compile_gl(GL_VERTEX_SHADER,vs),f=compile_gl(GL_FRAGMENT_SHADER,fs);if(!v||!f){if(v)glDeleteShader(v);if(f)glDeleteShader(f);return {};}auto owner=std::make_shared<GlPipelineOwner>();owner->context=context;if(gpu_failure_point()==GpuFailurePoint::PipelineCreation){(void)injected_failure(GpuFailurePoint::PipelineCreation);return {};}owner->program=glCreateProgram();glAttachShader(owner->program,v);glAttachShader(owner->program,f);glLinkProgram(owner->program);glDeleteShader(v);glDeleteShader(f);GLint linked{};glGetProgramiv(owner->program,GL_LINK_STATUS,&linked);if(!linked)return {};return std::static_pointer_cast<void>(owner); }));
+    auto context=eglGetCurrentContext();std::string identity=curves?"rgb-curves:gles3:nearest-clamp":"primary-wheels:gles3:nearest-clamp";if(gpu_failure_point()!=GpuFailurePoint::None)identity += ":injected-create:"+std::string(gpu_failure_point_name(gpu_failure_point()));NativePipelineCacheKey key{DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(context),identity,1,GpuPrecisionMode::Float32,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};return std::static_pointer_cast<GlPipelineOwner>(pipeline_cache_.get_or_create(key,[&]()->NativePipelineCache::Object{GLuint v=compile_gl(GL_VERTEX_SHADER,vs),f=compile_gl(GL_FRAGMENT_SHADER,fs);if(!v||!f){if(v)glDeleteShader(v);if(f)glDeleteShader(f);return {};}auto owner=std::make_shared<GlPipelineOwner>();owner->context=context;if(inject_at(GpuFailurePoint::ProgramCreation,"glCreateProgram")!=DIGITOR_RESULT_OK){glDeleteShader(v);glDeleteShader(f);return {};}owner->program=glCreateProgram();if(!owner->program)return {};glAttachShader(owner->program,v);glAttachShader(owner->program,f);if(inject_at(GpuFailurePoint::ProgramLink,"glLinkProgram")!=DIGITOR_RESULT_OK){glDeleteShader(v);glDeleteShader(f);return {};}glLinkProgram(owner->program);glDeleteShader(v);glDeleteShader(f);GLint linked{};glGetProgramiv(owner->program,GL_LINK_STATUS,&linked);if(!linked)return {};return std::static_pointer_cast<void>(owner); }));
   }
   DigitorRendererInfo i_{};
   bool fp32_renderable_{};
@@ -281,8 +293,6 @@ public:
                            "GL program:grade-v1");
     if (!fp32_renderable_)
       return DIGITOR_RESULT_UNSUPPORTED;
-    if (gpu_failure_point() != GpuFailurePoint::None)
-      return injected_failure(gpu_failure_point());
     if (src.size() != out.size())
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (src.empty())
@@ -390,7 +400,7 @@ public:
     begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,
       "OpenGL ES driver compiler","rgb-curves-glsl-es-v1","GL program:rgb-curves-v1");
     if(!fp32_renderable_)return DIGITOR_RESULT_UNSUPPORTED;
-    if(gpu_failure_point()!=GpuFailurePoint::None&&gpu_failure_point()!=GpuFailurePoint::ShaderCompilation&&gpu_failure_point()!=GpuFailurePoint::PipelineCreation)return injected_failure(gpu_failure_point());
+
     if(src.size()!=out.size())return DIGITOR_RESULT_INVALID_ARGUMENT;if(src.empty())return DIGITOR_RESULT_OK;int pixel_count=0,lut_size=0;if(!checked_size_to_int(src.size(),pixel_count)||!checked_size_to_int(cc.lut_size(),lut_size))return DIGITOR_RESULT_INVALID_ARGUMENT;
     const char*vs="#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
     const char*fs="#version 300 es\nprecision highp float;precision highp int;in vec2 uv;uniform sampler2D im,lut;uniform vec4 meta0[4],meta1[4];uniform int lutSize;out vec4 color;float cv(int k,float x){vec4 a=meta0[k],b=meta1[k];if(b.w==0.||isnan(x)||isinf(x))return x;if(x<a.x)return b.z==2.?a.z+b.x*(x-a.x):a.z;if(x>a.y)return b.z==2.?a.w+b.y*(x-a.y):a.w;float u=(x-a.x)/(a.y-a.x)*float(lutSize-1);float i=floor(u);return mix(texelFetch(lut,ivec2(int(i),k),0).r,texelFetch(lut,ivec2(min(int(i)+1,lutSize-1),k),0).r,u-i);}void main(){vec4 c=texture(im,uv);float a=c.a;c.r=cv(0,c.r);c.g=cv(0,c.g);c.b=cv(0,c.b);c.r=cv(1,c.r);c.g=cv(2,c.g);c.b=cv(3,c.b);color=vec4(c.rgb,a);}";
