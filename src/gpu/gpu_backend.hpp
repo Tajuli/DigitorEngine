@@ -14,6 +14,8 @@
 #include "gpu/execution_provenance.hpp"
 #include "digitor/gpu_frame.hpp"
 #include "gpu/gpu_source.hpp"
+#include "gpu/preview_consumer.hpp"
+#include "gpu/native_pipeline_cache.hpp"
 #include "platform/platform.hpp"
 
 namespace digitor {
@@ -66,9 +68,12 @@ public:
   DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
       std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
+  DigitorResult create_preview_consumer(const ProcessedGpuFramePtr&,
+      std::shared_ptr<PreviewConsumerDestination>&) noexcept;
   [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
     return provenance_;
   }
+  [[nodiscard]] virtual NativePipelineCacheCounters native_pipeline_cache_counters() const noexcept { return {}; }
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
@@ -85,6 +90,8 @@ protected:
   virtual DigitorResult execute_validation_readback_primary_wheels(
       const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_create_preview_consumer(const ProcessedGpuFramePtr&,
+      std::shared_ptr<PreviewConsumerDestination>&) noexcept;
   void begin_grade_provenance(DigitorRendererBackend backend, bool gpu,
                               const char *device, const char *compiler,
                               const char *shader, const char *pipeline) noexcept;
