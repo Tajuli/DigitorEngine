@@ -15,12 +15,35 @@ jobs:
       - name: Configure and build D3D12/Vulkan qualification
         shell: pwsh
         run: |
-          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON 2>&1 | Tee-Object qualification/windows-configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build --config Release --target digitor_native_gpu_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build --config Release --target digitor_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build/Release/digitor_tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Execute native qualification
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force qualification | Out-Null
+          $compiler = 'unavailable'
+          $compilerFile = Get-ChildItem build/CMakeFiles -Recurse -Filter CMakeCXXCompiler.cmake -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($compilerFile) {
+            $contents = Get-Content $compilerFile.FullName -Raw
+            $id = [regex]::Match($contents, 'set\(CMAKE_CXX_COMPILER_ID "([^"]+)"\)').Groups[1].Value
+            $version = [regex]::Match($contents, 'set\(CMAKE_CXX_COMPILER_VERSION "([^"]+)"\)').Groups[1].Value
+            if ($id) { $compiler = if ($version) { "$id $version" } else { $id } }
+          }
+          @(
+            "commit=$(git rev-parse HEAD)"
+            "dirty=$([bool](git status --porcelain))"
+            "compiler=$compiler"
+            'build_type=Release'
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content qualification/windows-build.txt
           $env:DIGITOR_GPU_VALIDATION='1'
           & build/Release/digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification/windows-native.log
           if ($LASTEXITCODE -eq 77) { '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification/windows-native.json; exit 77 }
@@ -34,11 +57,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON && cmake --build build --target digitor_native_gpu_tests -j2
+      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build --target digitor_native_gpu_tests digitor_tests -j2 && ./build/digitor_tests
       - name: Execute Metal qualification
         shell: bash
         run: |
           mkdir -p qualification; set +e
+          printf 'commit=%s\ndirty=%s\ncompiler=%s\nbuild_type=Release\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" "$(c++ --version | head -1)" > qualification/macos-build.txt
           DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
           rc=${PIPESTATUS[0]}; set -e
           case "$rc" in 0) status=executed-passed;; 77) status=hardware-unavailable;; *) status=failed;; esac
@@ -63,6 +87,7 @@ jobs:
           cmake --build build-android --target digitor_native_gpu_tests -j2 2>&1 | tee android-compile-link.log
           mkdir -p qualification
           mv android-compile-link.log qualification/
+          printf 'commit=%s\ndirty=%s\nabi=arm64-v8a\nplatform=android-28\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" > qualification/android-build.txt
           printf '{"status":"compile-link-only","runtime":"hardware-unverified"}\n' > qualification/android.json
       - if: always()
         uses: actions/upload-artifact@v4

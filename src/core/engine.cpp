@@ -152,6 +152,8 @@ DigitorResult Engine::process_curves_gpu(std::span<const Color> source,
   return backend_->process_curves_gpu(source,width,height,timestamp,curves,out);
 }
 DigitorResult Engine::process_primary_wheels_gpu(std::span<const Color>s,std::uint32_t w,std::uint32_t h,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out){std::lock_guard lock(mutex_);out.reset();if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->process_primary_wheels_gpu(s,w,h,ts,p,out);}
+DigitorResult Engine::process_curves_gpu(const ProcessedGpuFramePtr&s,std::int64_t ts,const CompiledRgbCurves&c,ProcessedGpuFramePtr&out){std::lock_guard lock(mutex_);out.reset();if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->process_curves_gpu(backend_->gpu_source(s),ts,c,out);}
+DigitorResult Engine::process_primary_wheels_gpu(const ProcessedGpuFramePtr&s,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out){std::lock_guard lock(mutex_);out.reset();if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->process_primary_wheels_gpu(backend_->gpu_source(s),ts,p,out);}
 DigitorResult Engine::present_gpu_frame(const ProcessedGpuFramePtr& frame) {
   std::scoped_lock lock(mutex_);
   if (!initialized_ || !backend_) return DIGITOR_RESULT_NOT_INITIALIZED;

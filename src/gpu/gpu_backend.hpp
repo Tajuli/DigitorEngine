@@ -13,13 +13,15 @@
 #include "digitor/primary_wheels.hpp"
 #include "gpu/execution_provenance.hpp"
 #include "digitor/gpu_frame.hpp"
+#include "gpu/gpu_source.hpp"
 #include "platform/platform.hpp"
 
 namespace digitor {
 
 class IRenderBackend {
 public:
-  virtual ~IRenderBackend() = default;
+  IRenderBackend();
+  virtual ~IRenderBackend();
 
   virtual bool initialize(bool enable_validation) = 0;
   virtual void shutdown() noexcept = 0;
@@ -58,6 +60,9 @@ public:
                                    ProcessedGpuFramePtr& out) noexcept;
   DigitorResult process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,
       std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
+  [[nodiscard]] GpuSourceResource gpu_source(const ProcessedGpuFramePtr&) const noexcept;
+  DigitorResult process_curves_gpu(const GpuSourceResource&,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&) noexcept;
+  DigitorResult process_primary_wheels_gpu(const GpuSourceResource&,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
       std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
@@ -75,6 +80,8 @@ protected:
       const CompiledRgbCurves&, ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,
       std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_curves_gpu(const GpuSourceResource&,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_primary_wheels_gpu(const GpuSourceResource&,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_validation_readback_primary_wheels(
       const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
@@ -83,6 +90,9 @@ protected:
                               const char *shader, const char *pipeline) noexcept;
   DigitorResult injected_failure(GpuFailurePoint point) noexcept;
   ExecutionProvenance provenance_{};
+private:
+  std::shared_ptr<GpuContextLifetime> context_lifetime_;
+  std::uint64_t context_identity_{};
 };
 
 [[nodiscard]] bool gpu_validation_requested() noexcept;

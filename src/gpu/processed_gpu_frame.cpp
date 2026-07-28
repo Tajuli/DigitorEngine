@@ -14,6 +14,7 @@ DigitorResult ProcessedGpuFrame::acquire(const void* context,
                                          DigitorRendererBackend consumer) noexcept {
   if (!context || context != context_ || consumer != backend_)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  if (!context_live()) return DIGITOR_RESULT_NOT_INITIALIZED;
   if (!native_ || !ready()) return DIGITOR_RESULT_RESOURCE_IN_USE;
   acquisitions_.fetch_add(1, std::memory_order_acq_rel);
   return DIGITOR_RESULT_OK;
@@ -31,7 +32,21 @@ DigitorResult ProcessedGpuFrame::release(const void* context) noexcept {
 }
 
 bool ProcessedGpuFrame::ready() const noexcept {
-  return ready_ && ready_->load(std::memory_order_acquire);
+  return context_live() && ready_ && ready_->load(std::memory_order_acquire);
+}
+
+bool ProcessedGpuFrame::context_live() const noexcept {
+  const auto lifetime = context_lifetime_.lock();
+  // Unbound frames are retained for source compatibility with callers that
+  // construct standalone test resources. Backend-produced frames are bound by
+  // IRenderBackend before they are returned.
+  return !context_lifetime_bound_ || (lifetime && lifetime->live());
+}
+
+void ProcessedGpuFrame::bind_context_lifetime(
+    const std::shared_ptr<GpuContextLifetime>& lifetime) noexcept {
+  context_lifetime_ = lifetime;
+  context_lifetime_bound_ = true;
 }
 
 } // namespace digitor
