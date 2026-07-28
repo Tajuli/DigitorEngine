@@ -1,6 +1,7 @@
 #include "digitor/primary_wheels.hpp"
 #include "digitor/rgb_curves.hpp"
 #include "gpu/gpu_backend.hpp"
+#include "gpu/native_primary_wheels.hpp"
 #include <cassert>
 #include <cmath>
 #include <limits>
@@ -12,6 +13,7 @@ void test_primary_wheels(){using namespace digitor;
  Color a{-.25f,1.5f,.5f,.37f};auto b=apply_primary_wheels_reference(a,*identity);assert(b.r==a.r&&b.g==a.g&&b.b==a.b&&b.a==a.a);
  assert(primary_wheels_reference_count()==1);
  PrimaryWheelsDescriptor d;d.lift={.1f,0,0};d.gamma={2,1,1};d.gain={1,2,1};d.offset={0,0,.25f};auto p=PrimaryWheelsParameters::create(d);b=apply_primary_wheels_reference(a,*p);
+ auto native_parameters=native_primary_wheels_parameters(*p,15,3,5);assert(native_parameters.lift[0]==.1f&&native_parameters.gamma[0]==2&&native_parameters.gain[1]==2&&native_parameters.offset[2]==.25f&&native_parameters.enabled[0]==1&&native_parameters.pixel_count==15&&native_parameters.width==3&&native_parameters.height==5);
  assert(std::abs(b.r+std::sqrt(.15f))<1e-6f&&b.g==3&&b.b==.75f&&b.a==a.a);
  d.lift_enabled=false;d.gamma_enabled=false;d.gain_enabled=false;d.offset_enabled=false;assert(PrimaryWheelsParameters::create(d)->is_identity());
  d= {};d.lift_master=.1f;d.gamma_master=2;d.gain_master=2;d.offset_master=-.1f;p=PrimaryWheelsParameters::create(d);b=apply_primary_wheels_reference({.15f,.15f,.15f,.2f},*p);assert(b.r==b.g&&b.g==b.b&&b.a==.2f);
