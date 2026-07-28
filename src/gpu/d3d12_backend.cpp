@@ -317,6 +317,13 @@ class D3DBackend final : public IRenderBackend {
     return true;
   }
   bool prepare_commands(ID3D12PipelineState *pso) noexcept {
+    // A stage-injection failure may return while the command list is still
+    // recording. Close that abandoned recording before resetting so the next
+    // recovery attempt is not poisoned by E_FAIL from Reset.
+    if (command_list_open_) {
+      (void)list_->Close();
+      command_list_open_ = false;
+    }
     if (FAILED(
             injected_hresult(GpuFailurePoint::CommandAllocatorResetOrCreation,
                              "ID3D12CommandAllocator::Reset")))
@@ -326,7 +333,10 @@ class D3DBackend final : public IRenderBackend {
     if (FAILED(injected_hresult(GpuFailurePoint::CommandBufferOrListBeginReset,
                                 "ID3D12GraphicsCommandList::Reset")))
       return false;
-    return SUCCEEDED(list_->Reset(allocator_.Get(), pso));
+    if (FAILED(list_->Reset(allocator_.Get(), pso)))
+      return false;
+    command_list_open_ = true;
+    return true;
   }
   bool record_stage(GpuFailurePoint p, const char *op) noexcept {
     return SUCCEEDED(injected_hresult(p, op));
@@ -334,7 +344,12 @@ class D3DBackend final : public IRenderBackend {
   HRESULT close_commands() noexcept {
     auto hr = injected_hresult(GpuFailurePoint::CommandBufferOrListClose,
                                "ID3D12GraphicsCommandList::Close");
-    return FAILED(hr) ? hr : list_->Close();
+    if (FAILED(hr))
+      return hr;
+    hr = list_->Close();
+    if (SUCCEEDED(hr))
+      command_list_open_ = false;
+    return hr;
   }
   HRESULT execute_commands() noexcept {
     if (provenance_.failure_result != DIGITOR_RESULT_OK)
@@ -2093,6 +2108,7 @@ private:
   ComPtr<ID3D12CommandQueue> queue_;
   ComPtr<ID3D12CommandAllocator> allocator_;
   ComPtr<ID3D12GraphicsCommandList> list_;
+  bool command_list_open_{};
   ComPtr<ID3D12Fence> fence_;
   UniqueHandle fence_event_;
   UINT64 fence_value_{};
