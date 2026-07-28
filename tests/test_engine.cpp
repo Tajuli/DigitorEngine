@@ -136,7 +136,18 @@ int main() {
       assert(backend.render_rgba8(1, 1, input, output) == DIGITOR_RESULT_OK);
       assert(output == input);
       assert(backend.render_rgba8(1, 1, {}, output) == DIGITOR_RESULT_OK);
-      assert((output == std::vector<uint8_t>{0,0,0,255})); }
+      assert((output == std::vector<uint8_t>{0,0,0,255}));
+      output = {9};
+      assert(backend.render_rgba8(UINT32_MAX, UINT32_MAX, {}, output) ==
+             DIGITOR_RESULT_INVALID_ARGUMENT);
+      assert((output == std::vector<uint8_t>{9})); }
+
+    DigitorEngineConfig invalid_config{static_cast<DigitorRendererBackend>(99), 0, 1};
+    assert(digitor_initialize(&invalid_config) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    invalid_config = {DIGITOR_RENDERER_CPU, 2, 1};
+    assert(digitor_initialize(&invalid_config) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    invalid_config = {DIGITOR_RENDERER_CPU, 0, 2};
+    assert(digitor_initialize(&invalid_config) == DIGITOR_RESULT_INVALID_ARGUMENT);
 
     DigitorEngineConfig config{DIGITOR_RENDERER_CPU, 0, 1};
     assert(digitor_initialize(&config) == DIGITOR_RESULT_OK);

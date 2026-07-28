@@ -194,7 +194,7 @@ private:
   return info;
 }
 
-std::optional<DigitorRendererInfo> discover(DigitorRendererBackend backend) {
+[[maybe_unused]] std::optional<DigitorRendererInfo> discover(DigitorRendererBackend backend) {
 #if defined(_WIN32)
   if (backend == DIGITOR_RENDERER_VULKAN) {
 #if defined(DIGITOR_WINDOWS_VULKAN)
@@ -407,10 +407,10 @@ create_gpu_backend(DigitorRendererBackend preferred) {
   return select_gpu_backend(
       current_platform(), preferred,
       [](DigitorRendererBackend backend) -> std::unique_ptr<IRenderBackend> {
-        if (auto native = create_native_backend(backend))
-          return native;
-        auto info = discover(backend);
-        return info ? std::make_unique<DeviceBackend>(*info) : nullptr;
+        // Adapter discovery alone is not a rendering backend. Returning a
+        // probe-only DeviceBackend here used to let initialization claim a GPU
+        // while every resource and rendering operation was unsupported.
+        return create_native_backend(backend);
       });
 }
 } // namespace digitor

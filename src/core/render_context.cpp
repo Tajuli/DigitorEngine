@@ -18,11 +18,12 @@ constexpr uint32_t kBufferUsageMask = DIGITOR_BUFFER_USAGE_UNIFORM |
 DigitorRendererBackend RenderContext::backend_info() const noexcept { return backend_.info().backend; }
 
 DigitorResult RenderContext::create_texture(const DigitorTextureDesc& desc, Texture** out_texture) {
-    if (out_texture == nullptr || desc.width == 0 || desc.height == 0 || desc.usage == 0 ||
+    if (out_texture == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_texture = nullptr;
+    if (desc.width == 0 || desc.height == 0 || desc.usage == 0 ||
         (desc.usage & ~kTextureUsageMask) != 0) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    *out_texture = nullptr;
     std::size_t bytes_per_pixel = 0;
     switch (desc.format) {
         case DIGITOR_PIXEL_FORMAT_RGBA8_UNORM:
@@ -51,11 +52,12 @@ DigitorResult RenderContext::create_texture(const DigitorTextureDesc& desc, Text
 }
 
 DigitorResult RenderContext::create_buffer(const DigitorBufferDesc& desc, Buffer** out_buffer) {
-    if (out_buffer == nullptr || desc.size == 0 || desc.usage == 0 ||
+    if (out_buffer == nullptr) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    *out_buffer = nullptr;
+    if (desc.size == 0 || desc.usage == 0 ||
         (desc.usage & ~kBufferUsageMask) != 0 || desc.size > std::numeric_limits<std::size_t>::max()) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    *out_buffer = nullptr;
     void* native = nullptr;
     if (backend_info() != DIGITOR_RENDERER_CPU) {
         const auto result = backend_.create_buffer(desc, &native);

@@ -2,6 +2,8 @@
 
 #include "core/string_utils.hpp"
 
+#include <limits>
+
 namespace digitor {
 
 bool CpuBackend::initialize(bool enable_validation) {
@@ -28,9 +30,11 @@ DigitorResult
 CpuBackend::render_rgba8(uint32_t width, uint32_t height,
                          std::span<const uint8_t> source,
                          std::vector<uint8_t> &destination) noexcept {
-  const auto size = static_cast<std::size_t>(width) * height * 4;
-  if (!width || !height || (!source.empty() && source.size() != size))
+  if (!width || !height ||
+      width > std::numeric_limits<std::size_t>::max() / height / 4u)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto size = static_cast<std::size_t>(width) * height * 4u;
+  if (!source.empty() && source.size() != size) return DIGITOR_RESULT_INVALID_ARGUMENT;
   try {
     destination.assign(size, 0);
     if (!source.empty())
