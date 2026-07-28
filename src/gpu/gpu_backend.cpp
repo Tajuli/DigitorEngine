@@ -164,6 +164,13 @@ DigitorResult IRenderBackend::present_gpu_frame(const ProcessedGpuFramePtr& fram
   provenance_.direct_preview_consumed = result == DIGITOR_RESULT_OK;
   return result;
 }
+DigitorResult IRenderBackend::create_preview_consumer(const ProcessedGpuFramePtr& frame,
+    std::shared_ptr<PreviewConsumerDestination>& out) noexcept {
+  out.reset();
+  if (!frame || !frame->ready() || frame->backend() != info().backend)
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  return execute_create_preview_consumer(frame, out);
+}
 DigitorResult IRenderBackend::process_primary_wheels_gpu(std::span<const Color>s,std::uint32_t w,std::uint32_t h,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out)noexcept{
  out.reset();const auto before=primary_wheels_reference_count();
  if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
@@ -194,6 +201,10 @@ DigitorResult IRenderBackend::execute_process_curves_gpu(
 }
 DigitorResult IRenderBackend::execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept {
   return DIGITOR_RESULT_UNSUPPORTED;
+}
+DigitorResult IRenderBackend::execute_create_preview_consumer(
+    const ProcessedGpuFramePtr&, std::shared_ptr<PreviewConsumerDestination>& out) noexcept {
+  out.reset(); return DIGITOR_RESULT_UNSUPPORTED;
 }
 namespace {
 

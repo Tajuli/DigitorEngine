@@ -234,7 +234,71 @@ int main() {
         const auto info = backend->info();
         std::cerr << "DEVICE backend=" << entry.second << " identity=\"" << info.device_name << "\"\n";
         all_passed &= exercise(*backend, entry.second);
+        const auto populated_cache=backend->native_pipeline_cache_counters();
+        const bool cache_reused=populated_cache.lookups>=3&&populated_cache.misses>=2&&
+            populated_cache.hits>=1&&populated_cache.creations>=2;
+        std::cerr<<"NATIVE_CACHE backend="<<entry.second<<" lookups="<<populated_cache.lookups
+                 <<" misses="<<populated_cache.misses<<" hits="<<populated_cache.hits
+                 <<" creations="<<populated_cache.creations<<" evictions="<<populated_cache.evictions
+                 <<" invalidations="<<populated_cache.invalidations
+                 <<" creation_failures="<<populated_cache.creation_failures
+                 <<" status="<<(cache_reused?"PASS":"FAIL")<<'\n';
+        all_passed&=cache_reused;
+        std::vector<digitor::Color> retirement_input(4,{.2f,.4f,.6f,1.f});
+        auto retirement_parameters=digitor::PrimaryWheelsParameters::create();
+        digitor::ProcessedGpuFramePtr retained;
+        const auto retirement_produce=backend->process_primary_wheels_gpu(
+            retirement_input,2,2,901,*retirement_parameters,retained);
+        std::shared_ptr<digitor::PreviewConsumerDestination> native_consumer;
+        const auto consumer_create=backend->create_preview_consumer(retained,native_consumer);
+        const auto consumer_submit=native_consumer?native_consumer->submit(retained):DIGITOR_RESULT_INTERNAL_ERROR;
+        const bool consumer_qualified=consumer_create==DIGITOR_RESULT_OK&&
+            consumer_submit==DIGITOR_RESULT_OK&&native_consumer->submission_count()==1&&
+            backend->execution_provenance().normal_preview_readback_count==0;
+        std::cerr<<"NATIVE_CONSUMER backend="<<entry.second
+                 <<" submissions="<<(native_consumer?native_consumer->submission_count():0)
+                 <<" processed_readback="<<backend->execution_provenance().normal_preview_readback_count
+                 <<" status="<<(consumer_qualified?"PASS":"FAIL")<<'\n';
+        all_passed&=consumer_qualified;
+        digitor::set_gpu_failure_point(digitor::GpuFailurePoint::PreviewAcquisition);
+        std::shared_ptr<digitor::PreviewConsumerDestination> failed_consumer;
+        const bool acquisition_failure=backend->create_preview_consumer(retained,failed_consumer)!=DIGITOR_RESULT_OK&&!failed_consumer;
+        digitor::set_gpu_failure_point(digitor::GpuFailurePoint::PreviewPresentation);
+        const bool submission_failure=native_consumer->submit(retained)!=DIGITOR_RESULT_OK&&native_consumer->submission_count()==1;
+        digitor::set_gpu_failure_point(digitor::GpuFailurePoint::None);
+        std::shared_ptr<digitor::PreviewConsumerDestination> recovery_consumer;
+        const bool consumer_recovery=backend->create_preview_consumer(retained,recovery_consumer)==DIGITOR_RESULT_OK&&
+            recovery_consumer&&recovery_consumer->submit(retained)==DIGITOR_RESULT_OK;
+        std::cerr<<"CONSUMER_FAILURE_INJECTION backend="<<entry.second
+                 <<" acquisition="<<acquisition_failure<<" submission="<<submission_failure
+                 <<" recovery="<<consumer_recovery<<'\n';
+        all_passed&=acquisition_failure&&submission_failure&&consumer_recovery;
+        const void* retired_context=backend.get();
         backend->shutdown();
+        const auto retired_cache=backend->native_pipeline_cache_counters();
+        const bool cache_invalidated=retired_cache.invalidations>=populated_cache.creations;
+        if(native_consumer)native_consumer->retire();
+        if(recovery_consumer)recovery_consumer->retire();
+        backend.reset();
+        const bool retired=retirement_produce==DIGITOR_RESULT_OK&&retained&&
+            !retained->ready()&&
+            retained->acquire(retired_context,entry.first)==DIGITOR_RESULT_NOT_INITIALIZED;
+        retained.reset();
+        auto replacement=digitor::create_native_backend(entry.first);
+        digitor::ProcessedGpuFramePtr replacement_frame;
+        const bool recreated=replacement&&replacement->initialize(true)&&
+            replacement->process_primary_wheels_gpu(retirement_input,2,2,902,
+                *retirement_parameters,replacement_frame)==DIGITOR_RESULT_OK&&replacement_frame;
+        const auto replacement_cache=replacement?replacement->native_pipeline_cache_counters():digitor::NativePipelineCacheCounters{};
+        const bool replacement_miss=recreated&&replacement_cache.misses>=1&&replacement_cache.creations>=1;
+        std::cerr<<"RETIREMENT backend="<<entry.second
+                 <<" retained_frame_rejected="<<retired
+                 <<" owner_release_safe="<<retired
+                 <<" cache_invalidated="<<cache_invalidated
+                 <<" replacement_cache_miss="<<replacement_miss
+                 <<" replacement_execution="<<recreated<<'\n';
+        all_passed&=retired&&recreated&&cache_invalidated&&replacement_miss;
+        if(replacement)replacement->shutdown();
     }
     if (!executed) { std::cerr << "QUALIFICATION SKIP reason=no usable GPU device\n"; return 77; }
     return all_passed ? 0 : 1;
