@@ -17,10 +17,13 @@ jobs:
         run: |
           cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
           cmake --build build --config Release --target digitor_native_gpu_tests
+          cmake --build build --config Release --target digitor_tests
+          & build/Release/digitor_tests.exe
       - name: Execute native qualification
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force qualification | Out-Null
+          "commit=$(git rev-parse HEAD)`ndirty=$([bool](git status --porcelain))`ncompiler=$(& cl 2>&1 | Select-Object -First 1)`nbuild_type=Release" | Set-Content qualification/windows-build.txt
           $env:DIGITOR_GPU_VALIDATION='1'
           & build/Release/digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification/windows-native.log
           if ($LASTEXITCODE -eq 77) { '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification/windows-native.json; exit 77 }
@@ -34,11 +37,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON && cmake --build build --target digitor_native_gpu_tests -j2
+      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build --target digitor_native_gpu_tests digitor_tests -j2 && ./build/digitor_tests
       - name: Execute Metal qualification
         shell: bash
         run: |
           mkdir -p qualification; set +e
+          printf 'commit=%s\ndirty=%s\ncompiler=%s\nbuild_type=Release\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" "$(c++ --version | head -1)" > qualification/macos-build.txt
           DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
           rc=${PIPESTATUS[0]}; set -e
           case "$rc" in 0) status=executed-passed;; 77) status=hardware-unavailable;; *) status=failed;; esac
@@ -63,6 +67,7 @@ jobs:
           cmake --build build-android --target digitor_native_gpu_tests -j2 2>&1 | tee android-compile-link.log
           mkdir -p qualification
           mv android-compile-link.log qualification/
+          printf 'commit=%s\ndirty=%s\nabi=arm64-v8a\nplatform=android-28\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" > qualification/android-build.txt
           printf '{"status":"compile-link-only","runtime":"hardware-unverified"}\n' > qualification/android.json
       - if: always()
         uses: actions/upload-artifact@v4

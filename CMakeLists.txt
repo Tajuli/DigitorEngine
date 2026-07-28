@@ -234,8 +234,9 @@ if (DIGITOR_BUILD_TESTS)
     endif()
     add_test(NAME digitor_tests COMMAND digitor_tests)
 
-    if (WIN32 OR APPLE OR ANDROID)
-        add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
+    # Build the qualification harness on every host so its reporting and CPU
+    # reference code are continuously compiled. Unsupported hosts return 77.
+    add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
         set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
         target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -250,7 +251,6 @@ if (DIGITOR_BUILD_TESTS)
             LABELS "native-gpu;hardware"
             SKIP_RETURN_CODE 77
         )
-    endif()
 
     if(FFmpeg_FOUND)
         add_executable(digitor_media_tests tests/test_media.cpp)

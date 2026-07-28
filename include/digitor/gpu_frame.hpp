@@ -11,6 +11,19 @@
 namespace digitor {
 class IRenderBackend;
 
+// Shared, address-independent context state. Frames keep only a weak reference:
+// this makes context retirement observable without dereferencing a backend that
+// has already been destroyed.
+class GpuContextLifetime final {
+public:
+  void retire() noexcept { live_.store(false, std::memory_order_release); }
+  [[nodiscard]] bool live() const noexcept {
+    return live_.load(std::memory_order_acquire);
+  }
+private:
+  std::atomic_bool live_{true};
+};
+
 enum class GpuFrameAlpha : std::uint32_t { straight = 1, premultiplied = 2 };
 enum class PreviewSource : std::uint32_t { none, gpu, cpu_validation };
 
@@ -41,15 +54,19 @@ public:
   [[nodiscard]] DigitorRendererBackend backend() const noexcept { return backend_; }
   [[nodiscard]] std::uint64_t identity() const noexcept { return identity_; }
   [[nodiscard]] bool validation_readback_supported() const noexcept { return validation_readback_supported_; }
+  [[nodiscard]] bool context_live() const noexcept;
 
 private:
   friend class IRenderBackend;
+  void bind_context_lifetime(const std::shared_ptr<GpuContextLifetime>&) noexcept;
   const void* context_{};
   DigitorRendererBackend backend_{};
   GpuFrameMetadata metadata_;
   std::uint64_t identity_{};
   NativeOwner native_;
   std::shared_ptr<std::atomic_bool> ready_;
+  std::weak_ptr<GpuContextLifetime> context_lifetime_;
+  bool context_lifetime_bound_{};
   bool validation_readback_supported_{};
   std::atomic_uint32_t acquisitions_{0};
 };

@@ -32,6 +32,15 @@
 #endif
 
 namespace digitor {
+namespace { std::atomic_uint64_t next_context_identity{1}; }
+
+IRenderBackend::IRenderBackend()
+    : context_lifetime_(std::make_shared<GpuContextLifetime>()),
+      context_identity_(next_context_identity.fetch_add(1)) {}
+
+IRenderBackend::~IRenderBackend() {
+  if (context_lifetime_) context_lifetime_->retire();
+}
 namespace {
 std::atomic<GpuFailurePoint> failure_point{GpuFailurePoint::None};
 std::atomic<std::uint64_t> cpu_reference_count{0};
@@ -141,6 +150,7 @@ DigitorResult IRenderBackend::process_curves_gpu(
     out.reset();
     return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
   }
+  out->bind_context_lifetime(context_lifetime_);
   provenance_.preview_source = PreviewSource::gpu;
   return DIGITOR_RESULT_OK;
 }
@@ -160,9 +170,21 @@ DigitorResult IRenderBackend::process_primary_wheels_gpu(std::span<const Color>s
  const auto result=execute_process_primary_wheels_gpu(s,w,h,ts,p,out);
  provenance_.cpu_primary_wheels_invocations=primary_wheels_reference_count()-before;
  if(result!=DIGITOR_RESULT_OK||!out||provenance_.cpu_primary_wheels_invocations||provenance_.primary_wheels_fallback_invocations||provenance_.normal_preview_readback_count){out.reset();return result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result;}
- provenance_.preview_source=PreviewSource::gpu;return DIGITOR_RESULT_OK;
+ out->bind_context_lifetime(context_lifetime_);provenance_.preview_source=PreviewSource::gpu;return DIGITOR_RESULT_OK;
 }
 DigitorResult IRenderBackend::execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
+GpuSourceResource IRenderBackend::gpu_source(const ProcessedGpuFramePtr& frame)const noexcept{
+ GpuSourceResource source;if(!frame||frame->backend()!=info().backend||!frame->context_live())return source;
+ const auto&m=frame->metadata();source.backend=frame->backend();source.context_identity=context_identity_;source.width=m.width;source.height=m.height;source.format=m.format;source.color_metadata_identity=m.color_metadata;source.source_identity=std::to_string(frame->identity());source.readiness=frame->ready()?GpuReadiness::Ready:GpuReadiness::Pending;source.frame=frame;return source;
+}
+DigitorResult IRenderBackend::process_curves_gpu(const GpuSourceResource&s,std::int64_t ts,const CompiledRgbCurves&c,ProcessedGpuFramePtr&out)noexcept{
+ out.reset();if(!s.usable_by(info().backend,context_identity_))return DIGITOR_RESULT_INVALID_ARGUMENT;const auto before=cpu_curve_reference_count();auto result=execute_process_curves_gpu(s,ts,c,out);provenance_.cpu_curve_invocations=cpu_curve_reference_count()-before;if(result!=DIGITOR_RESULT_OK||!out||provenance_.cpu_curve_invocations||provenance_.curve_fallback_invocations||provenance_.readback_performed){out.reset();return result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result;}out->bind_context_lifetime(context_lifetime_);return DIGITOR_RESULT_OK;
+}
+DigitorResult IRenderBackend::process_primary_wheels_gpu(const GpuSourceResource&s,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out)noexcept{
+ out.reset();if(!s.usable_by(info().backend,context_identity_))return DIGITOR_RESULT_INVALID_ARGUMENT;const auto before=primary_wheels_reference_count();auto result=execute_process_primary_wheels_gpu(s,ts,p,out);provenance_.cpu_primary_wheels_invocations=primary_wheels_reference_count()-before;if(result!=DIGITOR_RESULT_OK||!out||provenance_.cpu_primary_wheels_invocations||provenance_.primary_wheels_fallback_invocations||provenance_.normal_preview_readback_count){out.reset();return result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result;}out->bind_context_lifetime(context_lifetime_);return DIGITOR_RESULT_OK;
+}
+DigitorResult IRenderBackend::execute_process_curves_gpu(const GpuSourceResource&,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
+DigitorResult IRenderBackend::execute_process_primary_wheels_gpu(const GpuSourceResource&,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
 DigitorResult IRenderBackend::validation_readback_primary_wheels(const ProcessedGpuFramePtr&frame,std::span<Color>out)noexcept{if(!frame||!frame->validation_readback_supported())return DIGITOR_RESULT_UNSUPPORTED;if(gpu_failure_point()==GpuFailurePoint::Readback)return injected_failure(GpuFailurePoint::Readback);const auto result=execute_validation_readback_primary_wheels(frame,out);provenance_.validation_readback_completed=result==DIGITOR_RESULT_OK;return result;}
 DigitorResult IRenderBackend::execute_validation_readback_primary_wheels(const ProcessedGpuFramePtr&,std::span<Color>)noexcept{return DIGITOR_RESULT_UNSUPPORTED;}
 DigitorResult IRenderBackend::execute_process_curves_gpu(
