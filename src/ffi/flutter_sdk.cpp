@@ -10,14 +10,16 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 struct DigitorSdkSession {
+  std::mutex lifecycle_mutex;
   std::mutex mutex;
   std::thread worker;
   std::atomic_bool busy{false};
   std::atomic_bool cancel{false};
+  bool destroying{false};
   int64_t position{};
   DigitorColorControls color{0, 1, 1};
   std::vector<uint8_t> texture;
@@ -70,11 +72,14 @@ struct DigitorSdkSession {
 
 namespace {
 std::mutex sessions_mutex;
-std::unordered_set<DigitorSdkSession *> sessions;
+std::unordered_map<DigitorSdkSession *, std::shared_ptr<DigitorSdkSession>> sessions;
 
-bool registered(DigitorSdkSession *session) {
+std::shared_ptr<DigitorSdkSession> acquire_session(DigitorSdkSession *session) {
   std::scoped_lock lock(sessions_mutex);
-  return session && sessions.contains(session);
+  if (!session) return {};
+  const auto found = sessions.find(session);
+  return found == sessions.end() ? std::shared_ptr<DigitorSdkSession>{}
+                                 : found->second;
 }
 
 void join_old(DigitorSdkSession *session) {
@@ -95,6 +100,16 @@ DigitorResult sdk_guard(Function &&function) noexcept {
 uint8_t to_byte(float value) {
   return uint8_t(std::clamp(value, 0.0f, 1.0f) * 255.0f + .5f);
 }
+
+void invoke_completion(DigitorAsyncCallback callback, DigitorResult result,
+                       void *user_data) noexcept {
+  if (!callback) return;
+  try {
+    callback(result, user_data);
+  } catch (...) {
+    // No exception may cross a C callback boundary or escape a worker thread.
+  }
+}
 } // namespace
 
 extern "C" {
@@ -103,10 +118,11 @@ DigitorResult digitor_sdk_create(DigitorSdkSession **out_session) {
   if (!out_session) return DIGITOR_RESULT_INVALID_ARGUMENT;
   *out_session = nullptr;
   return sdk_guard([&] {
-    auto *session = new DigitorSdkSession;
+    auto owned = std::make_shared<DigitorSdkSession>();
+    auto *session = owned.get();
     {
       std::scoped_lock lock(sessions_mutex);
-      sessions.insert(session);
+      sessions.emplace(session, std::move(owned));
     }
     *out_session = session;
     return DIGITOR_RESULT_OK;
@@ -115,28 +131,34 @@ DigitorResult digitor_sdk_create(DigitorSdkSession **out_session) {
 
 DigitorResult digitor_sdk_destroy(DigitorSdkSession *session) {
   return sdk_guard([&] {
+    std::shared_ptr<DigitorSdkSession> owned;
     {
       std::scoped_lock lock(sessions_mutex);
-      if (!session || !sessions.contains(session))
-        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      const auto found = sessions.find(session);
+      if (!session || found == sessions.end()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+      owned = found->second;
+      std::scoped_lock lifecycle(owned->lifecycle_mutex);
       if (session->worker.joinable() &&
           session->worker.get_id() == std::this_thread::get_id())
         return DIGITOR_RESULT_RESOURCE_IN_USE;
-      sessions.erase(session);
+      owned->destroying = true;
+      sessions.erase(found);
     }
-    session->cancel.store(true);
-    join_old(session);
-    delete session;
+    owned->cancel.store(true);
+    join_old(owned.get());
     return DIGITOR_RESULT_OK;
   });
 }
 
 DigitorResult digitor_sdk_set_color(DigitorSdkSession *session,
                                     DigitorColorControls controls) {
-  if (!registered(session) || !std::isfinite(controls.exposure) ||
+  auto owned = acquire_session(session);
+  if (!owned || !std::isfinite(controls.exposure) ||
       !std::isfinite(controls.contrast) ||
       !std::isfinite(controls.saturation))
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   std::scoped_lock lock(session->mutex);
   session->color = controls;
   return DIGITOR_RESULT_OK;
@@ -146,14 +168,17 @@ DigitorResult digitor_sdk_preview_async(DigitorSdkSession *session, int64_t fram
                                         uint32_t width, uint32_t height,
                                         DigitorAsyncCallback callback,
                                         void *user_data) {
-  if (!registered(session) || !width || !height || frame < 0 ||
+  auto owned = acquire_session(session);
+  if (!owned || !width || !height || frame < 0 ||
       width > std::numeric_limits<std::size_t>::max() / height / 4u)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   if (session->busy.exchange(true)) return DIGITOR_RESULT_RESOURCE_IN_USE;
   join_old(session);
   session->cancel.store(false);
   try {
-    session->worker = std::thread([=] {
+    session->worker = std::thread([=, owned = std::move(owned)] {
       DigitorResult result = DIGITOR_RESULT_OK;
       try {
         auto rendered = session->renderer.render({frame, width, height, {}});
@@ -177,8 +202,8 @@ DigitorResult digitor_sdk_preview_async(DigitorSdkSession *session, int64_t fram
       } catch (...) {
         result = DIGITOR_RESULT_INTERNAL_ERROR;
       }
+      invoke_completion(callback, result, user_data);
       session->busy.store(false);
-      if (callback) callback(result, user_data);
     });
   } catch (const std::bad_alloc &) {
     session->busy.store(false);
@@ -193,18 +218,21 @@ DigitorResult digitor_sdk_preview_async(DigitorSdkSession *session, int64_t fram
 DigitorResult digitor_sdk_seek_async(DigitorSdkSession *session, int64_t frame,
                                      DigitorAsyncCallback callback,
                                      void *user_data) {
-  if (!registered(session) || frame < 0) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owned = acquire_session(session);
+  if (!owned || frame < 0) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   if (session->busy.exchange(true)) return DIGITOR_RESULT_RESOURCE_IN_USE;
   join_old(session);
   session->cancel.store(false);
   try {
-    session->worker = std::thread([=] {
+    session->worker = std::thread([=, owned = std::move(owned)] {
       {
         std::scoped_lock lock(session->mutex);
         session->position = frame;
       }
+      invoke_completion(callback, DIGITOR_RESULT_OK, user_data);
       session->busy.store(false);
-      if (callback) callback(DIGITOR_RESULT_OK, user_data);
     });
   } catch (const std::bad_alloc &) {
     session->busy.store(false);
@@ -220,7 +248,10 @@ DigitorResult digitor_sdk_get_native_texture(DigitorSdkSession *session,
                                              DigitorNativeTexture *out_texture) {
   if (!out_texture) return DIGITOR_RESULT_INVALID_ARGUMENT;
   *out_texture = {};
-  if (!registered(session)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owned = acquire_session(session);
+  if (!owned) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   std::scoped_lock lock(session->mutex);
   if (session->texture.empty()) return DIGITOR_RESULT_NOT_INITIALIZED;
   out_texture->pixels = session->texture.data();
@@ -236,17 +267,20 @@ DigitorResult digitor_sdk_export_async(
     int64_t first, int64_t last, uint32_t width, uint32_t height,
     DigitorExportProgressCallback progress, DigitorAsyncCallback completion,
     void *user_data) {
-  if (!registered(session) || !path || !*path || first < 0 || last < first ||
+  auto owned = acquire_session(session);
+  if (!owned || !path || !*path || first < 0 || last < first ||
       !width || !height || format < 0 || format > 5 || codec < 0 || codec > 2 ||
       width > std::numeric_limits<std::size_t>::max() / height / 4u)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   if (session->busy.exchange(true)) return DIGITOR_RESULT_RESOURCE_IN_USE;
   join_old(session);
   session->cancel.store(false);
   std::string output;
   try {
     output = path;
-    session->worker = std::thread([=] {
+    session->worker = std::thread([=, owned = std::move(owned)] {
       DigitorResult result = DIGITOR_RESULT_OK;
       try {
         digitor::ExportSettings settings;
@@ -268,8 +302,8 @@ DigitorResult digitor_sdk_export_async(
       } catch (...) {
         result = DIGITOR_RESULT_INTERNAL_ERROR;
       }
+      invoke_completion(completion, result, user_data);
       session->busy.store(false);
-      if (completion) completion(result, user_data);
     });
   } catch (const std::bad_alloc &) {
     session->busy.store(false);
@@ -282,7 +316,10 @@ DigitorResult digitor_sdk_export_async(
 }
 
 DigitorResult digitor_sdk_cancel(DigitorSdkSession *session) {
-  if (!registered(session)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owned = acquire_session(session);
+  if (!owned) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   session->cancel.store(true);
   return DIGITOR_RESULT_OK;
 }

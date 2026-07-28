@@ -17,6 +17,16 @@ DigitorResult Engine::initialize(const DigitorEngineConfig &config) {
     return DIGITOR_RESULT_ALREADY_INITIALIZED;
   }
 
+  const bool valid_backend = config.preferred_backend == DIGITOR_RENDERER_AUTO ||
+      config.preferred_backend == DIGITOR_RENDERER_VULKAN ||
+      config.preferred_backend == DIGITOR_RENDERER_METAL ||
+      config.preferred_backend == DIGITOR_RENDERER_D3D12 ||
+      config.preferred_backend == DIGITOR_RENDERER_OPENGL_ES ||
+      config.preferred_backend == DIGITOR_RENDERER_CPU;
+  if (!valid_backend || config.enable_validation > 1 ||
+      config.allow_cpu_fallback > 1)
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+
   config_ = config;
 
   backend_ = create_gpu_backend(config.preferred_backend);
@@ -76,6 +86,7 @@ DigitorResult Engine::create_context(RenderContext **out_context) {
   if (out_context == nullptr) {
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
+  *out_context = nullptr;
 
   std::scoped_lock lock(mutex_);
 
@@ -87,7 +98,6 @@ DigitorResult Engine::create_context(RenderContext **out_context) {
     *out_context = new RenderContext(*backend_);
     contexts_.insert(*out_context);
   } catch (const std::bad_alloc &) {
-    *out_context = nullptr;
     return DIGITOR_RESULT_OUT_OF_MEMORY;
   }
   return DIGITOR_RESULT_OK;
