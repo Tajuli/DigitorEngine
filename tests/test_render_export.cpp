@@ -1,8 +1,13 @@
 #include "digitor/renderer.hpp"
+#include "digitor/render_policy.hpp"
 #include "digitor/digitor.h"
+#include "gpu/native_pipeline_cache.hpp"
+#include "gpu/preview_consumer.hpp"
 #include <cassert>
+#include <array>
 #include <cmath>
 #include <condition_variable>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -40,4 +45,112 @@ void test_render_export(){
    assert(result==DIGITOR_RESULT_OK||result==DIGITOR_RESULT_INVALID_ARGUMENT);
  }});
  start.store(true);assert(digitor_sdk_destroy(raced)==DIGITOR_RESULT_OK);caller.join();
+
+ // Source selection is explicit: preview may choose reduced/proxy media while
+ // export can only choose the original source from the same media identity.
+ using SC=digitor::MediaSourceClass;
+ std::vector<digitor::MediaSourceDescriptor> sources{
+   {SC::Original,"camera-original","media-7",3840,2160,digitor::RenderPrecision::Float32,"scene-linear"},
+   {SC::Proxy,"proxy-720","media-7",1280,720,digitor::RenderPrecision::Float32,"scene-linear"},
+   {SC::CompressedPreview,"compressed-540","media-7",960,540,digitor::RenderPrecision::Float32,"scene-linear"},
+   {SC::DecodeScaled,"decode-half","media-7",1920,1080,digitor::RenderPrecision::Float32,"scene-linear"}};
+ auto wheels=digitor::PrimaryWheelsParameters::create();
+ digitor::RgbCurvesParameters curve_descriptor;
+ auto curves=digitor::CompiledRgbCurves::compile(curve_descriptor);
+ digitor::ColorGraphConfiguration color_graph{
+   digitor::ColorOperationOrder::PrimaryWheelsThenRgbCurves,
+   wheels->serialize(),curves->serialize(),digitor::RenderPrecision::Float32,
+   "scene-linear",true,true};
+ digitor::PreviewSourceConfiguration preview{SC::Proxy,1280,720,
+   digitor::RenderPrecision::Float32,digitor::PreviewFrameRatePolicy{24,1}};
+ const auto proxy_plan=digitor::build_color_render_plan(
+   digitor::RenderPurpose::Preview,sources,preview,color_graph);
+ const auto export_plan=digitor::build_color_render_plan(
+   digitor::RenderPurpose::Export,sources,preview,color_graph);
+ assert(proxy_plan.source.source_identity=="proxy-720");
+ assert(export_plan.source.source_identity=="camera-original");
+ assert(proxy_plan.graph.identity()==export_plan.graph.identity());
+ assert(proxy_plan.graph.operation_sequence()==export_plan.graph.operation_sequence());
+ assert(proxy_plan.graph.primary_wheels_serialization==export_plan.graph.primary_wheels_serialization);
+ assert(proxy_plan.graph.rgb_curves_serialization==export_plan.graph.rgb_curves_serialization);
+ assert(proxy_plan.source_cache_identity!=export_plan.source_cache_identity);
+ preview.requested_class=SC::DecodeScaled;
+ const auto scaled_plan=digitor::build_color_render_plan(
+   digitor::RenderPurpose::Preview,sources,preview,color_graph);
+ assert(scaled_plan.source.source_identity=="decode-half");
+ assert(scaled_plan.graph.identity()==proxy_plan.graph.identity());
+ preview.requested_class=SC::CompressedPreview;
+ assert(digitor::build_color_render_plan(digitor::RenderPurpose::Preview,sources,
+   preview,color_graph).source.source_identity=="compressed-540");
+ preview.requested_class=SC::DecodeScaled;
+ preview.requested_width=640;preview.requested_height=360;
+ assert(digitor::build_color_render_plan(digitor::RenderPurpose::Preview,sources,
+   preview,color_graph).graph.identity()==proxy_plan.graph.identity());
+ std::array proxy_only{sources[1]};
+ bool export_rejected=false;
+ try{(void)digitor::build_color_render_plan(digitor::RenderPurpose::Export,
+   proxy_only,preview,color_graph);}catch(const std::invalid_argument&){export_rejected=true;}
+ assert(export_rejected&&proxy_plan.source.source_identity=="proxy-720");
+ digitor::SharedRenderer planned_renderer;
+ planned_renderer.set_media_sources(sources);
+ planned_renderer.set_preview_source_configuration({SC::Proxy,1280,720,
+   digitor::RenderPrecision::Float32,std::nullopt});
+ planned_renderer.set_primary_wheels(wheels);planned_renderer.set_rgb_curves(curves);
+ const auto renderer_preview=planned_renderer.color_render_plan(digitor::RenderPurpose::Preview);
+ const auto renderer_export=planned_renderer.color_render_plan(digitor::RenderPurpose::Export);
+ assert(renderer_preview.source.source_class==SC::Proxy&&renderer_export.source.source_class==SC::Original);
+ assert(renderer_preview.graph.identity()==renderer_export.graph.identity());
+ std::cerr<<"SOURCE_POLICY preview=proxy export=original decode_scaled=pass compressed_preview=pass export_proxy_rejection=pass graph_parity=pass\n";
+
+ // Registered consumer owns its destination and liveness independently of the
+ // processed frame. This interface test does not claim native GPU execution.
+ int context=0;auto frame_ready=std::make_shared<std::atomic_bool>(true);
+ auto native_frame=std::make_shared<int>(1);
+ auto processed=std::make_shared<digitor::ProcessedGpuFrame>(&context,
+   DIGITOR_RENDERER_VULKAN,digitor::GpuFrameMetadata{2,2},41,native_frame,
+   frame_ready,false);
+ auto destination=std::make_shared<int>(2);auto consumer_live=std::make_shared<std::atomic_bool>(true);
+ std::uint64_t native_submits=0;
+ digitor::PreviewConsumerDestination consumer(
+   {DIGITOR_RENDERER_VULKAN,&context,2,2,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+    digitor::GpuPrecisionMode::Float32},91,destination,consumer_live,
+   [&](const auto&,const auto& owned){assert(owned==destination);++native_submits;return DIGITOR_RESULT_OK;});
+ assert(consumer.submit(processed)==DIGITOR_RESULT_OK&&native_submits==1&&consumer.submission_count()==1);
+ assert(processed->release(&context)==DIGITOR_RESULT_INVALID_ARGUMENT);
+ digitor::PreviewConsumerDestination throwing_consumer(
+   {DIGITOR_RENDERER_VULKAN,&context,2,2,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+    digitor::GpuPrecisionMode::Float32},92,std::make_shared<int>(3),consumer_live,
+   [](const auto&,const auto&)->DigitorResult{throw std::runtime_error("native submission");});
+ assert(throwing_consumer.submit(processed)==DIGITOR_RESULT_INTERNAL_ERROR&&
+        processed->release(&context)==DIGITOR_RESULT_INVALID_ARGUMENT);
+ consumer.retire();assert(consumer.submit(processed)==DIGITOR_RESULT_NOT_INITIALIZED);
+ std::cerr<<"PREVIEW_CONSUMER interface=pass submissions="<<native_submits
+          <<" processed_readbacks=0 retired_rejection=pass native_runtime=not-run\n";
+
+ // Immutable pipeline cache has deterministic bounded FIFO reuse and cannot be
+ // poisoned by a failed native object creation.
+ digitor::NativePipelineCache pipeline_cache(2);std::uint64_t creations=0;
+ digitor::NativePipelineCacheKey key{DIGITOR_RENDERER_VULKAN,7,"primary-wheels-v1",1,
+   digitor::GpuPrecisionMode::Float32,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};
+ auto create_pipeline=[&]{++creations;return std::static_pointer_cast<void>(std::make_shared<int>(3));};
+ assert(pipeline_cache.get_or_create(key,create_pipeline));
+ assert(pipeline_cache.get_or_create(key,create_pipeline)&&creations==1);
+ auto other_device=key;other_device.device_context_identity=8;
+ assert(pipeline_cache.get_or_create(other_device,create_pipeline)&&creations==2);
+ auto other_precision=key;other_precision.precision=digitor::GpuPrecisionMode::Float16;
+ assert(pipeline_cache.get_or_create(other_precision,create_pipeline)&&creations==3&&pipeline_cache.size()==2);
+ pipeline_cache.invalidate_device(DIGITOR_RENDERER_VULKAN,8);
+ auto failed=key;failed.shader_operation_identity="injected-pipeline-failure";
+ assert(!pipeline_cache.get_or_create(failed,[] { return std::shared_ptr<void>{}; }));
+ assert(pipeline_cache.get_or_create(failed,create_pipeline));
+ const auto cache_counts=pipeline_cache.counters();
+ assert(cache_counts.lookups==6&&cache_counts.hits==1&&cache_counts.misses==5&&
+   cache_counts.creations==4&&cache_counts.evictions==1&&
+   cache_counts.invalidations==1&&cache_counts.creation_failures==1);
+ std::cerr<<"PIPELINE_CACHE interface=pass lookups="<<cache_counts.lookups
+          <<" misses="<<cache_counts.misses<<" hits="<<cache_counts.hits
+          <<" creations="<<cache_counts.creations<<" evictions="<<cache_counts.evictions
+          <<" invalidations="<<cache_counts.invalidations
+          <<" creation_failures="<<cache_counts.creation_failures
+          <<" native_adoption=pending\n";
 }

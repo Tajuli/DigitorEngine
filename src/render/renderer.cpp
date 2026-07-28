@@ -8,6 +8,18 @@
 namespace digitor {
 SharedRenderer::SharedRenderer(RenderGraphBuilder b):builder_(std::move(b)){}
 
+ColorRenderPlan SharedRenderer::color_render_plan(RenderPurpose purpose) const {
+  ColorGraphConfiguration graph;
+  graph.operation_order=operation_order_;
+  graph.primary_wheels_enabled=static_cast<bool>(primary_wheels_);
+  graph.rgb_curves_enabled=static_cast<bool>(curves_);
+  if(primary_wheels_)graph.primary_wheels_serialization=primary_wheels_->serialize();
+  if(curves_)graph.rgb_curves_serialization=curves_->serialize();
+  graph.precision=preview_source_.precision;
+  if(!media_sources_.empty())graph.color_metadata_identity=media_sources_.front().color_metadata_identity;
+  return build_color_render_plan(purpose,media_sources_,preview_source_,graph);
+}
+
 VideoFrame SharedRenderer::render_source(const RenderRequest&r) {
   if(!r.width||!r.height||r.frame<0)throw std::invalid_argument("invalid render request");
   if (r.width > std::numeric_limits<std::size_t>::max() / r.height / sizeof(Color))
@@ -23,6 +35,7 @@ VideoFrame SharedRenderer::render_source(const RenderRequest&r) {
 }
 
 ProcessedGpuFramePtr SharedRenderer::render_gpu_preview(const RenderRequest& r) {
+  if(has_media_source_policy())(void)color_render_plan(RenderPurpose::Preview);
   if (!curves_&&!primary_wheels_) throw std::logic_error("GPU preview requires a GPU color operation");
   auto source=render_source(r); ProcessedGpuFramePtr frame;
   DigitorResult result=DIGITOR_RESULT_INTERNAL_ERROR;
@@ -47,6 +60,6 @@ VideoFrame SharedRenderer::render(const RenderRequest&r){
   }
   ++generation_;return out;
 }
-std::shared_ptr<VideoFrame> PreviewRenderer::frame(FrameNumber n,std::uint32_t w,std::uint32_t h){if(auto f=cache_.get(n);f&&f->width==w&&f->height==h)return f;auto f=std::make_shared<VideoFrame>(renderer_.render({n,w,h,transform_}));cache_.put(n,f);return f;}
+std::shared_ptr<VideoFrame> PreviewRenderer::frame(FrameNumber n,std::uint32_t w,std::uint32_t h){if(renderer_.has_media_source_policy())(void)renderer_.color_render_plan(RenderPurpose::Preview);if(auto f=cache_.get(n);f&&f->width==w&&f->height==h)return f;auto f=std::make_shared<VideoFrame>(renderer_.render({n,w,h,transform_}));cache_.put(n,f);return f;}
 ProcessedGpuFramePtr PreviewRenderer::gpu_frame(FrameNumber n,std::uint32_t w,std::uint32_t h){if(auto i=gpu_cache_.find(n);i!=gpu_cache_.end()&&i->second->metadata().width==w&&i->second->metadata().height==h)return i->second;auto f=renderer_.render_gpu_preview({n,w,h,transform_});gpu_cache_[n]=f;return f;}
 }
