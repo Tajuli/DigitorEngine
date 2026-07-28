@@ -525,7 +525,9 @@ int main() {
         std::shared_ptr<digitor::PreviewConsumerDestination> failed_consumer;
         const bool acquisition_failure=backend->create_preview_consumer(retained,failed_consumer)!=DIGITOR_RESULT_OK&&!failed_consumer;
         digitor::set_gpu_failure_point(digitor::GpuFailurePoint::PreviewPresentation);
-        const bool submission_failure=native_consumer->submit(retained)!=DIGITOR_RESULT_OK&&native_consumer->submission_count()==2;
+        const bool submission_failure=native_consumer&&
+            native_consumer->submit(retained)!=DIGITOR_RESULT_OK&&
+            native_consumer->submission_count()==2;
         digitor::set_gpu_failure_point(digitor::GpuFailurePoint::None);
         std::shared_ptr<digitor::PreviewConsumerDestination> recovery_consumer;
         const bool consumer_recovery=backend->create_preview_consumer(retained,recovery_consumer)==DIGITOR_RESULT_OK&&
