@@ -1,0 +1,69 @@
+name: Native GPU Qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/gpu/**'
+      - 'tests/test_native_gpu.cpp'
+      - '.github/workflows/native-gpu-qualification.yml'
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build D3D12/Vulkan qualification
+        shell: pwsh
+        run: |
+          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
+          cmake --build build --config Release --target digitor_native_gpu_tests
+      - name: Execute native qualification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          $env:DIGITOR_GPU_VALIDATION='1'
+          & build/Release/digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification/windows-native.log
+          if ($LASTEXITCODE -eq 77) { '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification/windows-native.json; exit 77 }
+          if ($LASTEXITCODE -ne 0) { '{"status":"failed","exit_code":1}' | Set-Content qualification/windows-native.json; exit 1 }
+          '{"status":"executed-passed","exit_code":0}' | Set-Content qualification/windows-native.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: windows-primary-wheels-qualification, path: qualification/}
+
+  macos-metal:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON && cmake --build build --target digitor_native_gpu_tests -j2
+      - name: Execute Metal qualification
+        shell: bash
+        run: |
+          mkdir -p qualification; set +e
+          DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
+          rc=${PIPESTATUS[0]}; set -e
+          case "$rc" in 0) status=executed-passed;; 77) status=hardware-unavailable;; *) status=failed;; esac
+          printf '{"status":"%s","exit_code":%s}\n' "$status" "$rc" > qualification/macos-metal.json
+          exit "$rc"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: macos-primary-wheels-qualification, path: qualification/}
+
+  android-compile-link:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Configure Android NDK
+        run: |
+          sdkmanager 'ndk;27.2.12479018'
+          cmake -S . -B build-android \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 \
+            -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
+          cmake --build build-android --target digitor_native_gpu_tests -j2 2>&1 | tee android-compile-link.log
+          mkdir -p qualification
+          mv android-compile-link.log qualification/
+          printf '{"status":"compile-link-only","runtime":"hardware-unverified"}\n' > qualification/android.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: android-primary-wheels-compile-link, path: qualification/}

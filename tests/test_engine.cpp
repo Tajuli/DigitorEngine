@@ -17,6 +17,7 @@ void test_editor();
 void test_v2();
 void test_color_pipeline();
 void test_rgb_curves();
+void test_primary_wheels();
 void test_color_science();
 void test_render_export();
 void test_render_graph();
@@ -119,6 +120,7 @@ int main() {
     test_v2();
     test_color_pipeline();
     test_rgb_curves();
+    test_primary_wheels();
   test_color_science();
     test_render_export();
     test_render_graph();

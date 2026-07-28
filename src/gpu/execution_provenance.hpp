@@ -65,6 +65,16 @@ struct ExecutionProvenance {
   bool direct_preview_consumed{};
   std::uint64_t cpu_curve_invocations{};
   std::uint64_t curve_fallback_invocations{};
+  bool primary_wheels_enabled{};
+  std::string primary_wheels_parameter_identity;
+  std::string primary_wheels_shader_identity;
+  std::string primary_wheels_pipeline_identity;
+  bool primary_wheels_parameters_bound{};
+  bool primary_wheels_source_bound{};
+  bool primary_wheels_destination_bound{};
+  std::uint64_t cpu_primary_wheels_invocations{};
+  std::uint64_t primary_wheels_fallback_invocations{};
+  std::uint64_t normal_preview_readback_count{};
   std::string failure_stage;
 };
 

@@ -31,6 +31,8 @@ public:
                                const CompiledRgbCurves&);
   DigitorResult process_curves_gpu(std::span<const Color>, std::uint32_t,
       std::uint32_t, std::int64_t, const CompiledRgbCurves&, ProcessedGpuFramePtr&);
+  DigitorResult process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,
+      std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&);
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&);
 
 private:

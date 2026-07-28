@@ -10,6 +10,7 @@
 #include "digitor/color.hpp"
 #include "digitor/digitor.h"
 #include "digitor/rgb_curves.hpp"
+#include "digitor/primary_wheels.hpp"
 #include "gpu/execution_provenance.hpp"
 #include "digitor/gpu_frame.hpp"
 #include "platform/platform.hpp"
@@ -55,6 +56,10 @@ public:
                                    std::int64_t timestamp,
                                    const CompiledRgbCurves&,
                                    ProcessedGpuFramePtr& out) noexcept;
+  DigitorResult process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,
+      std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
+  DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
+      std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
     return provenance_;
@@ -68,6 +73,10 @@ protected:
   virtual DigitorResult execute_process_curves_gpu(
       std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
       const CompiledRgbCurves&, ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,
+      std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_validation_readback_primary_wheels(
+      const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   void begin_grade_provenance(DigitorRendererBackend backend, bool gpu,
                               const char *device, const char *compiler,
