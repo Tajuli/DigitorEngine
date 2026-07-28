@@ -23,22 +23,22 @@ VideoFrame SharedRenderer::render_source(const RenderRequest&r) {
 }
 
 ProcessedGpuFramePtr SharedRenderer::render_gpu_preview(const RenderRequest& r) {
-  if (!curves_) throw std::logic_error("GPU preview requires RGB curves");
+  if (!curves_&&!primary_wheels_) throw std::logic_error("GPU preview requires a GPU color operation");
   auto source=render_source(r); ProcessedGpuFramePtr frame;
-  const auto result=Engine::instance().process_curves_gpu(
-      source.pixels,r.width,r.height,source.pts,*curves_,frame);
+  DigitorResult result=DIGITOR_RESULT_INTERNAL_ERROR;
+  if(primary_wheels_){RenderGraph native_graph;auto input=native_graph.import_resource({.type=GraphResourceType::texture,.size=source.pixels.size()*sizeof(Color),.width=r.width,.height=r.height,.format=DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,.transient=false,.initial_state=ResourceState::shader_read,.name="Primary Wheels source"});auto output=native_graph.create_resource({.type=GraphResourceType::texture,.size=source.pixels.size()*sizeof(Color),.width=r.width,.height=r.height,.format=DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,.transient=true,.name="Primary Wheels output"});add_primary_wheels_pass(native_graph,input,output,[&](CommandEncoder&e){e.dispatch([&]{result=Engine::instance().process_primary_wheels_gpu(source.pixels,r.width,r.height,source.pts,*primary_wheels_,frame);});});native_graph.export_resource(output);native_graph.compile();native_graph.execute(queue_);graph_=std::move(native_graph);}else result=Engine::instance().process_curves_gpu(source.pixels,r.width,r.height,source.pts,*curves_,frame);
   if(result!=DIGITOR_RESULT_OK||!frame)
-    throw std::runtime_error("native RGB curves GPU-frame dispatch failed");
+    throw std::runtime_error("native GPU color-operation dispatch failed");
   if(Engine::instance().present_gpu_frame(frame)!=DIGITOR_RESULT_OK)
-    throw std::runtime_error("native RGB curves preview handoff failed");
+    throw std::runtime_error("native GPU color-operation preview handoff failed");
   ++generation_; return frame;
 }
 
 VideoFrame SharedRenderer::render(const RenderRequest&r){
   auto out=render_source(r);
   if(Engine::instance().is_initialized()&&Engine::instance().renderer_info().is_gpu){
-    if(curves_)
-      throw std::logic_error("live RGB curves preview must use render_gpu_preview");
+    if(curves_||primary_wheels_)
+      throw std::logic_error("live GPU color preview must use render_gpu_preview");
     std::vector<uint8_t> source;source.reserve(out.pixels.size()*4);
     for(const auto& pixel:out.pixels){const auto channel=[](float value){return static_cast<uint8_t>(std::clamp(value,0.0f,1.0f)*255.0f+0.5f);};source.push_back(channel(pixel.r));source.push_back(channel(pixel.g));source.push_back(channel(pixel.b));source.push_back(channel(pixel.a));}
     std::vector<uint8_t> rgba;if(Engine::instance().render_preview_rgba8(r.width,r.height,source,rgba)!=DIGITOR_RESULT_OK)throw std::runtime_error("native preview readback failed");

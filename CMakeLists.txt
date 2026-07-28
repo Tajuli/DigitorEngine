@@ -5,6 +5,8 @@ project(DigitorEngine
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/primary_wheels.hlsl" DIGITOR_PRIMARY_WHEELS_HLSL)
+configure_file(cmake/primary_wheels_shader.hpp.in generated/primary_wheels_shader.hpp @ONLY)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/rgb_curves.hlsl" DIGITOR_RGB_CURVES_HLSL)
 configure_file(cmake/rgb_curves_shader.hpp.in generated/rgb_curves_shader.hpp @ONLY)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/color_pipeline.hlsl" DIGITOR_COLOR_PIPELINE_HLSL)
@@ -48,6 +50,8 @@ add_library(digitor_engine
     src/gpu/video_texture.cpp
     src/gpu/color_pipeline.cpp
     src/gpu/rgb_curves.cpp
+    src/gpu/primary_wheels.cpp
+    src/gpu/native_primary_wheels.cpp
     src/gpu/native_rgb_curves.cpp
     src/gpu/processed_gpu_frame.cpp
     src/gpu/qualifier.cpp
@@ -215,6 +219,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_v2.cpp
         tests/test_color_pipeline.cpp
         tests/test_rgb_curves.cpp
+        tests/test_primary_wheels.cpp
         tests/test_color_science.cpp
         tests/test_render_export.cpp
         tests/test_render_graph.cpp

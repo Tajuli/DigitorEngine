@@ -154,6 +154,17 @@ DigitorResult IRenderBackend::present_gpu_frame(const ProcessedGpuFramePtr& fram
   provenance_.direct_preview_consumed = result == DIGITOR_RESULT_OK;
   return result;
 }
+DigitorResult IRenderBackend::process_primary_wheels_gpu(std::span<const Color>s,std::uint32_t w,std::uint32_t h,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out)noexcept{
+ out.reset();const auto before=primary_wheels_reference_count();
+ if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
+ const auto result=execute_process_primary_wheels_gpu(s,w,h,ts,p,out);
+ provenance_.cpu_primary_wheels_invocations=primary_wheels_reference_count()-before;
+ if(result!=DIGITOR_RESULT_OK||!out||provenance_.cpu_primary_wheels_invocations||provenance_.primary_wheels_fallback_invocations||provenance_.normal_preview_readback_count){out.reset();return result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result;}
+ provenance_.preview_source=PreviewSource::gpu;return DIGITOR_RESULT_OK;
+}
+DigitorResult IRenderBackend::execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
+DigitorResult IRenderBackend::validation_readback_primary_wheels(const ProcessedGpuFramePtr&frame,std::span<Color>out)noexcept{if(!frame||!frame->validation_readback_supported())return DIGITOR_RESULT_UNSUPPORTED;if(gpu_failure_point()==GpuFailurePoint::Readback)return injected_failure(GpuFailurePoint::Readback);const auto result=execute_validation_readback_primary_wheels(frame,out);provenance_.validation_readback_completed=result==DIGITOR_RESULT_OK;return result;}
+DigitorResult IRenderBackend::execute_validation_readback_primary_wheels(const ProcessedGpuFramePtr&,std::span<Color>)noexcept{return DIGITOR_RESULT_UNSUPPORTED;}
 DigitorResult IRenderBackend::execute_process_curves_gpu(
     std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
     const CompiledRgbCurves&, ProcessedGpuFramePtr& out) noexcept {
