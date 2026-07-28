@@ -18,17 +18,21 @@ jobs:
           New-Item -ItemType Directory -Force qualification | Out-Null
           cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON 2>&1 | Tee-Object qualification/windows-configure.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build --config Release --target digitor_native_gpu_tests
+          cmake --build build --config Release --target digitor_native_gpu_tests 2>&1 | Tee-Object qualification/windows-native-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build --config Release --target digitor_tests
+          cmake --build build --config Release --target digitor_tests 2>&1 | Tee-Object qualification/windows-unit-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & build/Release/digitor_tests.exe
+          & build/Release/digitor_tests.exe 2>&1 | Tee-Object qualification/windows-unit-tests.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Execute native qualification
+      - name: Collect Windows build metadata
+        if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force qualification | Out-Null
-          $compiler = 'unavailable'
+          # CMake has already run inside the initialized Visual Studio generator
+          # environment. Reading its metadata avoids invoking cl from this plain
+          # PowerShell session. Metadata is diagnostic and must never gate tests.
+          $compiler = 'unknown'
           $compilerFile = Get-ChildItem build/CMakeFiles -Recurse -Filter CMakeCXXCompiler.cmake -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($compilerFile) {
             $contents = Get-Content $compilerFile.FullName -Raw
@@ -44,11 +48,15 @@ jobs:
             "runner_os=$env:RUNNER_OS"
             "runner_arch=$env:RUNNER_ARCH"
           ) | Set-Content qualification/windows-build.txt
+      - name: Execute native qualification
+        shell: pwsh
+        run: |
           $env:DIGITOR_GPU_VALIDATION='1'
           & build/Release/digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification/windows-native.log
-          if ($LASTEXITCODE -eq 77) { '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification/windows-native.json; exit 77 }
-          if ($LASTEXITCODE -ne 0) { '{"status":"failed","exit_code":1}' | Set-Content qualification/windows-native.json; exit 1 }
-          '{"status":"executed-passed","exit_code":0}' | Set-Content qualification/windows-native.json
+          $qualificationExitCode = $LASTEXITCODE
+          $status = if ($qualificationExitCode -eq 0) { 'executed-passed' } elseif ($qualificationExitCode -eq 77) { 'hardware-unavailable' } else { 'failed' }
+          [ordered]@{status=$status; exit_code=$qualificationExitCode} | ConvertTo-Json -Compress | Set-Content qualification/windows-native.json
+          exit $qualificationExitCode
       - if: always()
         uses: actions/upload-artifact@v4
         with: {name: windows-primary-wheels-qualification, path: qualification/}
@@ -57,12 +65,19 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build --target digitor_native_gpu_tests digitor_tests -j2 && ./build/digitor_tests
+      - name: Build and run interface qualification
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p qualification
+          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release 2>&1 | tee qualification/macos-configure.log
+          cmake --build build --target digitor_native_gpu_tests digitor_tests -j2 2>&1 | tee qualification/macos-build.log
+          ./build/digitor_tests 2>&1 | tee qualification/macos-interface-tests.log
       - name: Execute Metal qualification
         shell: bash
         run: |
           mkdir -p qualification; set +e
-          printf 'commit=%s\ndirty=%s\ncompiler=%s\nbuild_type=Release\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" "$(c++ --version | head -1)" > qualification/macos-build.txt
+          printf 'commit=%s\ndirty=%s\nos=%s\narchitecture=%s\ncompiler=%s\nbuild_type=Release\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" "$(sw_vers -productVersion)" "$(uname -m)" "$(c++ --version | head -1)" > qualification/macos-build.txt
           DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
           rc=${PIPESTATUS[0]}; set -e
           case "$rc" in 0) status=executed-passed;; 77) status=hardware-unavailable;; *) status=failed;; esac
@@ -79,15 +94,25 @@ jobs:
       - uses: android-actions/setup-android@v3
       - name: Configure Android NDK
         run: |
+          set -o pipefail
           sdkmanager 'ndk;27.2.12479018'
+          mkdir -p qualification
           cmake -S . -B build-android \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 \
-            -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
+            -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON \
+            2>&1 | tee qualification/android-configure.log
           cmake --build build-android --target digitor_native_gpu_tests -j2 2>&1 | tee android-compile-link.log
-          mkdir -p qualification
           mv android-compile-link.log qualification/
-          printf 'commit=%s\ndirty=%s\nabi=arm64-v8a\nplatform=android-28\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" > qualification/android-build.txt
+          compiler_file=$(find build-android/CMakeFiles -name CMakeCXXCompiler.cmake -print -quit)
+          compiler=unknown
+          if test -n "$compiler_file"; then
+            compiler_id=$(sed -n 's/^set(CMAKE_CXX_COMPILER_ID "\([^"]*\)")/\1/p' "$compiler_file")
+            compiler_version=$(sed -n 's/^set(CMAKE_CXX_COMPILER_VERSION "\([^"]*\)")/\1/p' "$compiler_file")
+            test -n "$compiler_id" && compiler="$compiler_id${compiler_version:+ $compiler_version}"
+          fi
+          linked_libraries=$(find build-android -type f \( -name '*.so' -o -name '*.a' \) -printf '%f\n' | sort -u | paste -sd, -)
+          printf 'commit=%s\ndirty=%s\nos=%s\narchitecture=%s\nabi=arm64-v8a\napi_level=28\nndk_version=27.2.12479018\ncompiler=%s\nbuild_type=Release\nlinked_libraries=%s\nbuild_result=success\n' "$(git rev-parse HEAD)" "$(test -z "$(git status --porcelain)" && echo false || echo true)" "$(uname -s)" "$(uname -m)" "$compiler" "${linked_libraries:-unknown}" > qualification/android-build.txt
           printf '{"status":"compile-link-only","runtime":"hardware-unverified"}\n' > qualification/android.json
       - if: always()
         uses: actions/upload-artifact@v4
