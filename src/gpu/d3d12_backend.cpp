@@ -89,6 +89,7 @@ struct D3DPreviewOwner {
 struct D3DConsumerOwner {
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12Resource> destination;
+  D3D12_RESOURCE_STATES destination_state{D3D12_RESOURCE_STATE_COPY_DEST};
   bool tracked{};
   ~D3DConsumerOwner() {
     if (destination)
@@ -1673,13 +1674,21 @@ public:
           b[0].Transition = {source->output.Get(), 0,
                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
                              D3D12_RESOURCE_STATE_COPY_SOURCE};
-          b[1].Transition = {destination->destination.Get(), 0,
-                             D3D12_RESOURCE_STATE_COPY_DEST,
-                             D3D12_RESOURCE_STATE_COPY_DEST};
           if (!record_stage(GpuFailurePoint::SourceTransition,
                             "ResourceBarrier(consumer source transition)"))
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
           list_->ResourceBarrier(1, b);
+          if (destination->destination_state !=
+              D3D12_RESOURCE_STATE_COPY_DEST) {
+            b[1].Transition = {destination->destination.Get(), 0,
+                               destination->destination_state,
+                               D3D12_RESOURCE_STATE_COPY_DEST};
+            if (!record_stage(
+                    GpuFailurePoint::ConsumerDestinationTransition,
+                    "ResourceBarrier(consumer destination to copy)"))
+              return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            list_->ResourceBarrier(1, &b[1]);
+          }
           if (FAILED(injected_hresult(GpuFailurePoint::PreviewPresentation,
                                       "CopyResource(preview presentation)")) ||
               FAILED(injected_hresult(
@@ -1700,6 +1709,8 @@ public:
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
           if (FAILED(execute_commands()))
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+          destination->destination_state =
+              D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
           return signal_and_wait();
         });
     return DIGITOR_RESULT_OK;
