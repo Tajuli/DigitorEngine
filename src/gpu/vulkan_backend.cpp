@@ -2904,7 +2904,7 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
       }
   }
   VkInstance in;
-  if (vkCreateInstance(&c, &in) != VK_SUCCESS)
+  if (vkCreateInstance(&c, nullptr, &in) != VK_SUCCESS)
     return nullptr;
   uint32_t n = 0;
   vkEnumeratePhysicalDevices(in, &n, nullptr);
@@ -2937,7 +2937,7 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
   dc.queueCreateInfoCount = 1;
   dc.pQueueCreateInfos = &qc;
   VkDevice d;
-  if (vkCreateDevice(p[0], &dc, &d) != VK_SUCCESS) {
+  if (vkCreateDevice(p[0], &dc, nullptr, &d) != VK_SUCCESS) {
     vkDestroyInstance(in, nullptr);
     return nullptr;
   }
