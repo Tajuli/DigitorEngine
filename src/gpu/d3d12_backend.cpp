@@ -566,6 +566,7 @@ public:
   DigitorResult
   render_rgba8(uint32_t width, uint32_t height, std::span<const uint8_t> source,
                std::vector<uint8_t> &destination) noexcept override {
+    provenance_ = {};
     constexpr DXGI_FORMAT texture_format = DXGI_FORMAT_R8G8B8A8_UNORM;
     const std::size_t pixel_bytes = std::size_t(width) * height * 4;
     if (!width || !height || (!source.empty() && source.size() != pixel_bytes))
@@ -644,12 +645,8 @@ public:
     }
     upload_map.reset();
 
-    hr = allocator_->Reset();
-    if (FAILED(hr))
-      return result(hr);
-    hr = list_->Reset(allocator_.Get(), nullptr);
-    if (FAILED(hr))
-      return result(hr);
+    if (!prepare_commands(nullptr))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     D3D12_TEXTURE_COPY_LOCATION target_location{};
     target_location.pResource = target.Get();
     target_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -681,11 +678,12 @@ public:
     readback_location.PlacedFootprint = footprint;
     list_->CopyTextureRegion(&readback_location, 0, 0, 0, &target_location,
                              nullptr);
-    hr = list_->Close();
+    hr = close_commands();
     if (FAILED(hr))
       return result(hr);
-    ID3D12CommandList *command_lists[]{list_.Get()};
-    queue_->ExecuteCommandLists(1, command_lists);
+    hr = execute_commands();
+    if (FAILED(hr))
+      return result(hr);
     const auto wait_result = signal_and_wait();
     if (wait_result != DIGITOR_RESULT_OK)
       return wait_result;
