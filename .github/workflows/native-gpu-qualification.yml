@@ -15,15 +15,35 @@ jobs:
       - name: Configure and build D3D12/Vulkan qualification
         shell: pwsh
         run: |
-          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          cmake -S . -B build -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON 2>&1 | Tee-Object qualification/windows-configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build --config Release --target digitor_native_gpu_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build --config Release --target digitor_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & build/Release/digitor_tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Execute native qualification
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force qualification | Out-Null
-          "commit=$(git rev-parse HEAD)`ndirty=$([bool](git status --porcelain))`ncompiler=$(& cl 2>&1 | Select-Object -First 1)`nbuild_type=Release" | Set-Content qualification/windows-build.txt
+          $compiler = 'unavailable'
+          $compilerFile = Get-ChildItem build/CMakeFiles -Recurse -Filter CMakeCXXCompiler.cmake -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($compilerFile) {
+            $contents = Get-Content $compilerFile.FullName -Raw
+            $id = [regex]::Match($contents, 'set\(CMAKE_CXX_COMPILER_ID "([^"]+)"\)').Groups[1].Value
+            $version = [regex]::Match($contents, 'set\(CMAKE_CXX_COMPILER_VERSION "([^"]+)"\)').Groups[1].Value
+            if ($id) { $compiler = if ($version) { "$id $version" } else { $id } }
+          }
+          @(
+            "commit=$(git rev-parse HEAD)"
+            "dirty=$([bool](git status --porcelain))"
+            "compiler=$compiler"
+            'build_type=Release'
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+          ) | Set-Content qualification/windows-build.txt
           $env:DIGITOR_GPU_VALIDATION='1'
           & build/Release/digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification/windows-native.log
           if ($LASTEXITCODE -eq 77) { '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification/windows-native.json; exit 77 }
