@@ -511,8 +511,10 @@ int main() {
         std::shared_ptr<digitor::PreviewConsumerDestination> native_consumer;
         const auto consumer_create=backend->create_preview_consumer(retained,native_consumer);
         const auto consumer_submit=native_consumer?native_consumer->submit(retained):DIGITOR_RESULT_INTERNAL_ERROR;
+        const auto consumer_resubmit=native_consumer?native_consumer->submit(retained):DIGITOR_RESULT_INTERNAL_ERROR;
         const bool consumer_qualified=consumer_create==DIGITOR_RESULT_OK&&
-            consumer_submit==DIGITOR_RESULT_OK&&native_consumer->submission_count()==1&&
+            consumer_submit==DIGITOR_RESULT_OK&&consumer_resubmit==DIGITOR_RESULT_OK&&
+            native_consumer->submission_count()==2&&
             backend->execution_provenance().normal_preview_readback_count==0;
         std::cerr<<"NATIVE_CONSUMER backend="<<entry.second
                  <<" submissions="<<(native_consumer?native_consumer->submission_count():0)
@@ -523,7 +525,7 @@ int main() {
         std::shared_ptr<digitor::PreviewConsumerDestination> failed_consumer;
         const bool acquisition_failure=backend->create_preview_consumer(retained,failed_consumer)!=DIGITOR_RESULT_OK&&!failed_consumer;
         digitor::set_gpu_failure_point(digitor::GpuFailurePoint::PreviewPresentation);
-        const bool submission_failure=native_consumer->submit(retained)!=DIGITOR_RESULT_OK&&native_consumer->submission_count()==1;
+        const bool submission_failure=native_consumer->submit(retained)!=DIGITOR_RESULT_OK&&native_consumer->submission_count()==2;
         digitor::set_gpu_failure_point(digitor::GpuFailurePoint::None);
         std::shared_ptr<digitor::PreviewConsumerDestination> recovery_consumer;
         const bool consumer_recovery=backend->create_preview_consumer(retained,recovery_consumer)==DIGITOR_RESULT_OK&&
