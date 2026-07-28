@@ -74,6 +74,9 @@ public:
     return provenance_;
   }
   [[nodiscard]] virtual NativePipelineCacheCounters native_pipeline_cache_counters() const noexcept { return {}; }
+  [[nodiscard]] virtual NativeResourceCounts native_resource_counts() const noexcept { return {}; }
+  [[nodiscard]] virtual std::size_t native_pipeline_cache_size() const noexcept { return 0; }
+  virtual void clear_native_pipeline_cache_for_test() noexcept {}
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
@@ -96,6 +99,9 @@ protected:
                               const char *device, const char *compiler,
                               const char *shader, const char *pipeline) noexcept;
   DigitorResult injected_failure(GpuFailurePoint point) noexcept;
+  // Must be called immediately before the native operation named by
+  // `operation`.  It is the sole stage-reached evidence seam.
+  DigitorResult inject_at(GpuFailurePoint point, const char* operation) noexcept;
   ExecutionProvenance provenance_{};
 private:
   std::shared_ptr<GpuContextLifetime> context_lifetime_;

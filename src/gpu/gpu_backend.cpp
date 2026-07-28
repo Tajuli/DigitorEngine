@@ -9,6 +9,7 @@
 #include <atomic>
 #include <string>
 #include <vector>
+#include <span>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -48,6 +49,118 @@ std::atomic<std::uint64_t> cpu_curve_count{0};
 }
 void set_gpu_failure_point(GpuFailurePoint point) noexcept { failure_point.store(point); }
 GpuFailurePoint gpu_failure_point() noexcept { return failure_point.load(); }
+std::span<const GpuFailurePoint> all_gpu_failure_points() noexcept {
+  static constexpr GpuFailurePoint points[]{
+    GpuFailurePoint::ShaderCompilation, GpuFailurePoint::LibraryCreation,
+    GpuFailurePoint::ShaderFunctionLookup, GpuFailurePoint::VertexShaderCreation,
+    GpuFailurePoint::VertexShaderCompilation, GpuFailurePoint::FragmentShaderCreation,
+    GpuFailurePoint::FragmentShaderCompilation, GpuFailurePoint::ProgramCreation,
+    GpuFailurePoint::ProgramLink, GpuFailurePoint::DescriptorSetLayoutCreation,
+    GpuFailurePoint::RootSignatureSerialization, GpuFailurePoint::RootSignatureCreation,
+    GpuFailurePoint::PipelineLayoutCreation, GpuFailurePoint::PipelineCreation,
+    GpuFailurePoint::SourceResourceCreation, GpuFailurePoint::SourceMemoryAllocation,
+    GpuFailurePoint::SourceMemoryBinding, GpuFailurePoint::OutputResourceCreation,
+    GpuFailurePoint::OutputMemoryAllocation, GpuFailurePoint::OutputMemoryBinding,
+    GpuFailurePoint::PreviewDestinationCreation, GpuFailurePoint::SourceResourceStorage,
+    GpuFailurePoint::OutputResourceStorage, GpuFailurePoint::PreviewDestinationStorage,
+    GpuFailurePoint::LutResourceCreation, GpuFailurePoint::LutUpload,
+    GpuFailurePoint::ParameterResourceCreation, GpuFailurePoint::ParameterUpload,
+    GpuFailurePoint::BufferMemoryAllocation, GpuFailurePoint::BufferMemoryBinding,
+    GpuFailurePoint::DescriptorPoolCreation, GpuFailurePoint::DescriptorHeapCreation,
+    GpuFailurePoint::DescriptorSetAllocation, GpuFailurePoint::ImageViewCreation,
+    GpuFailurePoint::FramebufferCreation, GpuFailurePoint::FramebufferAttachment,
+    GpuFailurePoint::FramebufferValidation, GpuFailurePoint::ShaderResourceViewCreation,
+    GpuFailurePoint::CpuSourceShaderResourceViewCreation,
+    GpuFailurePoint::GpuSourceShaderResourceViewCreation,
+    GpuFailurePoint::LutShaderResourceViewCreation,
+    GpuFailurePoint::UnorderedAccessViewCreation, GpuFailurePoint::SourceUpload,
+    GpuFailurePoint::UniformLookup, GpuFailurePoint::ResourceBinding,
+    GpuFailurePoint::DescriptorUpdate, GpuFailurePoint::SourceUploadRecording,
+    GpuFailurePoint::LutUploadRecording, GpuFailurePoint::ParameterUploadRecording,
+    GpuFailurePoint::DrawSetup, GpuFailurePoint::CommandPoolCreation,
+    GpuFailurePoint::CommandQueueCreation,
+    GpuFailurePoint::CommandAllocatorResetOrCreation,
+    GpuFailurePoint::CommandBufferOrListAllocation,
+    GpuFailurePoint::CommandBufferOrListBeginReset, GpuFailurePoint::CommandRecording,
+    GpuFailurePoint::ComputeEncoderCreation,GpuFailurePoint::BlitEncoderCreation,
+    GpuFailurePoint::SourceTextureBinding,GpuFailurePoint::OutputTextureBinding,
+    GpuFailurePoint::BufferBinding,GpuFailurePoint::DispatchSetup,
+    GpuFailurePoint::EncoderCompletion,
+    GpuFailurePoint::SourceTransition,GpuFailurePoint::ConsumerDestinationTransition,
+    GpuFailurePoint::ValidationTransition,
+    GpuFailurePoint::DispatchOrDraw, GpuFailurePoint::Blit,
+    GpuFailurePoint::ConsumerCopySubmission, GpuFailurePoint::Flush,
+    GpuFailurePoint::CommandBufferOrListClose, GpuFailurePoint::QueueSubmission,
+    GpuFailurePoint::FenceSignal,GpuFailurePoint::FenceCreation,
+    GpuFailurePoint::EventCreation,GpuFailurePoint::EventSetup,
+    GpuFailurePoint::SynchronizationWait,GpuFailurePoint::SynchronizationVerification,
+    GpuFailurePoint::CommandStatusVerification,
+    GpuFailurePoint::ProcessedFrameCreation, GpuFailurePoint::PreviewAcquisition,
+    GpuFailurePoint::PreviewPresentation,
+    GpuFailurePoint::ValidationReadbackResourceCreation,
+    GpuFailurePoint::ValidationReadbackCopy, GpuFailurePoint::ValidationReadbackMap,
+    GpuFailurePoint::CpuReadbackCopy,
+    GpuFailurePoint::ValidationCpuCopy,
+    GpuFailurePoint::DeterministicOutOfMemory, GpuFailurePoint::DeviceLost};
+  return points;
+}
+const char* gpu_failure_point_name(GpuFailurePoint p) noexcept {
+  switch(p) {
+#define DIGITOR_STAGE(x) case GpuFailurePoint::x: return #x
+    DIGITOR_STAGE(None); DIGITOR_STAGE(ShaderCompilation); DIGITOR_STAGE(LibraryCreation);
+    DIGITOR_STAGE(ShaderFunctionLookup); DIGITOR_STAGE(DescriptorSetLayoutCreation);
+    DIGITOR_STAGE(VertexShaderCreation); DIGITOR_STAGE(VertexShaderCompilation);
+    DIGITOR_STAGE(FragmentShaderCreation); DIGITOR_STAGE(FragmentShaderCompilation);
+    DIGITOR_STAGE(ProgramCreation); DIGITOR_STAGE(ProgramLink);
+    DIGITOR_STAGE(RootSignatureSerialization); DIGITOR_STAGE(RootSignatureCreation);
+    DIGITOR_STAGE(PipelineLayoutCreation); DIGITOR_STAGE(PipelineCreation);
+    DIGITOR_STAGE(SourceResourceCreation); DIGITOR_STAGE(SourceMemoryAllocation);
+    DIGITOR_STAGE(SourceMemoryBinding); DIGITOR_STAGE(OutputResourceCreation);
+    DIGITOR_STAGE(OutputMemoryAllocation); DIGITOR_STAGE(OutputMemoryBinding);
+    DIGITOR_STAGE(PreviewDestinationCreation); DIGITOR_STAGE(LutResourceCreation);
+    DIGITOR_STAGE(SourceResourceStorage); DIGITOR_STAGE(OutputResourceStorage);
+    DIGITOR_STAGE(PreviewDestinationStorage);
+    DIGITOR_STAGE(LutUpload); DIGITOR_STAGE(ParameterResourceCreation);
+    DIGITOR_STAGE(ParameterUpload); DIGITOR_STAGE(BufferMemoryAllocation);
+    DIGITOR_STAGE(BufferMemoryBinding); DIGITOR_STAGE(DescriptorPoolCreation);
+    DIGITOR_STAGE(DescriptorHeapCreation); DIGITOR_STAGE(DescriptorSetAllocation);
+    DIGITOR_STAGE(ImageViewCreation); DIGITOR_STAGE(ShaderResourceViewCreation);
+    DIGITOR_STAGE(CpuSourceShaderResourceViewCreation);
+    DIGITOR_STAGE(GpuSourceShaderResourceViewCreation);
+    DIGITOR_STAGE(LutShaderResourceViewCreation);
+    DIGITOR_STAGE(FramebufferCreation); DIGITOR_STAGE(FramebufferAttachment);
+    DIGITOR_STAGE(FramebufferValidation);
+    DIGITOR_STAGE(UnorderedAccessViewCreation); DIGITOR_STAGE(SourceUpload);
+    DIGITOR_STAGE(UniformLookup); DIGITOR_STAGE(ResourceBinding); DIGITOR_STAGE(DrawSetup);
+    DIGITOR_STAGE(DescriptorUpdate); DIGITOR_STAGE(SourceUploadRecording);
+    DIGITOR_STAGE(LutUploadRecording); DIGITOR_STAGE(ParameterUploadRecording);
+    DIGITOR_STAGE(CommandPoolCreation); DIGITOR_STAGE(CommandAllocatorResetOrCreation);
+    DIGITOR_STAGE(CommandQueueCreation);
+    DIGITOR_STAGE(CommandBufferOrListAllocation); DIGITOR_STAGE(CommandBufferOrListBeginReset);
+    DIGITOR_STAGE(CommandRecording); DIGITOR_STAGE(DispatchOrDraw);
+    DIGITOR_STAGE(ComputeEncoderCreation); DIGITOR_STAGE(BlitEncoderCreation);
+    DIGITOR_STAGE(SourceTextureBinding); DIGITOR_STAGE(OutputTextureBinding);
+    DIGITOR_STAGE(BufferBinding); DIGITOR_STAGE(DispatchSetup);
+    DIGITOR_STAGE(EncoderCompletion);
+    DIGITOR_STAGE(SourceTransition); DIGITOR_STAGE(ConsumerDestinationTransition);
+    DIGITOR_STAGE(ValidationTransition);
+    DIGITOR_STAGE(Blit); DIGITOR_STAGE(ConsumerCopySubmission); DIGITOR_STAGE(Flush);
+    DIGITOR_STAGE(CommandBufferOrListClose); DIGITOR_STAGE(QueueSubmission);
+    DIGITOR_STAGE(FenceSignal); DIGITOR_STAGE(FenceCreation);
+    DIGITOR_STAGE(EventCreation); DIGITOR_STAGE(EventSetup);
+    DIGITOR_STAGE(SynchronizationWait); DIGITOR_STAGE(SynchronizationVerification);
+    DIGITOR_STAGE(CommandStatusVerification);
+    DIGITOR_STAGE(ProcessedFrameCreation); DIGITOR_STAGE(PreviewAcquisition);
+    DIGITOR_STAGE(PreviewPresentation); DIGITOR_STAGE(ValidationReadbackResourceCreation);
+    DIGITOR_STAGE(ValidationReadbackCopy); DIGITOR_STAGE(ValidationReadbackMap);
+    DIGITOR_STAGE(CpuReadbackCopy);
+    DIGITOR_STAGE(ValidationCpuCopy);
+    DIGITOR_STAGE(DeterministicOutOfMemory); DIGITOR_STAGE(DeviceLost);
+    DIGITOR_STAGE(ReflectionValidation);
+#undef DIGITOR_STAGE
+  }
+  return "Unknown";
+}
 void note_cpu_color_reference() noexcept { ++cpu_reference_count; }
 std::uint64_t cpu_color_reference_count() noexcept { return cpu_reference_count.load(); }
 void reset_cpu_color_reference_count() noexcept { cpu_reference_count.store(0); }
@@ -73,8 +186,20 @@ DigitorResult IRenderBackend::injected_failure(GpuFailurePoint point) noexcept {
       cpu_color_reference_count() - provenance_.cpu_color_reference_invocations;
   provenance_.native_error_code = -static_cast<std::int64_t>(point);
   provenance_.device_lost = point == GpuFailurePoint::DeviceLost;
-  return point == GpuFailurePoint::OutOfMemory ? DIGITOR_RESULT_OUT_OF_MEMORY
+  return point == GpuFailurePoint::DeterministicOutOfMemory ? DIGITOR_RESULT_OUT_OF_MEMORY
                                                : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+}
+DigitorResult IRenderBackend::inject_at(GpuFailurePoint point, const char* operation) noexcept {
+  if (failure_point.load() != point) return DIGITOR_RESULT_OK;
+  provenance_.requested_failure_point = point;
+  provenance_.actual_stage_reached = point;
+  provenance_.failure_stage = gpu_failure_point_name(point);
+  provenance_.failure_operation = operation ? operation : "";
+  provenance_.failure_backend = provenance_.native_device_identity;
+  provenance_.output_cleared = !provenance_.output_written;
+  const auto result = injected_failure(point);
+  provenance_.failure_result = result;
+  return result;
 }
 bool gpu_validation_requested() noexcept {
   const auto value = environment_variable("DIGITOR_GPU_VALIDATION");
@@ -137,8 +262,6 @@ DigitorResult IRenderBackend::process_curves_gpu(
     std::int64_t timestamp, const CompiledRgbCurves& curves,
     ProcessedGpuFramePtr& out) noexcept {
   out.reset();
-  if (gpu_failure_point() != GpuFailurePoint::None)
-    return injected_failure(gpu_failure_point());
   const auto before = cpu_curve_reference_count();
   const auto result = execute_process_curves_gpu(source, width, height, timestamp,
                                                  curves, out);
@@ -157,9 +280,6 @@ DigitorResult IRenderBackend::process_curves_gpu(
 DigitorResult IRenderBackend::present_gpu_frame(const ProcessedGpuFramePtr& frame) noexcept {
   provenance_.direct_preview_consumed = false;
   if (!frame) return DIGITOR_RESULT_INVALID_ARGUMENT;
-  if (gpu_failure_point() == GpuFailurePoint::PreviewAcquisition ||
-      gpu_failure_point() == GpuFailurePoint::PreviewPresentation)
-    return injected_failure(gpu_failure_point());
   const auto result = execute_present_gpu_frame(frame);
   provenance_.direct_preview_consumed = result == DIGITOR_RESULT_OK;
   return result;
@@ -173,7 +293,6 @@ DigitorResult IRenderBackend::create_preview_consumer(const ProcessedGpuFramePtr
 }
 DigitorResult IRenderBackend::process_primary_wheels_gpu(std::span<const Color>s,std::uint32_t w,std::uint32_t h,std::int64_t ts,const PrimaryWheelsParameters&p,ProcessedGpuFramePtr&out)noexcept{
  out.reset();const auto before=primary_wheels_reference_count();
- if(gpu_failure_point()!=GpuFailurePoint::None)return injected_failure(gpu_failure_point());
  const auto result=execute_process_primary_wheels_gpu(s,w,h,ts,p,out);
  provenance_.cpu_primary_wheels_invocations=primary_wheels_reference_count()-before;
  if(result!=DIGITOR_RESULT_OK||!out||provenance_.cpu_primary_wheels_invocations||provenance_.primary_wheels_fallback_invocations||provenance_.normal_preview_readback_count){out.reset();return result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result;}
@@ -192,7 +311,7 @@ DigitorResult IRenderBackend::process_primary_wheels_gpu(const GpuSourceResource
 }
 DigitorResult IRenderBackend::execute_process_curves_gpu(const GpuSourceResource&,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
 DigitorResult IRenderBackend::execute_process_primary_wheels_gpu(const GpuSourceResource&,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&out)noexcept{out.reset();return DIGITOR_RESULT_UNSUPPORTED;}
-DigitorResult IRenderBackend::validation_readback_primary_wheels(const ProcessedGpuFramePtr&frame,std::span<Color>out)noexcept{if(!frame||!frame->validation_readback_supported())return DIGITOR_RESULT_UNSUPPORTED;if(gpu_failure_point()==GpuFailurePoint::Readback)return injected_failure(GpuFailurePoint::Readback);const auto result=execute_validation_readback_primary_wheels(frame,out);provenance_.validation_readback_completed=result==DIGITOR_RESULT_OK;return result;}
+DigitorResult IRenderBackend::validation_readback_primary_wheels(const ProcessedGpuFramePtr&frame,std::span<Color>out)noexcept{if(!frame||!frame->validation_readback_supported())return DIGITOR_RESULT_UNSUPPORTED;const auto result=execute_validation_readback_primary_wheels(frame,out);provenance_.validation_readback_completed=result==DIGITOR_RESULT_OK;return result;}
 DigitorResult IRenderBackend::execute_validation_readback_primary_wheels(const ProcessedGpuFramePtr&,std::span<Color>)noexcept{return DIGITOR_RESULT_UNSUPPORTED;}
 DigitorResult IRenderBackend::execute_process_curves_gpu(
     std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,

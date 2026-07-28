@@ -3,8 +3,10 @@
 #include "digitor/digitor.h"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include "digitor/gpu_frame.hpp"
+#include "gpu/native_pipeline_cache.hpp"
 
 namespace digitor {
 
@@ -12,22 +14,115 @@ enum class CacheDisposition { NotApplicable, Miss, Hit };
 enum class GpuFailurePoint {
   None,
   ShaderCompilation,
-  ReflectionValidation,
+  LibraryCreation,
+  ShaderFunctionLookup,
+  VertexShaderCreation,
+  VertexShaderCompilation,
+  FragmentShaderCreation,
+  FragmentShaderCompilation,
+  ProgramCreation,
+  ProgramLink,
+  DescriptorSetLayoutCreation,
+  RootSignatureSerialization,
+  RootSignatureCreation,
+  PipelineLayoutCreation,
   PipelineCreation,
+  SourceResourceCreation,
+  SourceMemoryAllocation,
+  SourceMemoryBinding,
+  OutputResourceCreation,
+  OutputMemoryAllocation,
+  OutputMemoryBinding,
+  PreviewDestinationCreation,
+  SourceResourceStorage,
+  OutputResourceStorage,
+  PreviewDestinationStorage,
   LutResourceCreation,
   LutUpload,
-  DescriptorAllocation,
-  SourceAllocation,
-  DestinationAllocation,
-  Upload,
+  ParameterResourceCreation,
+  ParameterUpload,
+  BufferMemoryAllocation,
+  BufferMemoryBinding,
+  DescriptorPoolCreation,
+  DescriptorHeapCreation,
+  DescriptorSetAllocation,
+  ImageViewCreation,
+  FramebufferCreation,
+  FramebufferAttachment,
+  FramebufferValidation,
+  ShaderResourceViewCreation,
+  CpuSourceShaderResourceViewCreation,
+  GpuSourceShaderResourceViewCreation,
+  LutShaderResourceViewCreation,
+  UnorderedAccessViewCreation,
+  SourceUpload,
+  UniformLookup,
+  ResourceBinding,
+  DescriptorUpdate,
+  SourceUploadRecording,
+  LutUploadRecording,
+  ParameterUploadRecording,
+  DrawSetup,
+  CommandPoolCreation,
+  CommandQueueCreation,
+  CommandAllocatorResetOrCreation,
+  CommandBufferOrListAllocation,
+  CommandBufferOrListBeginReset,
   CommandRecording,
+  ComputeEncoderCreation,
+  BlitEncoderCreation,
+  SourceTextureBinding,
+  OutputTextureBinding,
+  BufferBinding,
+  DispatchSetup,
+  EncoderCompletion,
+  SourceTransition,
+  ConsumerDestinationTransition,
+  ValidationTransition,
+  DispatchOrDraw,
+  Blit,
+  ConsumerCopySubmission,
+  Flush,
+  CommandBufferOrListClose,
   QueueSubmission,
-  Synchronization,
+  FenceSignal,
+  FenceCreation,
+  EventCreation,
+  EventSetup,
+  SynchronizationWait,
+  SynchronizationVerification,
+  CommandStatusVerification,
+  ProcessedFrameCreation,
   PreviewAcquisition,
   PreviewPresentation,
-  Readback,
+  ValidationReadbackResourceCreation,
+  ValidationReadbackCopy,
+  ValidationReadbackMap,
+  CpuReadbackCopy,
+  ValidationCpuCopy,
+  DeterministicOutOfMemory,
   DeviceLost,
-  OutOfMemory
+  // Source-compatible names retained for older internal tests.  These are not
+  // part of the public C ABI and new qualification must use the exact stages.
+  ReflectionValidation,
+  DescriptorAllocation = DescriptorSetAllocation,
+  SourceAllocation = SourceResourceCreation,
+  DestinationAllocation = OutputResourceCreation,
+  Upload = SourceUpload,
+  Synchronization = SynchronizationWait,
+  Readback = ValidationReadbackCopy,
+  OutOfMemory = DeterministicOutOfMemory
+};
+
+const char* gpu_failure_point_name(GpuFailurePoint) noexcept;
+std::span<const GpuFailurePoint> all_gpu_failure_points() noexcept;
+
+struct NativeResourceCounts {
+  std::int64_t images{}, memory_allocations{}, image_views{}, buffers{};
+  std::int64_t descriptor_pools{}, descriptor_heaps{}, descriptor_sets{};
+  std::int64_t command_resources{}, pipelines{}, consumer_destinations{};
+  std::int64_t frame_owners{};
+  auto operator<=>(const NativeResourceCounts&) const = default;
 };
 
 // Internal test/debug evidence. Stable strings deliberately replace native
@@ -76,6 +171,21 @@ struct ExecutionProvenance {
   std::uint64_t primary_wheels_fallback_invocations{};
   std::uint64_t normal_preview_readback_count{};
   std::string failure_stage;
+  GpuFailurePoint requested_failure_point{GpuFailurePoint::None};
+  GpuFailurePoint actual_stage_reached{GpuFailurePoint::None};
+  std::string failure_backend;
+  std::string failure_operation;
+  std::string failure_path;
+  DigitorResult failure_result{DIGITOR_RESULT_OK};
+  bool output_cleared{};
+  bool cleanup_baseline{};
+  bool cache_valid{};
+  NativeResourceCounts resources_before{}, resources_after{};
+  NativePipelineCacheCounters cache_before{}, cache_after{};
+  std::uint64_t intermediate_readback_count{};
+  std::uint64_t intermediate_reupload_count{};
+  std::int64_t preview_acquisition_balance{};
+  bool recovery_succeeded{};
 };
 
 void set_gpu_failure_point(GpuFailurePoint point) noexcept;

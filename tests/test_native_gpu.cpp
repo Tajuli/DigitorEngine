@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <string_view>
+#include <string>
 #include <vector>
 
 #include "gpu/gpu_backend.hpp"
@@ -87,6 +88,190 @@ bool qualify_composition(digitor::IRenderBackend& backend,std::string_view name)
   for(bool wheels_first:{true,false}){std::vector<digitor::Color>middle(input.size()),expected(input.size()),actual(input.size());if(wheels_first){digitor::apply_primary_wheels_reference(input,middle,*wheels);curves->apply(middle,expected);}else{curves->apply(input,middle);digitor::apply_primary_wheels_reference(middle,expected,*wheels);}const auto pw_before=digitor::primary_wheels_reference_count(),curve_before=digitor::cpu_curve_reference_count();digitor::ProcessedGpuFramePtr first,final;auto first_result=wheels_first?backend.process_primary_wheels_gpu(input,width,height,201,*wheels,first):backend.process_curves_gpu(input,width,height,201,*curves,first);auto source=backend.gpu_source(first);auto second_result=first_result==DIGITOR_RESULT_OK?(wheels_first?backend.process_curves_gpu(source,202,*curves,final):backend.process_primary_wheels_gpu(source,202,*wheels,final)):first_result;auto read=final?backend.validation_readback_primary_wheels(final,actual):DIGITOR_RESULT_INTERNAL_ERROR;double max_abs=0,max_rel=0,squares=0;std::size_t failures=0,first_failure=SIZE_MAX,worst=0;for(std::size_t n=0;n<actual.size();++n)for(int c=0;c<4;c++){auto e=(&expected[n].r)[c],a=(&actual[n].r)[c];double error=std::abs(double(e)-a),relative=error/std::max(1e-6,std::abs(double(e)));if(error>max_abs){max_abs=error;worst=n;}max_rel=std::max(max_rel,relative);squares+=error*error;if(error>2e-5&&relative>2e-5){if(first_failure==SIZE_MAX)first_failure=n;++failures;}}double rms=std::sqrt(squares/(actual.size()*4)),psnr=rms==0?INFINITY:20*std::log10(1/rms);digitor::VideoFrame ev{.width=width,.height=height,.pixels=expected},av{.width=width,.height=height,.pixels=actual};double ssim=digitor::calculate_ssim(ev,av);const auto&prov=backend.execution_provenance();auto print=[](digitor::Color c){std::cerr<<'('<<c.r<<','<<c.g<<','<<c.b<<','<<c.a<<')';};std::cerr<<"COMPOSITION_METRICS backend="<<name<<" device=\""<<backend.info().device_name<<"\" order="<<(wheels_first?"primary-then-curves":"curves-then-primary")<<" dimensions="<<width<<'x'<<height<<" max_absolute_error="<<max_abs<<" max_relative_error="<<max_rel<<" rms="<<rms<<" psnr="<<psnr<<" ssim="<<ssim<<" failing_components="<<failures<<" first_failing_coordinate="<<(first_failure==SIZE_MAX?-1:int(first_failure%width))<<','<<(first_failure==SIZE_MAX?-1:int(first_failure/width))<<" worst_coordinate="<<worst%width<<','<<worst/width<<" expected=";print(expected[worst]);std::cerr<<" actual=";print(actual[worst]);std::cerr<<" cpu_primary_delta="<<digitor::primary_wheels_reference_count()-pw_before<<" cpu_curves_delta="<<digitor::cpu_curve_reference_count()-curve_before<<" fallback="<<(prov.primary_wheels_fallback_invocations+prov.curve_fallback_invocations)<<" intermediate_readback=0 intermediate_reupload=0 normal_readback="<<prov.normal_preview_readback_count<<" validation_readback="<<(read==DIGITOR_RESULT_OK)<<" dispatches=2 submissions=2 synchronizations=2\n";passed&=first_result==DIGITOR_RESULT_OK&&second_result==DIGITOR_RESULT_OK&&read==DIGITOR_RESULT_OK&&digitor::primary_wheels_reference_count()==pw_before&&digitor::cpu_curve_reference_count()==curve_before&&prov.primary_wheels_fallback_invocations==0&&prov.curve_fallback_invocations==0&&prov.normal_preview_readback_count==0&&failures==0&&rms<=5e-6&&ssim>=.99999;}
   return passed;
 }
+
+bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
+  using F=digitor::GpuFailurePoint;
+  constexpr std::uint32_t width=2,height=2;
+  std::vector<digitor::Color> pixels(4,{.2f,.4f,.6f,1.f});
+  auto wheels=digitor::PrimaryWheelsParameters::create();
+  digitor::RgbCurvesParameters curve_desc;
+  auto curves=digitor::CompiledRgbCurves::compile(curve_desc);
+  const std::array process_common{
+    F::ShaderCompilation,F::DescriptorSetLayoutCreation,F::PipelineLayoutCreation,
+    F::PipelineCreation,F::OutputResourceCreation,F::OutputMemoryAllocation,
+    F::OutputMemoryBinding,F::PreviewDestinationCreation,F::ImageViewCreation,
+    F::ParameterResourceCreation,F::ParameterUpload,F::BufferMemoryAllocation,
+    F::BufferMemoryBinding,F::DescriptorPoolCreation,F::DescriptorSetAllocation,
+    F::DescriptorUpdate,F::ResourceBinding,F::CommandBufferOrListAllocation,
+    F::CommandBufferOrListBeginReset,F::CommandRecording,F::DispatchOrDraw,
+    F::CommandBufferOrListClose,F::QueueSubmission,F::SynchronizationWait,
+    F::ProcessedFrameCreation,F::DeterministicOutOfMemory};
+  const std::array cpu_source{F::SourceResourceCreation,F::SourceMemoryAllocation,
+    F::SourceMemoryBinding,F::SourceUpload,F::SourceUploadRecording};
+  const std::array curve_only{F::LutResourceCreation,F::LutUpload};
+  const std::array preview_create{F::PreviewAcquisition,F::PreviewDestinationCreation,
+    F::OutputMemoryAllocation,F::OutputMemoryBinding,F::ImageViewCreation,
+    F::DeterministicOutOfMemory};
+  const std::array preview_submit{F::PreviewPresentation,F::ConsumerCopySubmission,
+    F::CommandBufferOrListAllocation,F::CommandBufferOrListBeginReset,
+    F::CommandRecording,F::CommandBufferOrListClose,F::QueueSubmission,
+    F::SynchronizationWait};
+  const std::array validation{F::ValidationReadbackResourceCreation,
+    F::BufferMemoryAllocation,F::BufferMemoryBinding,
+    F::CommandBufferOrListAllocation,F::CommandBufferOrListBeginReset,
+    F::CommandRecording,F::ValidationTransition,F::ValidationReadbackCopy,F::CommandBufferOrListClose,
+    F::QueueSubmission,F::SynchronizationWait,F::ValidationReadbackMap,
+    F::DeterministicOutOfMemory};
+  auto contains=[](auto const& values,F point){return std::find(values.begin(),values.end(),point)!=values.end();};
+  auto applicable=[&](std::string_view path,F point){
+    if(path=="primary-cpu")return contains(process_common,point)||contains(cpu_source,point);
+    if(path=="primary-gpu")return contains(process_common,point);
+    if(path=="curves-cpu")return contains(process_common,point)||contains(cpu_source,point)||contains(curve_only,point);
+    if(path=="curves-gpu")return contains(process_common,point)||contains(curve_only,point);
+    if(path=="preview-create")return contains(preview_create,point);
+    if(path=="preview-submit")return contains(preview_submit,point);
+    return contains(validation,point);
+  };
+  const std::array paths{std::string_view{"primary-cpu"},std::string_view{"primary-gpu"},
+    std::string_view{"curves-cpu"},std::string_view{"curves-gpu"},
+    std::string_view{"preview-create"},std::string_view{"preview-submit"},
+    std::string_view{"validation"}};
+  bool passed=true;
+  for(auto path:paths)for(auto point:digitor::all_gpu_failure_points()){
+    if(point==F::DeviceLost){
+      std::cerr<<"FAILURE_STAGE backend=Vulkan path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)
+        <<" classification=UNSUPPORTED reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason=unsafe-device-loss-simulation\n";
+      continue;
+    }
+    if(!applicable(path,point)){
+      const char* reason="stage-not-used-by-this-vulkan-path";
+      if(point==F::ShaderFunctionLookup)reason="SPIR-V-entry-point-resolution-occurs-in-vkCreateComputePipelines";
+      else if(point==F::RootSignatureSerialization||point==F::RootSignatureCreation||
+              point==F::DescriptorHeapCreation||point==F::ShaderResourceViewCreation||
+              point==F::UnorderedAccessViewCreation)reason="D3D12-only-stage";
+      else if(point==F::LibraryCreation||point==F::VertexShaderCreation||
+              point==F::VertexShaderCompilation||point==F::FragmentShaderCreation||
+              point==F::FragmentShaderCompilation||point==F::ProgramCreation||point==F::ProgramLink)
+        reason="stage-does-not-exist-in-Vulkan-compute-path";
+      else if(point==F::SourceResourceStorage||point==F::OutputResourceStorage||
+              point==F::PreviewDestinationStorage||point==F::FramebufferCreation||
+              point==F::FramebufferAttachment||point==F::FramebufferValidation||
+              point==F::UniformLookup||point==F::DrawSetup||point==F::Flush)
+        reason="GLES-only-stage";
+      else if(point==F::LutUploadRecording||point==F::ParameterUploadRecording)
+        reason="Vulkan-host-coherent-LUT-parameter-upload-has-no-command-copy";
+      else if(point==F::FenceSignal)reason="Vulkan-path-uses-queue-idle-without-explicit-fence";
+      std::cerr<<"FAILURE_STAGE backend=Vulkan path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)
+        <<" classification=NOT_APPLICABLE reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason="<<reason<<"\n";
+      continue;
+    }
+    digitor::ProcessedGpuFramePtr upstream;
+    digitor::set_gpu_failure_point(F::None);
+    if(backend.process_primary_wheels_gpu(pixels,width,height,700,*wheels,upstream)!=DIGITOR_RESULT_OK||!upstream)return false;
+    std::shared_ptr<digitor::PreviewConsumerDestination> destination;
+    if(path=="preview-submit"&&backend.create_preview_consumer(upstream,destination)!=DIGITOR_RESULT_OK)return false;
+    if(point==F::ShaderCompilation||point==F::DescriptorSetLayoutCreation||
+       point==F::PipelineLayoutCreation||point==F::PipelineCreation)
+      backend.clear_native_pipeline_cache_for_test();
+    digitor::ProcessedGpuFramePtr failed;
+    std::shared_ptr<digitor::PreviewConsumerDestination> failed_destination;
+    std::vector<digitor::Color> readback(4);
+    digitor::set_gpu_failure_point(point);
+    DigitorResult result=DIGITOR_RESULT_INTERNAL_ERROR;
+    auto invoke=[&](bool recovery){
+      if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,width,height,recovery?702:701,*wheels,failed);
+      if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?702:701,*wheels,failed);
+      if(path=="curves-cpu")return backend.process_curves_gpu(pixels,width,height,recovery?702:701,*curves,failed);
+      if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?702:701,*curves,failed);
+      if(path=="preview-create")return backend.create_preview_consumer(upstream,failed_destination);
+      if(path=="preview-submit")return destination->submit(upstream);
+      return backend.validation_readback_primary_wheels(upstream,readback);
+    };
+    result=invoke(false);
+    const auto evidence=backend.execution_provenance();
+    failed.reset();failed_destination.reset();
+    digitor::set_gpu_failure_point(F::None);
+    const auto recovery=invoke(true);
+    const bool reached=evidence.requested_failure_point==point&&evidence.actual_stage_reached==point;
+    const bool output_cleared=evidence.output_cleared&&(!failed);
+    const bool cpu_clean=evidence.cpu_primary_wheels_invocations==0&&evidence.cpu_curve_invocations==0;
+    const bool fallback=evidence.primary_wheels_fallback_invocations||evidence.curve_fallback_invocations;
+    const bool recovered=recovery==DIGITOR_RESULT_OK;
+    const bool ok=result!=DIGITOR_RESULT_OK&&reached&&output_cleared&&evidence.cleanup_baseline&&
+      evidence.cache_valid&&cpu_clean&&!fallback&&!evidence.normal_preview_readback_count&&recovered;
+    std::cerr<<"FAILURE_STAGE backend=Vulkan path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)
+      <<" classification="<<(ok?"PASS":"FAIL")<<" reached="<<reached
+      <<" output_cleared="<<output_cleared<<" cleanup="<<evidence.cleanup_baseline
+      <<" cache_ok="<<evidence.cache_valid<<" cpu_primary_delta="<<evidence.cpu_primary_wheels_invocations
+      <<" cpu_curves_delta="<<evidence.cpu_curve_invocations<<" fallback="<<fallback
+      <<" intermediate_readback="<<evidence.intermediate_readback_count
+      <<" intermediate_reupload="<<evidence.intermediate_reupload_count
+      <<" normal_readback="<<evidence.normal_preview_readback_count
+      <<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)
+      <<" recovery="<<recovered<<'\n';
+    passed&=ok;
+  }
+  return passed;
+}
+
+bool qualify_vulkan_cache_failure(digitor::IRenderBackend& backend) {
+  std::vector<digitor::Color> pixels(4,{.1f,.3f,.7f,1.f});
+  auto parameters=digitor::PrimaryWheelsParameters::create();
+  backend.clear_native_pipeline_cache_for_test();
+  const auto before=backend.native_pipeline_cache_counters();
+  const auto resources=backend.native_resource_counts();
+  digitor::set_gpu_failure_point(digitor::GpuFailurePoint::PipelineCreation);
+  digitor::ProcessedGpuFramePtr frame;
+  const auto failure=backend.process_primary_wheels_gpu(pixels,2,2,801,*parameters,frame);
+  const auto failed=backend.native_pipeline_cache_counters();
+  const bool rejected=failure!=DIGITOR_RESULT_OK&&!frame&&failed.lookups==before.lookups+1&&
+    failed.misses==before.misses+1&&failed.creation_failures==before.creation_failures+1&&
+    failed.hits==before.hits&&backend.native_pipeline_cache_size()==0&&
+    backend.native_resource_counts()==resources;
+  digitor::set_gpu_failure_point(digitor::GpuFailurePoint::None);
+  const auto retry=backend.process_primary_wheels_gpu(pixels,2,2,802,*parameters,frame);
+  const auto created=backend.native_pipeline_cache_counters();
+  digitor::ProcessedGpuFramePtr hit_frame;
+  const auto hit=backend.process_primary_wheels_gpu(pixels,2,2,803,*parameters,hit_frame);
+  const auto reused=backend.native_pipeline_cache_counters();
+  const bool passed=rejected&&retry==DIGITOR_RESULT_OK&&frame&&
+    created.misses==failed.misses+1&&created.creations==failed.creations+1&&
+    backend.native_pipeline_cache_size()==1&&hit==DIGITOR_RESULT_OK&&hit_frame&&
+    reused.hits==created.hits+1&&reused.creations==created.creations;
+  std::cerr<<"VULKAN_CACHE_FAILURE lookup="<<(failed.lookups-before.lookups)
+    <<" miss="<<(failed.misses-before.misses)
+    <<" creation_failure="<<(failed.creation_failures-before.creation_failures)
+    <<" inserted_after_failure="<<(rejected?0:1)
+    <<" retry_creation="<<(created.creations-failed.creations)
+    <<" subsequent_hit="<<(reused.hits-created.hits)
+    <<" status="<<(passed?"PASS":"FAIL")<<'\n';
+  return passed;
+}
+
+bool qualify_d3d12_failure_matrix(digitor::IRenderBackend& backend) {
+  using F=digitor::GpuFailurePoint;std::vector<digitor::Color> pixels(4,{.2f,.4f,.6f,1.f});auto wheels=digitor::PrimaryWheelsParameters::create();digitor::RgbCurvesParameters cd;auto curves=digitor::CompiledRgbCurves::compile(cd);
+  const std::array common{F::ShaderCompilation,F::RootSignatureSerialization,F::RootSignatureCreation,F::PipelineCreation,F::OutputResourceCreation,F::PreviewDestinationCreation,F::DescriptorHeapCreation,F::UnorderedAccessViewCreation,F::CommandAllocatorResetOrCreation,F::CommandBufferOrListBeginReset,F::CommandRecording,F::ResourceBinding,F::ParameterUpload,F::DispatchOrDraw,F::CommandBufferOrListClose,F::QueueSubmission,F::FenceSignal,F::EventSetup,F::SynchronizationWait,F::SynchronizationVerification,F::ProcessedFrameCreation,F::DeterministicOutOfMemory};
+  const std::array cpu{F::SourceResourceCreation,F::SourceUpload,F::SourceUploadRecording,F::SourceTransition,F::CpuSourceShaderResourceViewCreation};const std::array curve{F::LutResourceCreation,F::LutUpload,F::LutShaderResourceViewCreation};const std::array gpu_source_view{F::GpuSourceShaderResourceViewCreation};
+  const std::array pc{F::PreviewAcquisition,F::PreviewDestinationCreation,F::DeterministicOutOfMemory};const std::array ps{F::PreviewPresentation,F::ConsumerCopySubmission,F::SourceTransition,F::ConsumerDestinationTransition,F::CommandAllocatorResetOrCreation,F::CommandBufferOrListBeginReset,F::CommandBufferOrListClose,F::QueueSubmission,F::FenceSignal,F::EventSetup,F::SynchronizationWait,F::SynchronizationVerification};
+  const std::array vr{F::ValidationReadbackResourceCreation,F::CommandAllocatorResetOrCreation,F::CommandBufferOrListBeginReset,F::ValidationTransition,F::ValidationReadbackCopy,F::CommandBufferOrListClose,F::QueueSubmission,F::FenceSignal,F::SynchronizationWait,F::ValidationReadbackMap,F::CpuReadbackCopy,F::EventSetup,F::SynchronizationVerification,F::DeterministicOutOfMemory};
+  auto has=[](auto const&a,F p){return std::find(a.begin(),a.end(),p)!=a.end();};auto applies=[&](std::string_view path,F p){if(path=="primary-cpu")return has(common,p)||has(cpu,p);if(path=="primary-gpu")return has(common,p)||has(gpu_source_view,p);if(path=="curves-cpu")return has(common,p)||has(cpu,p)||has(curve,p);if(path=="curves-gpu")return has(common,p)||has(curve,p)||has(gpu_source_view,p);if(path=="preview-create")return has(pc,p);if(path=="preview-submit")return has(ps,p);return has(vr,p);};
+  const std::array paths{std::string_view{"primary-cpu"},std::string_view{"primary-gpu"},std::string_view{"curves-cpu"},std::string_view{"curves-gpu"},std::string_view{"preview-create"},std::string_view{"preview-submit"},std::string_view{"validation"}};bool passed=true;
+  for(auto path:paths)for(auto point:digitor::all_gpu_failure_points()){
+    if(point==F::DeviceLost){std::cerr<<"FAILURE_STAGE backend=D3D12 path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification=UNSUPPORTED reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason=unsafe-device-loss-simulation\n";continue;}
+    if(!applies(path,point)){const char*reason="stage-not-used-by-this-D3D12-path";if(point==F::PipelineLayoutCreation||point==F::DescriptorSetLayoutCreation||point==F::DescriptorPoolCreation||point==F::DescriptorSetAllocation||point==F::ImageViewCreation)reason="Vulkan-only-resource-model";else if(point==F::LibraryCreation||point==F::ShaderFunctionLookup)reason="Metal-only-stage";else if(point==F::VertexShaderCreation||point==F::VertexShaderCompilation||point==F::FragmentShaderCreation||point==F::FragmentShaderCompilation||point==F::ProgramCreation||point==F::ProgramLink||point==F::FramebufferCreation||point==F::FramebufferAttachment||point==F::FramebufferValidation||point==F::UniformLookup||point==F::DrawSetup||point==F::Flush)reason="GLES-only-stage";else if(point==F::FenceCreation||point==F::EventCreation)reason="D3D12-backend-initialization-only-stage";else if(point==F::ParameterResourceCreation)reason="D3D12-parameters-use-root-constants-without-resource";else if(point==F::BufferMemoryAllocation||point==F::BufferMemoryBinding||point==F::SourceMemoryAllocation||point==F::SourceMemoryBinding||point==F::OutputMemoryAllocation||point==F::OutputMemoryBinding)reason="D3D12-committed-resources-combine-resource-and-memory";std::cerr<<"FAILURE_STAGE backend=D3D12 path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification=NOT_APPLICABLE reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason="<<reason<<'\n';continue;}
+    digitor::set_gpu_failure_point(F::None);digitor::ProcessedGpuFramePtr upstream;if(backend.process_primary_wheels_gpu(pixels,2,2,900,*wheels,upstream)!=DIGITOR_RESULT_OK||!upstream)return false;std::shared_ptr<digitor::PreviewConsumerDestination> destination;if(path=="preview-submit"&&backend.create_preview_consumer(upstream,destination)!=DIGITOR_RESULT_OK)return false;
+    if(point==F::ShaderCompilation||point==F::RootSignatureSerialization||point==F::RootSignatureCreation||point==F::PipelineCreation)backend.clear_native_pipeline_cache_for_test();
+    digitor::ProcessedGpuFramePtr output;std::shared_ptr<digitor::PreviewConsumerDestination> consumer;std::vector<digitor::Color> readback(4);auto invoke=[&](bool recovery){if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,2,2,recovery?902:901,*wheels,output);if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?902:901,*wheels,output);if(path=="curves-cpu")return backend.process_curves_gpu(pixels,2,2,recovery?902:901,*curves,output);if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?902:901,*curves,output);if(path=="preview-create")return backend.create_preview_consumer(upstream,consumer);if(path=="preview-submit")return destination->submit(upstream);return backend.validation_readback_primary_wheels(upstream,readback);};
+    digitor::set_gpu_failure_point(point);const auto failure=invoke(false);const auto evidence=backend.execution_provenance();output.reset();consumer.reset();digitor::set_gpu_failure_point(F::None);const auto recovery=invoke(true);const bool reached=evidence.requested_failure_point==point&&evidence.actual_stage_reached==point;const bool clean=evidence.cpu_primary_wheels_invocations==0&&evidence.cpu_curve_invocations==0;const bool fallback=evidence.primary_wheels_fallback_invocations||evidence.curve_fallback_invocations;const bool ok=failure!=DIGITOR_RESULT_OK&&reached&&evidence.output_cleared&&evidence.cleanup_baseline&&evidence.cache_valid&&clean&&!fallback&&!evidence.normal_preview_readback_count&&recovery==DIGITOR_RESULT_OK;
+    std::cerr<<"FAILURE_STAGE backend=D3D12 path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification="<<(ok?"PASS":"FAIL")<<" reached="<<reached<<" output_cleared="<<evidence.output_cleared<<" cleanup="<<evidence.cleanup_baseline<<" cache_ok="<<evidence.cache_valid<<" cpu_primary_delta="<<evidence.cpu_primary_wheels_invocations<<" cpu_curves_delta="<<evidence.cpu_curve_invocations<<" fallback="<<fallback<<" intermediate_readback="<<evidence.intermediate_readback_count<<" intermediate_reupload="<<evidence.intermediate_reupload_count<<" normal_readback="<<evidence.normal_preview_readback_count<<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)<<" recovery="<<(recovery==DIGITOR_RESULT_OK)<<'\n';passed&=ok;
+  }return passed;
+}
+
+bool qualify_d3d12_cache_failures(digitor::IRenderBackend&backend){using F=digitor::GpuFailurePoint;std::vector<digitor::Color>pixels(4,{.1f,.3f,.7f,1.f});auto wheels=digitor::PrimaryWheelsParameters::create();digitor::RgbCurvesParameters cd;auto curves=digitor::CompiledRgbCurves::compile(cd);bool passed=true;for(bool curve:{false,true})for(auto point:{F::ShaderCompilation,F::RootSignatureSerialization,F::RootSignatureCreation,F::PipelineCreation}){backend.clear_native_pipeline_cache_for_test();auto before=backend.native_pipeline_cache_counters();auto resources=backend.native_resource_counts();digitor::set_gpu_failure_point(point);digitor::ProcessedGpuFramePtr frame;auto failure=curve?backend.process_curves_gpu(pixels,2,2,950,*curves,frame):backend.process_primary_wheels_gpu(pixels,2,2,950,*wheels,frame);auto failed=backend.native_pipeline_cache_counters();bool rejected=failure!=DIGITOR_RESULT_OK&&!frame&&failed.lookups==before.lookups+1&&failed.misses==before.misses+1&&failed.creation_failures==before.creation_failures+1&&failed.hits==before.hits&&backend.native_pipeline_cache_size()==0&&backend.native_resource_counts()==resources;digitor::set_gpu_failure_point(F::None);auto retry=curve?backend.process_curves_gpu(pixels,2,2,951,*curves,frame):backend.process_primary_wheels_gpu(pixels,2,2,951,*wheels,frame);auto created=backend.native_pipeline_cache_counters();digitor::ProcessedGpuFramePtr hitframe;auto hit=curve?backend.process_curves_gpu(pixels,2,2,952,*curves,hitframe):backend.process_primary_wheels_gpu(pixels,2,2,952,*wheels,hitframe);auto reused=backend.native_pipeline_cache_counters();bool ok=rejected&&retry==DIGITOR_RESULT_OK&&frame&&created.misses==failed.misses+1&&created.creations==failed.creations+1&&hit==DIGITOR_RESULT_OK&&hitframe&&reused.hits==created.hits+1&&reused.creations==created.creations;std::cerr<<"D3D12_CACHE_FAILURE operation="<<(curve?"rgb-curves":"primary-wheels")<<" stage="<<digitor::gpu_failure_point_name(point)<<" lookup="<<(failed.lookups-before.lookups)<<" miss="<<(failed.misses-before.misses)<<" creation_failure="<<(failed.creation_failures-before.creation_failures)<<" retry_creation="<<(created.creations-failed.creations)<<" subsequent_hit="<<(reused.hits-created.hits)<<" status="<<(ok?"PASS":"FAIL")<<'\n';passed&=ok;}return passed;}
+
+bool qualify_metal_failure_matrix(digitor::IRenderBackend&backend){using F=digitor::GpuFailurePoint;std::vector<digitor::Color>pixels(4,{.2f,.4f,.6f,1.f});auto wheels=digitor::PrimaryWheelsParameters::create();digitor::RgbCurvesParameters cd;auto curves=digitor::CompiledRgbCurves::compile(cd);const std::array common{F::LibraryCreation,F::ShaderFunctionLookup,F::PipelineCreation,F::OutputResourceCreation,F::PreviewDestinationCreation,F::CommandQueueCreation,F::CommandBufferOrListAllocation,F::ComputeEncoderCreation,F::SourceTextureBinding,F::OutputTextureBinding,F::BufferBinding,F::DispatchSetup,F::DispatchOrDraw,F::EncoderCompletion,F::QueueSubmission,F::SynchronizationWait,F::CommandStatusVerification,F::ProcessedFrameCreation,F::DeterministicOutOfMemory};const std::array cpu{F::SourceResourceCreation,F::SourceUpload};const std::array primary{F::ParameterResourceCreation};const std::array curve{F::LutResourceCreation,F::LutUpload};const std::array pc{F::PreviewAcquisition,F::PreviewDestinationCreation,F::CommandQueueCreation,F::DeterministicOutOfMemory};const std::array ps{F::CommandBufferOrListAllocation,F::BlitEncoderCreation,F::ResourceBinding,F::PreviewPresentation,F::ConsumerCopySubmission,F::EncoderCompletion,F::QueueSubmission,F::SynchronizationWait,F::CommandStatusVerification};const std::array vr{F::ValidationReadbackResourceCreation,F::CommandBufferOrListAllocation,F::BlitEncoderCreation,F::ValidationReadbackCopy,F::EncoderCompletion,F::QueueSubmission,F::SynchronizationWait,F::CommandStatusVerification,F::ValidationCpuCopy,F::DeterministicOutOfMemory};auto has=[](auto const&a,F p){return std::find(a.begin(),a.end(),p)!=a.end();};auto applies=[&](std::string_view path,F p){if(path=="primary-cpu")return has(common,p)||has(cpu,p)||has(primary,p);if(path=="primary-gpu")return has(common,p)||has(primary,p);if(path=="curves-cpu")return has(common,p)||has(cpu,p)||has(curve,p);if(path=="curves-gpu")return has(common,p)||has(curve,p);if(path=="preview-create")return has(pc,p);if(path=="preview-submit")return has(ps,p);return has(vr,p);};const std::array paths{std::string_view{"primary-cpu"},std::string_view{"primary-gpu"},std::string_view{"curves-cpu"},std::string_view{"curves-gpu"},std::string_view{"preview-create"},std::string_view{"preview-submit"},std::string_view{"validation"}};bool passed=true;for(auto path:paths)for(auto point:digitor::all_gpu_failure_points()){if(point==F::DeviceLost){std::cerr<<"FAILURE_STAGE backend=Metal path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification=UNSUPPORTED reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason=unsafe-device-loss-simulation\n";continue;}if(!applies(path,point)){const char*reason="stage-not-used-by-this-Metal-path";if(point==F::DescriptorSetLayoutCreation||point==F::PipelineLayoutCreation||point==F::DescriptorPoolCreation||point==F::DescriptorSetAllocation||point==F::ImageViewCreation)reason="Vulkan-only-stage";else if(point==F::RootSignatureSerialization||point==F::RootSignatureCreation||point==F::DescriptorHeapCreation||point==F::ShaderResourceViewCreation||point==F::UnorderedAccessViewCreation||point==F::FenceSignal||point==F::FenceCreation||point==F::EventCreation||point==F::EventSetup||point==F::CpuSourceShaderResourceViewCreation||point==F::GpuSourceShaderResourceViewCreation||point==F::LutShaderResourceViewCreation||point==F::SourceTransition||point==F::ConsumerDestinationTransition||point==F::ValidationTransition||point==F::CpuReadbackCopy)reason="D3D12-only-stage";else if(point==F::FramebufferCreation||point==F::FramebufferAttachment||point==F::FramebufferValidation||point==F::UniformLookup||point==F::DrawSetup||point==F::Flush)reason="GLES-only-stage";else if(point==F::CommandPoolCreation)reason="Metal-uses-command-queues-without-command-pools";else if(point==F::ParameterUpload)reason="Metal-primary-parameters-are-uploaded-during-buffer-creation";else if(point==F::SourceUpload&&path.find("gpu")!=std::string_view::npos)reason="Metal-GPU-intermediate-source-requires-no-upload";std::cerr<<"FAILURE_STAGE backend=Metal path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification=NOT_APPLICABLE reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason="<<reason<<'\n';continue;}digitor::set_gpu_failure_point(F::None);digitor::ProcessedGpuFramePtr upstream;if(backend.process_primary_wheels_gpu(pixels,2,2,1000,*wheels,upstream)!=DIGITOR_RESULT_OK||!upstream)return false;std::shared_ptr<digitor::PreviewConsumerDestination>destination;if(path=="preview-submit"&&backend.create_preview_consumer(upstream,destination)!=DIGITOR_RESULT_OK)return false;if(point==F::LibraryCreation||point==F::ShaderFunctionLookup||point==F::PipelineCreation)backend.clear_native_pipeline_cache_for_test();digitor::ProcessedGpuFramePtr output;std::shared_ptr<digitor::PreviewConsumerDestination>consumer;std::vector<digitor::Color>readback(4);auto invoke=[&](bool recovery){if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,2,2,recovery?1002:1001,*wheels,output);if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?1002:1001,*wheels,output);if(path=="curves-cpu")return backend.process_curves_gpu(pixels,2,2,recovery?1002:1001,*curves,output);if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?1002:1001,*curves,output);if(path=="preview-create")return backend.create_preview_consumer(upstream,consumer);if(path=="preview-submit")return destination->submit(upstream);return backend.validation_readback_primary_wheels(upstream,readback);};digitor::set_gpu_failure_point(point);auto failure=invoke(false);auto evidence=backend.execution_provenance();output.reset();consumer.reset();digitor::set_gpu_failure_point(F::None);auto recovery=invoke(true);bool reached=evidence.requested_failure_point==point&&evidence.actual_stage_reached==point;bool clean=evidence.cpu_primary_wheels_invocations==0&&evidence.cpu_curve_invocations==0;bool fallback=evidence.primary_wheels_fallback_invocations||evidence.curve_fallback_invocations;bool ok=failure!=DIGITOR_RESULT_OK&&reached&&evidence.output_cleared&&evidence.cleanup_baseline&&evidence.cache_valid&&clean&&!fallback&&!evidence.normal_preview_readback_count&&recovery==DIGITOR_RESULT_OK;std::cerr<<"FAILURE_STAGE backend=Metal path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification="<<(ok?"PASS":"FAIL")<<" reached="<<reached<<" output_cleared="<<evidence.output_cleared<<" cleanup="<<evidence.cleanup_baseline<<" cache_ok="<<evidence.cache_valid<<" cpu_primary_delta="<<evidence.cpu_primary_wheels_invocations<<" cpu_curves_delta="<<evidence.cpu_curve_invocations<<" fallback="<<fallback<<" intermediate_readback="<<evidence.intermediate_readback_count<<" intermediate_reupload="<<evidence.intermediate_reupload_count<<" normal_readback="<<evidence.normal_preview_readback_count<<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)<<" recovery="<<(recovery==DIGITOR_RESULT_OK)<<'\n';passed&=ok;}return passed;}
+
+bool qualify_metal_cache_failures(digitor::IRenderBackend&backend){using F=digitor::GpuFailurePoint;std::vector<digitor::Color>pixels(4,{.1f,.3f,.7f,1.f});auto wheels=digitor::PrimaryWheelsParameters::create();digitor::RgbCurvesParameters cd;auto curves=digitor::CompiledRgbCurves::compile(cd);bool passed=true;for(bool curve:{false,true})for(auto point:{F::LibraryCreation,F::ShaderFunctionLookup,F::PipelineCreation}){backend.clear_native_pipeline_cache_for_test();auto before=backend.native_pipeline_cache_counters();auto resources=backend.native_resource_counts();digitor::set_gpu_failure_point(point);digitor::ProcessedGpuFramePtr frame;auto failure=curve?backend.process_curves_gpu(pixels,2,2,1050,*curves,frame):backend.process_primary_wheels_gpu(pixels,2,2,1050,*wheels,frame);auto failed=backend.native_pipeline_cache_counters();bool rejected=failure!=DIGITOR_RESULT_OK&&!frame&&failed.lookups==before.lookups+1&&failed.misses==before.misses+1&&failed.creation_failures==before.creation_failures+1&&failed.hits==before.hits&&backend.native_pipeline_cache_size()==0&&backend.native_resource_counts()==resources;digitor::set_gpu_failure_point(F::None);auto retry=curve?backend.process_curves_gpu(pixels,2,2,1051,*curves,frame):backend.process_primary_wheels_gpu(pixels,2,2,1051,*wheels,frame);auto created=backend.native_pipeline_cache_counters();digitor::ProcessedGpuFramePtr hitframe;auto hit=curve?backend.process_curves_gpu(pixels,2,2,1052,*curves,hitframe):backend.process_primary_wheels_gpu(pixels,2,2,1052,*wheels,hitframe);auto reused=backend.native_pipeline_cache_counters();bool ok=rejected&&retry==DIGITOR_RESULT_OK&&frame&&created.misses==failed.misses+1&&created.creations==failed.creations+1&&hit==DIGITOR_RESULT_OK&&hitframe&&reused.hits==created.hits+1&&reused.creations==created.creations;std::cerr<<"METAL_CACHE_FAILURE operation="<<(curve?"rgb-curves":"primary-wheels")<<" stage="<<digitor::gpu_failure_point_name(point)<<" lookup="<<(failed.lookups-before.lookups)<<" miss="<<(failed.misses-before.misses)<<" creation_failure="<<(failed.creation_failures-before.creation_failures)<<" retry_creation="<<(created.creations-failed.creations)<<" subsequent_hit="<<(reused.hits-created.hits)<<" status="<<(ok?"PASS":"FAIL")<<'\n';passed&=ok;}return passed;}
 
 bool exercise(digitor::IRenderBackend& backend, std::string_view name) {
     constexpr std::array dimensions{std::pair{1u,1u}, std::pair{2u,2u}, std::pair{3u,2u},
@@ -233,6 +418,18 @@ int main() {
         ++executed;
         const auto info = backend->info();
         std::cerr << "DEVICE backend=" << entry.second << " identity=\"" << info.device_name << "\"\n";
+        if(entry.first==DIGITOR_RENDERER_VULKAN){
+          all_passed&=qualify_vulkan_cache_failure(*backend);
+          all_passed&=qualify_vulkan_failure_matrix(*backend);
+        }
+        if(entry.first==DIGITOR_RENDERER_D3D12){
+          all_passed&=qualify_d3d12_cache_failures(*backend);
+          all_passed&=qualify_d3d12_failure_matrix(*backend);
+        }
+        if(entry.first==DIGITOR_RENDERER_METAL){
+          all_passed&=qualify_metal_cache_failures(*backend);
+          all_passed&=qualify_metal_failure_matrix(*backend);
+        }
         all_passed &= exercise(*backend, entry.second);
         const auto populated_cache=backend->native_pipeline_cache_counters();
         const bool cache_reused=populated_cache.lookups>=3&&populated_cache.misses>=2&&
