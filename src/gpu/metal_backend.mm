@@ -269,10 +269,14 @@ class MetalBackend final : public IRenderBackend {
   }
   bool end_encoder(id<MTLCommandEncoder> e, const char *op) noexcept {
     @try {
-      if (fail(GpuFailurePoint::EncoderCompletion, op))
-        return false;
+      // Metal requires every created encoder to be ended before it is
+      // released, even when qualification injects a failure at the
+      // encoder-completion boundary. End the encoder first, then surface the
+      // deterministic injected failure so recovery cannot be poisoned by an
+      // active encoder retained by the command buffer.
+      const bool injected = fail(GpuFailurePoint::EncoderCompletion, op);
       [e endEncoding];
-      return true;
+      return !injected;
     } @catch (...) {
       return false;
     }
