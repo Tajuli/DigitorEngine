@@ -90,3 +90,30 @@ hardware report must separate upload, dispatch, synchronization, and validation
 readback. No GPU measurements or CI runtime results are asserted by this change.
 The public C ABI is unchanged. Known limitation: native hardware qualification
 and platform CI evidence must be supplied by their respective runners.
+
+### Remaining v4.8.0 source contracts
+
+Preview and export now share `build_color_render_plan`. Its color-graph identity
+is independent of source identity, dimensions, and preview frame-rate policy,
+while its source-cache identity includes those values. Export selection accepts
+only an `Original` source and rejects proxy-only catalogs; preview selection is
+explicit and may request `Proxy`, `CompressedPreview`, or `DecodeScaled`. This
+is source-selection policy and does not add a decoder.
+
+The internal registered-consumer contract owns an opaque native destination and
+separate liveness token, validates backend/context/dimensions/format/precision,
+balances processed-frame acquisition and release, and counts only successful
+submissions. Native backends have not yet supplied qualification-owned
+destination callbacks, so it is an interface test result, not display or GPU
+hardware evidence. The bounded native-pipeline cache contract has deterministic
+FIFO eviction, device-scoped invalidation, failure-safe insertion, and complete
+qualification counters; native pipeline creation sites still require adoption.
+
+| Feature | CPU | Vulkan | D3D12 | Metal | GLES | Preview Consumer | Evidence | Numerical Result | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| Source-quality selection | policy tested | backend-neutral | backend-neutral | backend-neutral | backend-neutral | N/A | `test_render_export` | not a pixel test | Interface/design only |
+| Preview/export graph parity | serialization tested | backend-neutral | backend-neutral | backend-neutral | backend-neutral | N/A | `test_render_export` | algorithm identity only | Interface/design only |
+| Registered consumer ownership | N/A | callback pending | callback pending | callback pending | callback pending | acquisition/release tested | `test_render_export` | no readback performed by contract | Interface/design only |
+| Bounded pipeline cache | N/A | adoption pending | adoption pending | adoption pending | adoption pending | N/A | `test_render_export` | miss/hit/eviction/invalidation tested | Interface/design only |
+| Backend-stage injection | N/A | incomplete | incomplete | incomplete | incomplete | incomplete | native qualification pending | not run | Not implemented |
+| Backend retirement | N/A | runtime pending | runtime pending | runtime pending | runtime pending | generic tokens only | native qualification pending | not run | Implemented, hardware-unverified |

@@ -54,6 +54,7 @@ add_library(digitor_engine
     src/gpu/native_primary_wheels.cpp
     src/gpu/native_rgb_curves.cpp
     src/gpu/processed_gpu_frame.cpp
+    src/gpu/preview_consumer.cpp
     src/gpu/qualifier.cpp
     src/gpu/lut.cpp
     src/gpu/effects.cpp
@@ -65,6 +66,7 @@ add_library(digitor_engine
     src/media/media.cpp
     src/editor/timeline.cpp
     src/render/renderer.cpp
+    src/render/render_policy.cpp
     src/render/export.cpp
     src/render/validation.cpp
 )
