@@ -339,7 +339,16 @@ class D3DBackend final : public IRenderBackend {
     return true;
   }
   bool record_stage(GpuFailurePoint p, const char *op) noexcept {
-    return SUCCEEDED(injected_hresult(p, op));
+    const auto hr = injected_hresult(p, op);
+    if (FAILED(hr) && command_list_open_) {
+      // Failure injection may occur after Reset() but before a complete
+      // command list has been recorded. D3D12 requires the abandoned list to
+      // be closed before the next recovery Reset(); otherwise the subsequent
+      // qualification execution can fail and poison later pixel tests.
+      (void)list_->Close();
+      command_list_open_ = false;
+    }
+    return SUCCEEDED(hr);
   }
   HRESULT close_commands() noexcept {
     auto hr = injected_hresult(GpuFailurePoint::CommandBufferOrListClose,
