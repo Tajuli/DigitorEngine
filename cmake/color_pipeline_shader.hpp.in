@@ -1,2 +1,0 @@
-#pragma once
-inline constexpr char digitor_color_pipeline_hlsl[] = R"DIGITOR_HLSL(@DIGITOR_COLOR_PIPELINE_HLSL@)DIGITOR_HLSL";
