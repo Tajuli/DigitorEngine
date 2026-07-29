@@ -3,7 +3,6 @@
 #include "digitor/commands.hpp"
 
 #include <cassert>
-#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -75,3 +74,10 @@ void test_hsl_qualifier() {
   catch (const std::logic_error&) { bad = true; }
   assert(bad);
 }
+
+namespace {
+struct HslQualifierContractTestRunner {
+  HslQualifierContractTestRunner() { test_hsl_qualifier(); }
+};
+const HslQualifierContractTestRunner hsl_qualifier_contract_test_runner{};
+} // namespace
