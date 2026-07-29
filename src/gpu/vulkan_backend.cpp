@@ -2237,7 +2237,7 @@ public:
     if (create_image_view(&vi, &owner->output_view) != VK_SUCCESS)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     auto params = native_hsl_qualifier_parameters(
-        parameters, s.width * s.height, s.width, s.height);
+        parameters, s.width, s.height);
     VkBuffer pb{};
     VkDeviceMemory pm{};
     auto clean_parameter = [&] {
