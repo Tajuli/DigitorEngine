@@ -93,6 +93,15 @@ class GlBackend final : public IRenderBackend {
   }
   DigitorRendererInfo i_{};
   bool fp32_renderable_{};
+  EGLDisplay display_{EGL_NO_DISPLAY};
+  EGLContext context_{EGL_NO_CONTEXT};
+  EGLSurface surface_{EGL_NO_SURFACE};
+
+  bool make_context_current() noexcept {
+    return display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
+           surface_ != EGL_NO_SURFACE &&
+           eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE;
+  }
 
 public:
   GlBackend() {
@@ -102,8 +111,30 @@ public:
     i_.is_gpu = 1;
   }
   bool initialize(bool) override {
-    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
-      return false;
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT) {
+      display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+      EGLint egl_major = 0, egl_minor = 0;
+      if (display_ == EGL_NO_DISPLAY || !eglInitialize(display_, &egl_major, &egl_minor))
+        return false;
+      const EGLint config_attributes[] = {
+          EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+          EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+          EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+          EGL_NONE};
+      EGLConfig config{}; EGLint config_count = 0;
+      if (!eglChooseConfig(display_, config_attributes, &config, 1, &config_count) || config_count < 1)
+        return false;
+      const EGLint surface_attributes[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+      surface_ = eglCreatePbufferSurface(display_, config, surface_attributes);
+      if (surface_ == EGL_NO_SURFACE) return false;
+      const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+      context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, context_attributes);
+      if (context_ == EGL_NO_CONTEXT || !make_context_current()) return false;
+    } else {
+      context_ = eglGetCurrentContext();
+      display_ = eglGetCurrentDisplay();
+      surface_ = eglGetCurrentSurface(EGL_DRAW);
+    }
     while (glGetError() != GL_NO_ERROR) {}
     GLint major = 0;
     glGetIntegerv(GL_MAJOR_VERSION, &major);
@@ -116,7 +147,17 @@ public:
       copy_bounded(i_.device_name, renderer);
     return glGetError() == GL_NO_ERROR;
   }
-  void shutdown() noexcept override {pipeline_cache_.invalidate_device(DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(eglGetCurrentContext()));}
+  void shutdown() noexcept override {
+    if (context_ != EGL_NO_CONTEXT) (void)make_context_current();
+    pipeline_cache_.invalidate_device(DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(context_));
+    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
+      eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+      eglDestroyContext(display_, context_);
+    }
+    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) eglDestroySurface(display_, surface_);
+    if (display_ != EGL_NO_DISPLAY) eglTerminate(display_);
+    display_=EGL_NO_DISPLAY; context_=EGL_NO_CONTEXT; surface_=EGL_NO_SURFACE;
+  }
   NativePipelineCacheCounters native_pipeline_cache_counters()const noexcept override{return pipeline_cache_.counters();}
   NativeResourceCounts native_resource_counts()const noexcept override{return counts();}
   std::size_t native_pipeline_cache_size()const noexcept override{return pipeline_cache_.size();}
