@@ -30,33 +30,24 @@ public:
   virtual bool initialize(bool enable_validation) = 0;
   virtual void shutdown() noexcept = 0;
   [[nodiscard]] virtual DigitorRendererInfo info() const noexcept = 0;
-  virtual DigitorResult create_texture(const DigitorTextureDesc &,
-                                       void **out) noexcept;
-  virtual DigitorResult create_buffer(const DigitorBufferDesc &,
-                                      void **out) noexcept;
-  virtual DigitorResult create_sampler(const DigitorSamplerDesc &,
-                                       void **out) noexcept;
-  virtual DigitorResult map_buffer(void *, uint64_t offset, uint64_t size,
-                                   void **out) noexcept;
+  virtual DigitorResult create_texture(const DigitorTextureDesc &, void **out) noexcept;
+  virtual DigitorResult create_buffer(const DigitorBufferDesc &, void **out) noexcept;
+  virtual DigitorResult create_sampler(const DigitorSamplerDesc &, void **out) noexcept;
+  virtual DigitorResult map_buffer(void *, uint64_t offset, uint64_t size, void **out) noexcept;
   virtual void unmap_buffer(void *) noexcept;
   virtual void destroy_texture(void *) noexcept;
   virtual void destroy_buffer(void *) noexcept;
   virtual void destroy_sampler(void *) noexcept;
 
-  virtual DigitorResult
-  render_rgba8(uint32_t width, uint32_t height, std::span<const uint8_t> source,
-               std::vector<uint8_t> &destination) noexcept;
+  virtual DigitorResult render_rgba8(uint32_t width, uint32_t height,
+      std::span<const uint8_t> source, std::vector<uint8_t> &destination) noexcept;
   virtual DigitorResult grade_rgba32f(std::span<const Color> source,
-                                      std::span<Color> destination,
-                                      const ColorGrade &parameters) noexcept;
+      std::span<Color> destination, const ColorGrade &parameters) noexcept;
   DigitorResult curves_rgba32f(std::span<const Color> source,
-                               std::span<Color> destination,
-                               const CompiledRgbCurves&) noexcept;
+      std::span<Color> destination, const CompiledRgbCurves&) noexcept;
   DigitorResult process_curves_gpu(std::span<const Color> source,
-                                   std::uint32_t width, std::uint32_t height,
-                                   std::int64_t timestamp,
-                                   const CompiledRgbCurves&,
-                                   ProcessedGpuFramePtr& out) noexcept;
+      std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+      const CompiledRgbCurves&, ProcessedGpuFramePtr& out) noexcept;
   DigitorResult process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,
       std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   [[nodiscard]] GpuSourceResource gpu_source(const ProcessedGpuFramePtr&) const noexcept;
@@ -66,26 +57,49 @@ public:
   DigitorResult process_log_wheels_gpu(const GpuSourceResource&,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   DigitorResult validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
 
-  // v5.0.0 GPU-first HSL qualifier contract. The matte is represented as an
-  // RGBA32F ProcessedGpuFrame with the scalar matte replicated to RGB and alpha
-  // fixed to 1.0. This lets preview/export/node-graph code reuse the existing
-  // resident frame ownership without introducing a host-visible matte path.
-  DigitorResult process_hsl_qualifier_gpu(std::span<const Color>,std::uint32_t,
-      std::uint32_t,std::int64_t,const HslQualifierParameters&,
-      ProcessedGpuFramePtr&) noexcept;
-  DigitorResult process_hsl_qualifier_gpu(const GpuSourceResource&,
-      std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
-  DigitorResult validation_readback_hsl_qualifier(const ProcessedGpuFramePtr&,
-      std::span<float>) noexcept;
+  // GPU-first HSL matte. Native backends return a resident RGBA32F frame with
+  // matte replicated to RGB and alpha=1. Validation readback is a dedicated,
+  // opt-in path and production preview never reads the matte back to the CPU.
+  DigitorResult process_hsl_qualifier_gpu(std::span<const Color> source,
+      std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+      const HslQualifierParameters& parameters, ProcessedGpuFramePtr& out) noexcept {
+    out.reset();
+    const auto before = hsl_qualifier_reference_count();
+    const auto result = execute_process_hsl_qualifier_gpu(
+        source, width, height, timestamp, parameters, out);
+    if (hsl_qualifier_reference_count() != before) {
+      out.reset();
+      provenance_.native_error_code = -1;
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+    if (result != DIGITOR_RESULT_OK) out.reset();
+    return result;
+  }
+  DigitorResult process_hsl_qualifier_gpu(const GpuSourceResource& source,
+      std::int64_t timestamp, const HslQualifierParameters& parameters,
+      ProcessedGpuFramePtr& out) noexcept {
+    out.reset();
+    const auto before = hsl_qualifier_reference_count();
+    const auto result = execute_process_hsl_qualifier_gpu(
+        source, timestamp, parameters, out);
+    if (hsl_qualifier_reference_count() != before) {
+      out.reset();
+      provenance_.native_error_code = -1;
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+    if (result != DIGITOR_RESULT_OK) out.reset();
+    return result;
+  }
+  DigitorResult validation_readback_hsl_qualifier(
+      const ProcessedGpuFramePtr& frame, std::span<float> output) noexcept {
+    return execute_validation_readback_hsl_qualifier(frame, output);
+  }
 
-  DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
-      std::span<Color>) noexcept;
+  DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&, std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   DigitorResult create_preview_consumer(const ProcessedGpuFramePtr&,
       std::shared_ptr<PreviewConsumerDestination>&) noexcept;
-  [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept {
-    return provenance_;
-  }
+  [[nodiscard]] const ExecutionProvenance &execution_provenance() const noexcept { return provenance_; }
   [[nodiscard]] virtual NativePipelineCacheCounters native_pipeline_cache_counters() const noexcept { return {}; }
   [[nodiscard]] virtual NativeResourceCounts native_resource_counts() const noexcept { return {}; }
   [[nodiscard]] virtual std::size_t native_pipeline_cache_size() const noexcept { return 0; }
@@ -93,35 +107,22 @@ public:
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
-  virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
-                                                std::span<Color> destination,
-                                                const CompiledRgbCurves&) noexcept;
-  virtual DigitorResult execute_process_curves_gpu(
-      std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
-      const CompiledRgbCurves&, ProcessedGpuFramePtr&) noexcept;
-  virtual DigitorResult execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,
-      std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_curves_rgba32f(std::span<const Color>,std::span<Color>,const CompiledRgbCurves&) noexcept;
+  virtual DigitorResult execute_process_curves_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_primary_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_curves_gpu(const GpuSourceResource&,std::int64_t,const CompiledRgbCurves&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_primary_wheels_gpu(const GpuSourceResource&,std::int64_t,const PrimaryWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
-  virtual DigitorResult execute_validation_readback_primary_wheels(
-      const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
+  virtual DigitorResult execute_validation_readback_primary_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   virtual DigitorResult execute_process_log_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_log_wheels_gpu(const GpuSourceResource&,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
-  virtual DigitorResult execute_process_hsl_qualifier_gpu(std::span<const Color>,
-      std::uint32_t,std::uint32_t,std::int64_t,const HslQualifierParameters&,
-      ProcessedGpuFramePtr&) noexcept;
-  virtual DigitorResult execute_process_hsl_qualifier_gpu(
-      const GpuSourceResource&,std::int64_t,const HslQualifierParameters&,
-      ProcessedGpuFramePtr&) noexcept;
-  virtual DigitorResult execute_validation_readback_hsl_qualifier(
-      const ProcessedGpuFramePtr&,std::span<float>) noexcept;
+  virtual DigitorResult execute_process_hsl_qualifier_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept { return DIGITOR_RESULT_UNSUPPORTED; }
+  virtual DigitorResult execute_process_hsl_qualifier_gpu(const GpuSourceResource&,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept { return DIGITOR_RESULT_UNSUPPORTED; }
+  virtual DigitorResult execute_validation_readback_hsl_qualifier(const ProcessedGpuFramePtr&,std::span<float>) noexcept { return DIGITOR_RESULT_UNSUPPORTED; }
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
-  virtual DigitorResult execute_create_preview_consumer(const ProcessedGpuFramePtr&,
-      std::shared_ptr<PreviewConsumerDestination>&) noexcept;
+  virtual DigitorResult execute_create_preview_consumer(const ProcessedGpuFramePtr&,std::shared_ptr<PreviewConsumerDestination>&) noexcept;
   void begin_grade_provenance(DigitorRendererBackend backend, bool gpu,
-                              const char *device, const char *compiler,
-                              const char *shader, const char *pipeline) noexcept;
+      const char *device, const char *compiler, const char *shader, const char *pipeline) noexcept;
   DigitorResult injected_failure(GpuFailurePoint point) noexcept;
   DigitorResult inject_at(GpuFailurePoint point, const char* operation) noexcept;
   ExecutionProvenance provenance_{};
@@ -131,14 +132,10 @@ private:
 };
 
 [[nodiscard]] bool gpu_validation_requested() noexcept;
-std::unique_ptr<IRenderBackend>
-create_gpu_backend(DigitorRendererBackend preferred);
-std::unique_ptr<IRenderBackend>
-create_native_backend(DigitorRendererBackend backend);
-using BackendFactory =
-    std::function<std::unique_ptr<IRenderBackend>(DigitorRendererBackend)>;
-std::unique_ptr<IRenderBackend>
-select_gpu_backend(HostPlatform platform, DigitorRendererBackend preferred,
-                   const BackendFactory &factory);
+std::unique_ptr<IRenderBackend> create_gpu_backend(DigitorRendererBackend preferred);
+std::unique_ptr<IRenderBackend> create_native_backend(DigitorRendererBackend backend);
+using BackendFactory = std::function<std::unique_ptr<IRenderBackend>(DigitorRendererBackend)>;
+std::unique_ptr<IRenderBackend> select_gpu_backend(HostPlatform platform,
+    DigitorRendererBackend preferred, const BackendFactory &factory);
 
 } // namespace digitor
