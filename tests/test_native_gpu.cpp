@@ -174,16 +174,20 @@ bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
        point==F::PipelineLayoutCreation||point==F::PipelineCreation)
       backend.clear_native_pipeline_cache_for_test();
     digitor::ProcessedGpuFramePtr failed;
+    digitor::ProcessedGpuFramePtr recovery_output;
     std::shared_ptr<digitor::PreviewConsumerDestination> failed_destination;
+    std::shared_ptr<digitor::PreviewConsumerDestination> recovery_destination;
     std::vector<digitor::Color> readback(4);
     digitor::set_gpu_failure_point(point);
     DigitorResult result=DIGITOR_RESULT_INTERNAL_ERROR;
     auto invoke=[&](bool recovery){
-      if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,width,height,recovery?702:701,*wheels,failed);
-      if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?702:701,*wheels,failed);
-      if(path=="curves-cpu")return backend.process_curves_gpu(pixels,width,height,recovery?702:701,*curves,failed);
-      if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?702:701,*curves,failed);
-      if(path=="preview-create")return backend.create_preview_consumer(upstream,failed_destination);
+      auto& output = recovery ? recovery_output : failed;
+      auto& consumer = recovery ? recovery_destination : failed_destination;
+      if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,width,height,recovery?702:701,*wheels,output);
+      if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?702:701,*wheels,output);
+      if(path=="curves-cpu")return backend.process_curves_gpu(pixels,width,height,recovery?702:701,*curves,output);
+      if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?702:701,*curves,output);
+      if(path=="preview-create")return backend.create_preview_consumer(upstream,consumer);
       if(path=="preview-submit")return destination->submit(upstream);
       return backend.validation_readback_primary_wheels(upstream,readback);
     };
@@ -191,9 +195,9 @@ bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
     const auto evidence=backend.execution_provenance();
     failed.reset();failed_destination.reset();
     digitor::set_gpu_failure_point(F::None);
+    const bool output_cleared=evidence.output_cleared&&(!failed)&&(!failed_destination);
     const auto recovery=invoke(true);
     const bool reached=evidence.requested_failure_point==point&&evidence.actual_stage_reached==point;
-    const bool output_cleared=evidence.output_cleared&&(!failed);
     const bool cpu_clean=evidence.cpu_primary_wheels_invocations==0&&evidence.cpu_curve_invocations==0;
     const bool fallback=evidence.primary_wheels_fallback_invocations||evidence.curve_fallback_invocations;
     const bool recovered=recovery==DIGITOR_RESULT_OK;
@@ -210,6 +214,8 @@ bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
       <<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)
       <<" recovery="<<recovered<<'\n';
     passed&=ok;
+    recovery_output.reset(); recovery_destination.reset();
+    failed.reset(); failed_destination.reset(); destination.reset(); upstream.reset();
   }
   return passed;
 }
