@@ -1,12 +1,13 @@
 #include "digitor/log_wheels.hpp"
+#include "digitor/qualifier.hpp"
 #include "gpu/native_log_wheels.hpp"
 #include "gpu/gpu_backend.hpp"
 #include <atomic>
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <vector>
-
 
 namespace {
 class LogBackend final : public digitor::IRenderBackend {
@@ -30,7 +31,57 @@ class LogBackend final : public digitor::IRenderBackend {
     for(auto& c:o)c={0,0,0,1}; provenance_.readback_performed=true; return DIGITOR_RESULT_OK;
   }
 };
+
+void test_hsl_qualifier_foundation() {
+  using namespace digitor;
+  reset_hsl_qualifier_reference_count();
+
+  QualifierSettings settings;
+  settings.hue = {.95f, .05f, .05f};
+  settings.saturation = {.25f, 1.0f, .1f};
+  settings.luminance = {.0f, 1.0f, .0f};
+  const auto parameters = HslQualifierParameters::create(settings);
+  assert(parameters && !parameters->identity().empty());
+  assert(parameters->serialize().find("hsl-qualifier:") == 0);
+
+  const std::vector<Color> input{
+      {1.0f, 0.0f, 0.0f, .2f},
+      {0.0f, 1.0f, 0.0f, .3f},
+      {0.5f, 0.5f, 0.5f, .4f}};
+  const auto matte = apply_hsl_qualifier_reference(input, 3, 1, *parameters);
+  assert(matte.size() == input.size());
+  assert(matte[0] > .99f);
+  assert(matte[1] == 0.0f);
+  assert(matte[2] == 0.0f);
+  assert(hsl_qualifier_reference_count() == input.size());
+
+  auto inverted_settings = settings;
+  inverted_settings.invert = true;
+  const auto inverted = HslQualifierParameters::create(inverted_settings);
+  assert(std::abs(apply_hsl_qualifier_reference(input[0], *inverted)) < 1e-6f);
+
+  HslQualifier qualifier;
+  qualifier.set_settings(settings);
+  std::vector<float> output(input.size());
+  CommandBuffer buffer;
+  CommandEncoder encoder(buffer);
+  bool rejected = false;
+  try {
+    qualifier.matte_gpu(encoder, input, output, 3, 1);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  assert(rejected);
+  assert(hsl_qualifier_reference_count() == input.size() + 1);
+
+  auto invalid = settings;
+  invalid.saturation.low = -0.1f;
+  bool bad = false;
+  try { (void)HslQualifierParameters::create(invalid); }
+  catch (const std::invalid_argument&) { bad = true; }
+  assert(bad);
 }
+} // namespace
 
 void test_log_wheels(){using namespace digitor;
  reset_log_wheels_reference_count();
@@ -49,4 +100,5 @@ void test_log_wheels(){using namespace digitor;
  std::vector<Color> in(12,input),out(12);apply_log_wheels_reference(in,out,*identity);for(auto c:out)assert(c.r==input.r&&c.a==input.a);
  RenderGraph graph;auto source=graph.import_resource({.size=in.size()*sizeof(Color),.transient=false,.initial_state=ResourceState::shader_read,.name="log-input"});auto destination=graph.create_transient(out.size()*sizeof(Color));add_log_wheels_cpu_pass(graph,source,destination,identity,in,out);graph.export_resource(destination);graph.compile();CommandQueue queue;graph.execute(queue);assert(graph.order().size()==1);
  int executed=0;RenderGraph native_graph;auto ns=native_graph.import_resource({.size=64,.transient=false,.initial_state=ResourceState::shader_read,.name="native-log-input"});auto nd=native_graph.create_transient(64);add_log_wheels_pass(native_graph,ns,nd,[&](CommandEncoder&e){e.dispatch([&]{++executed;});});native_graph.export_resource(nd);native_graph.compile();CommandQueue nq;native_graph.execute(nq);assert(executed==1);
+ test_hsl_qualifier_foundation();
 }
