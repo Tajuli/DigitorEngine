@@ -1,6 +1,5 @@
 #include "digitor/qualifier.hpp"
 #include "core/numeric_utils.hpp"
-#include "gpu/gpu_backend.hpp"
 
 #include <algorithm>
 #include <array>
@@ -35,9 +34,8 @@ void validate_range(const QualifierRange& value, const char* name) {
 }
 
 void validate(const QualifierSettings& settings) {
-  if (settings.schema_version != hsl_qualifier_parameter_version) {
+  if (settings.schema_version != hsl_qualifier_parameter_version)
     throw std::invalid_argument("unsupported HSL qualifier schema version");
-  }
   validate_range(settings.hue, "hue");
   validate_range(settings.saturation, "saturation");
   validate_range(settings.luminance, "luminance");
@@ -47,26 +45,19 @@ void validate(const QualifierSettings& settings) {
       settings.blur > 64.0f || settings.denoise < 0.0f ||
       settings.denoise > 1.0f || settings.clean_black < 0.0f ||
       settings.clean_black > 1.0f || settings.clean_white < 0.0f ||
-      settings.clean_white > 1.0f) {
+      settings.clean_white > 1.0f)
     throw std::invalid_argument("invalid qualifier cleanup setting");
-  }
 }
 
 std::string encode(const QualifierSettings& p) {
   std::string out = "hsl-qualifier:";
   append_u32(out, p.schema_version);
   const auto range = [&](const QualifierRange& r) {
-    append_float(out, r.low);
-    append_float(out, r.high);
-    append_float(out, r.softness);
+    append_float(out, r.low); append_float(out, r.high); append_float(out, r.softness);
   };
-  range(p.hue);
-  range(p.saturation);
-  range(p.luminance);
-  append_float(out, p.blur);
-  append_float(out, p.denoise);
-  append_float(out, p.clean_black);
-  append_float(out, p.clean_white);
+  range(p.hue); range(p.saturation); range(p.luminance);
+  append_float(out, p.blur); append_float(out, p.denoise);
+  append_float(out, p.clean_black); append_float(out, p.clean_white);
   append_u32(out, p.invert ? 1u : 0u);
   append_u32(out, p.matte_output ? 1u : 0u);
   return out;
@@ -95,10 +86,8 @@ void rgb_to_hsl(Color color, float& hue, float& saturation,
   const float low = std::min({color.r, color.g, color.b});
   const float delta = high - low;
   luminance = (high + low) * 0.5f;
-  saturation = delta == 0.0f
-                   ? 0.0f
-                   : delta / std::max(1.0e-8f,
-                                      1.0f - std::abs(2.0f * luminance - 1.0f));
+  saturation = delta == 0.0f ? 0.0f : delta / std::max(
+      1.0e-8f, 1.0f - std::abs(2.0f * luminance - 1.0f));
   hue = 0.0f;
   if (delta == 0.0f) return;
   if (high == color.r) hue = std::fmod((color.g - color.b) / delta, 6.0f);
@@ -123,14 +112,12 @@ float base_matte(Color color, const QualifierSettings& settings) noexcept {
 } // namespace
 
 HslQualifierParameters::HslQualifierParameters(QualifierSettings settings)
-    : values_(settings), serialization_(encode(settings)),
-      identity_(serialization_) {}
+    : values_(settings), serialization_(encode(settings)), identity_(serialization_) {}
 
 std::shared_ptr<const HslQualifierParameters> HslQualifierParameters::create(
     const QualifierSettings& settings) {
   validate(settings);
-  return std::shared_ptr<const HslQualifierParameters>(
-      new HslQualifierParameters(settings));
+  return std::shared_ptr<const HslQualifierParameters>(new HslQualifierParameters(settings));
 }
 
 bool HslQualifierParameters::is_identity() const noexcept {
@@ -145,8 +132,7 @@ bool HslQualifierParameters::is_identity() const noexcept {
 }
 
 void HslQualifier::set_settings(QualifierSettings settings) {
-  validate(settings);
-  settings_ = settings;
+  validate(settings); settings_ = settings;
 }
 
 void HslQualifier::sample(Color color) {
@@ -162,12 +148,9 @@ void HslQualifier::sample(std::span<const Color> colors) {
   double sine{}, cosine{}, saturation{}, luminance{};
   constexpr double tau = 6.28318530717958647692;
   for (const auto color : colors) {
-    float h{}, s{}, l{};
-    rgb_to_hsl(color, h, s, l);
-    sine += std::sin(h * tau);
-    cosine += std::cos(h * tau);
-    saturation += s;
-    luminance += l;
+    float h{}, s{}, l{}; rgb_to_hsl(color, h, s, l);
+    sine += std::sin(h * tau); cosine += std::cos(h * tau);
+    saturation += s; luminance += l;
   }
   float hue = static_cast<float>(std::atan2(sine, cosine) / tau);
   if (hue < 0.0f) hue += 1.0f;
@@ -185,9 +168,8 @@ float apply_hsl_qualifier_reference(
   return base_matte(color, parameters.values());
 }
 
-void apply_hsl_qualifier_reference(
-    std::span<const Color> input, std::span<float> output,
-    const HslQualifierParameters& parameters) {
+void apply_hsl_qualifier_reference(std::span<const Color> input,
+    std::span<float> output, const HslQualifierParameters& parameters) {
   if (input.size() != output.size())
     throw std::invalid_argument("HSL qualifier image sizes differ");
   for (std::size_t i = 0; i < input.size(); ++i)
@@ -209,54 +191,32 @@ std::vector<float> HslQualifier::matte_cpu(std::span<const Color> input,
   const auto parameters = HslQualifierParameters::create(settings_);
   std::vector<float> matte(input.size());
   apply_hsl_qualifier_reference(input, matte, *parameters);
-
   if (settings_.denoise > 0.0f && width && height) {
-    const auto source = matte;
-    const float amount = settings_.denoise;
-    for (std::uint32_t y = 0; y < height; ++y) {
-      for (std::uint32_t x = 0; x < width; ++x) {
-        std::array<float, 9> window{};
-        std::size_t count{};
-        for (int dy = -1; dy <= 1; ++dy) {
-          for (int dx = -1; dx <= 1; ++dx) {
-            const auto yy = std::clamp<int>(static_cast<int>(y) + dy, 0,
-                                            static_cast<int>(height) - 1);
-            const auto xx = std::clamp<int>(static_cast<int>(x) + dx, 0,
-                                            static_cast<int>(width) - 1);
-            window[count++] = source[static_cast<std::size_t>(yy) * width +
-                                     static_cast<std::size_t>(xx)];
-          }
-        }
-        std::nth_element(window.begin(), window.begin() + 4, window.end());
-        const auto index = static_cast<std::size_t>(y) * width + x;
-        matte[index] += amount * (window[4] - matte[index]);
+    const auto source = matte; const float amount = settings_.denoise;
+    for (std::uint32_t y = 0; y < height; ++y) for (std::uint32_t x = 0; x < width; ++x) {
+      std::array<float, 9> window{}; std::size_t count{};
+      for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+        const auto yy = std::clamp<int>(static_cast<int>(y) + dy, 0, static_cast<int>(height) - 1);
+        const auto xx = std::clamp<int>(static_cast<int>(x) + dx, 0, static_cast<int>(width) - 1);
+        window[count++] = source[static_cast<std::size_t>(yy) * width + static_cast<std::size_t>(xx)];
       }
+      std::nth_element(window.begin(), window.begin() + 4, window.end());
+      const auto index = static_cast<std::size_t>(y) * width + x;
+      matte[index] += amount * (window[4] - matte[index]);
     }
   }
-
   const auto radius = static_cast<std::uint32_t>(std::ceil(settings_.blur));
   if (radius && width && height) {
     const auto source = matte;
-    for (std::uint32_t y = 0; y < height; ++y) {
-      for (std::uint32_t x = 0; x < width; ++x) {
-        double sum{};
-        std::size_t count{};
-        for (int dy = -static_cast<int>(radius);
-             dy <= static_cast<int>(radius); ++dy) {
-          for (int dx = -static_cast<int>(radius);
-               dx <= static_cast<int>(radius); ++dx) {
-            const auto yy = std::clamp<int>(static_cast<int>(y) + dy, 0,
-                                            static_cast<int>(height) - 1);
-            const auto xx = std::clamp<int>(static_cast<int>(x) + dx, 0,
-                                            static_cast<int>(width) - 1);
-            sum += source[static_cast<std::size_t>(yy) * width +
-                          static_cast<std::size_t>(xx)];
-            ++count;
-          }
+    for (std::uint32_t y = 0; y < height; ++y) for (std::uint32_t x = 0; x < width; ++x) {
+      double sum{}; std::size_t count{};
+      for (int dy = -static_cast<int>(radius); dy <= static_cast<int>(radius); ++dy)
+        for (int dx = -static_cast<int>(radius); dx <= static_cast<int>(radius); ++dx) {
+          const auto yy = std::clamp<int>(static_cast<int>(y) + dy, 0, static_cast<int>(height) - 1);
+          const auto xx = std::clamp<int>(static_cast<int>(x) + dx, 0, static_cast<int>(width) - 1);
+          sum += source[static_cast<std::size_t>(yy) * width + static_cast<std::size_t>(xx)]; ++count;
         }
-        matte[static_cast<std::size_t>(y) * width + x] =
-            static_cast<float>(sum / checked_size_to_double(count));
-      }
+      matte[static_cast<std::size_t>(y) * width + x] = static_cast<float>(sum / checked_size_to_double(count));
     }
   }
   return matte;
@@ -267,73 +227,6 @@ void HslQualifier::matte_gpu(CommandEncoder&, std::span<const Color>,
                              std::uint32_t) const {
   throw std::logic_error(
       "HSL qualifier GPU execution requires a native backend; CPU fallback is forbidden");
-}
-
-DigitorResult IRenderBackend::process_hsl_qualifier_gpu(
-    std::span<const Color> source, std::uint32_t width, std::uint32_t height,
-    std::int64_t timestamp, const HslQualifierParameters& parameters,
-    ProcessedGpuFramePtr& out) noexcept {
-  out.reset();
-  const auto before = hsl_qualifier_reference_count();
-  const auto result = execute_process_hsl_qualifier_gpu(
-      source, width, height, timestamp, parameters, out);
-  const auto cpu_delta = hsl_qualifier_reference_count() - before;
-  if (result != DIGITOR_RESULT_OK || !out || cpu_delta != 0 ||
-      provenance_.normal_preview_readback_count != 0) {
-    out.reset();
-    return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
-  }
-  out->bind_context_lifetime(context_lifetime_);
-  provenance_.preview_source = PreviewSource::gpu;
-  return DIGITOR_RESULT_OK;
-}
-
-DigitorResult IRenderBackend::process_hsl_qualifier_gpu(
-    const GpuSourceResource& source, std::int64_t timestamp,
-    const HslQualifierParameters& parameters, ProcessedGpuFramePtr& out) noexcept {
-  out.reset();
-  if (!source.usable_by(info().backend, context_identity_))
-    return DIGITOR_RESULT_INVALID_ARGUMENT;
-  const auto before = hsl_qualifier_reference_count();
-  const auto result = execute_process_hsl_qualifier_gpu(
-      source, timestamp, parameters, out);
-  const auto cpu_delta = hsl_qualifier_reference_count() - before;
-  if (result != DIGITOR_RESULT_OK || !out || cpu_delta != 0 ||
-      provenance_.normal_preview_readback_count != 0) {
-    out.reset();
-    return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
-  }
-  out->bind_context_lifetime(context_lifetime_);
-  provenance_.preview_source = PreviewSource::gpu;
-  return DIGITOR_RESULT_OK;
-}
-
-DigitorResult IRenderBackend::validation_readback_hsl_qualifier(
-    const ProcessedGpuFramePtr& frame, std::span<float> output) noexcept {
-  if (!frame || !frame->validation_readback_supported())
-    return DIGITOR_RESULT_UNSUPPORTED;
-  const auto result = execute_validation_readback_hsl_qualifier(frame, output);
-  provenance_.validation_readback_completed = result == DIGITOR_RESULT_OK;
-  return result;
-}
-
-DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
-    std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
-    const HslQualifierParameters&, ProcessedGpuFramePtr& out) noexcept {
-  out.reset();
-  return DIGITOR_RESULT_UNSUPPORTED;
-}
-
-DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
-    const GpuSourceResource&, std::int64_t, const HslQualifierParameters&,
-    ProcessedGpuFramePtr& out) noexcept {
-  out.reset();
-  return DIGITOR_RESULT_UNSUPPORTED;
-}
-
-DigitorResult IRenderBackend::execute_validation_readback_hsl_qualifier(
-    const ProcessedGpuFramePtr&, std::span<float>) noexcept {
-  return DIGITOR_RESULT_UNSUPPORTED;
 }
 
 } // namespace digitor
