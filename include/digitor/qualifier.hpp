@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/color.hpp"
+#include "digitor/digitor.h"
 
 #include <cstdint>
 #include <memory>
@@ -54,6 +55,41 @@ private:
   const std::string serialization_;
   const std::string identity_;
 };
+
+// Opaque GPU-resident single-channel matte. Native backend objects are owned by
+// the shared native_owner token; destruction therefore occurs on the backend's
+// chosen lifetime path without exposing API-specific handles publicly.
+class GpuMatteResource final {
+public:
+  using NativeOwner = std::shared_ptr<void>;
+
+  GpuMatteResource(DigitorRendererBackend backend, std::uint32_t width,
+                   std::uint32_t height, std::uint64_t identity,
+                   NativeOwner native_owner) noexcept
+      : backend_(backend), width_(width), height_(height), identity_(identity),
+        native_owner_(std::move(native_owner)) {}
+
+  [[nodiscard]] DigitorRendererBackend backend() const noexcept {
+    return backend_;
+  }
+  [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
+  [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
+  [[nodiscard]] std::uint64_t identity() const noexcept { return identity_; }
+  [[nodiscard]] bool ready() const noexcept {
+    return backend_ != DIGITOR_RENDERER_CPU && width_ != 0 && height_ != 0 &&
+           identity_ != 0 && static_cast<bool>(native_owner_);
+  }
+
+private:
+  friend class IRenderBackend;
+  DigitorRendererBackend backend_{DIGITOR_RENDERER_CPU};
+  std::uint32_t width_{};
+  std::uint32_t height_{};
+  std::uint64_t identity_{};
+  NativeOwner native_owner_{};
+};
+
+using GpuMatteResourcePtr = std::shared_ptr<GpuMatteResource>;
 
 class HslQualifier {
 public:
