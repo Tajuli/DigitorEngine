@@ -1787,8 +1787,15 @@ public:
         result = signal_and_wait() == DIGITOR_RESULT_OK ? S_OK : E_FAIL;
     }
     (void)frame->release(this);
-    return SUCCEEDED(result) ? DIGITOR_RESULT_OK
-                             : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    if (SUCCEEDED(result)) {
+      provenance_.preview_source = PreviewSource::gpu;
+      provenance_.direct_preview_consumed = true;
+      provenance_.readback_performed = false;
+      provenance_.normal_preview_readback_count = 0;
+      provenance_.output_written = true;
+      return DIGITOR_RESULT_OK;
+    }
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
   DigitorResult
