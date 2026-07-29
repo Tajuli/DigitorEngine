@@ -1323,6 +1323,7 @@ public:
     return result == VK_SUCCESS ? DIGITOR_RESULT_OK
                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
+  DigitorResult
   DigitorResult execute_process_log_wheels_gpu(
       std::span<const Color> src, uint32_t width, uint32_t height,
       int64_t timestamp, const LogWheelsParameters &parameters,
@@ -1967,7 +1968,7 @@ public:
                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
-  execute_process_curves_gpu(std::span<const Color> src, uint32_t width,
+  DigitorResult execute_process_curves_gpu(std::span<const Color> src, uint32_t width,
                              uint32_t height, int64_t timestamp,
                              const CompiledRgbCurves &curves,
                              ProcessedGpuFramePtr &out) noexcept override {
