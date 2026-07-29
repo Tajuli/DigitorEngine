@@ -1207,6 +1207,12 @@ public:
       (void)frame->release(this);
       acquired = false;
       provenance_.preview_acquisition_balance = 0;
+      if (r == DIGITOR_RESULT_OK) {
+        provenance_.preview_source = PreviewSource::gpu;
+        provenance_.direct_preview_consumed = true;
+        provenance_.readback_performed = false;
+        provenance_.normal_preview_readback_count = 0;
+      }
       return r;
     } @catch (...) {
       if (acquired) {
