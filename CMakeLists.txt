@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.0.0
+    VERSION 4.9.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -9,8 +9,6 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/primary_wheels.hlsl" DIGI
 configure_file(cmake/primary_wheels_shader.hpp.in generated/primary_wheels_shader.hpp @ONLY)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/log_wheels.hlsl" DIGITOR_LOG_WHEELS_HLSL)
 configure_file(cmake/log_wheels_shader.hpp.in generated/log_wheels_shader.hpp @ONLY)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/hsl_qualifier.hlsl" DIGITOR_HSL_QUALIFIER_HLSL)
-configure_file(cmake/hsl_qualifier_shader.hpp.in generated/hsl_qualifier_shader.hpp @ONLY)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/rgb_curves.hlsl" DIGITOR_RGB_CURVES_HLSL)
 configure_file(cmake/rgb_curves_shader.hpp.in generated/rgb_curves_shader.hpp @ONLY)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/color_pipeline.hlsl" DIGITOR_COLOR_PIPELINE_HLSL)
@@ -58,7 +56,6 @@ add_library(digitor_engine
     src/gpu/native_primary_wheels.cpp
     src/gpu/log_wheels.cpp
     src/gpu/native_log_wheels.cpp
-    src/gpu/native_hsl_qualifier.cpp
     src/gpu/native_rgb_curves.cpp
     src/gpu/processed_gpu_frame.cpp
     src/gpu/preview_consumer.cpp
@@ -96,6 +93,8 @@ if(DIGITOR_ENABLE_FFMPEG)
 endif()
 message(STATUS "DigitorEngine FFmpeg: ${DIGITOR_FFMPEG_STATUS}")
 
+# The command-line program is a test-fixture tool, not an engine dependency.
+# Discover it independently and require it only when generation is requested.
 find_program(DIGITOR_FFMPEG_CLI NAMES ffmpeg DOC "Optional FFmpeg command-line fixture generator")
 if(DIGITOR_GENERATE_TEST_MEDIA AND NOT DIGITOR_FFMPEG_CLI)
     message(FATAL_ERROR
@@ -113,6 +112,8 @@ if(WIN32)
 elseif(APPLE)
     enable_language(OBJCXX)
     target_sources(digitor_engine PRIVATE src/gpu/metal_backend.mm)
+    # Metal uses explicit bridge ownership for opaque native handles. ARC is
+    # intentionally limited to this Objective-C++ translation unit.
     set_source_files_properties(src/gpu/metal_backend.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc")
 elseif(ANDROID)
@@ -131,6 +132,9 @@ if(WIN32 OR ANDROID OR UNIX)
 endif()
 
 add_library(Digitor::Engine ALIAS digitor_engine)
+
+# Express the language requirement on the target as well as the project
+# default so it propagates through build-tree and installed consumers.
 target_compile_features(digitor_engine PUBLIC cxx_std_20)
 
 target_include_directories(digitor_engine
@@ -157,9 +161,13 @@ else()
     message(STATUS "DigitorEngine spirv-val: unavailable (Vulkan shader compilation fails explicitly)")
 endif()
 
+# add_library() follows BUILD_SHARED_LIBS. Static Windows consumers must not see
+# __declspec(dllimport), otherwise MSVC emits references to non-existent __imp_ symbols.
 if (NOT BUILD_SHARED_LIBS)
     target_compile_definitions(digitor_engine PUBLIC DIGITOR_ENGINE_STATIC)
 elseif (WIN32)
+    # Internal C++ test seams are not part of the public C ABI, but must be exported
+    # so the shared-library test executables can link on Windows.
     set_target_properties(digitor_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
@@ -168,6 +176,10 @@ if (WIN32)
 elseif(APPLE)
     target_link_libraries(digitor_engine PRIVATE "-framework Metal" "-framework Foundation")
 elseif(ANDROID)
+    # GLES 3.0 core entry points (samplers, immutable texture storage, and
+    # buffer-range mapping) are available from API 18. Keep these as PUBLIC
+    # link requirements because digitor_engine may be static and its final
+    # consumer must link the Android NDK stub libraries.
     if(DEFINED ANDROID_PLATFORM AND ANDROID_PLATFORM MATCHES "android-([0-9]+)")
         if(CMAKE_MATCH_1 LESS 18)
             message(FATAL_ERROR "DigitorEngine GLES requires Android API 18 or newer")
@@ -215,7 +227,6 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_rgb_curves.cpp
         tests/test_primary_wheels.cpp
         tests/test_log_wheels.cpp
-        tests/test_hsl_qualifier.cpp
         tests/test_color_science.cpp
         tests/test_render_export.cpp
         tests/test_render_graph.cpp
@@ -230,19 +241,124 @@ if (DIGITOR_BUILD_TESTS)
     endif()
     add_test(NAME digitor_tests COMMAND digitor_tests)
 
+    # Build the qualification harness on every host so its reporting and CPU
+    # reference code are continuously compiled. Unsupported hosts return 77.
     add_executable(digitor_native_gpu_tests tests/test_native_gpu.cpp)
-    set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
-    target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
-    target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        set_target_properties(digitor_native_gpu_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+        target_link_libraries(digitor_native_gpu_tests PRIVATE Digitor::Engine)
+        target_include_directories(digitor_native_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        if (MSVC)
+            target_compile_options(digitor_native_gpu_tests PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(digitor_native_gpu_tests PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME digitor_native_gpu_tests COMMAND digitor_native_gpu_tests)
+        set_tests_properties(digitor_native_gpu_tests PROPERTIES
+            ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
+            LABELS "native-gpu;hardware"
+            SKIP_RETURN_CODE 77
+        )
+
+    # v4.9.0 feature-specific production qualification.
+    add_executable(digitor_log_wheels_native_tests
+        tests/test_log_wheels_native.cpp
+    )
+    set_target_properties(digitor_log_wheels_native_tests PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_link_libraries(digitor_log_wheels_native_tests PRIVATE Digitor::Engine)
+    target_include_directories(digitor_log_wheels_native_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
     if (MSVC)
-        target_compile_options(digitor_native_gpu_tests PRIVATE /UNDEBUG)
+        target_compile_options(digitor_log_wheels_native_tests PRIVATE /UNDEBUG)
     else()
-        target_compile_options(digitor_native_gpu_tests PRIVATE -UNDEBUG)
+        target_compile_options(digitor_log_wheels_native_tests PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME digitor_native_gpu_tests COMMAND digitor_native_gpu_tests)
-    set_tests_properties(digitor_native_gpu_tests PROPERTIES
+    add_test(NAME digitor_log_wheels_native_tests
+        COMMAND digitor_log_wheels_native_tests
+    )
+    set_tests_properties(digitor_log_wheels_native_tests PROPERTIES
         ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
-        LABELS "native-gpu;hardware"
+        LABELS "native-gpu;hardware;log-wheels;v4.9.0"
         SKIP_RETURN_CODE 77
     )
+
+    if(FFmpeg_FOUND)
+        add_executable(digitor_media_tests tests/test_media.cpp)
+        set_target_properties(digitor_media_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+        target_link_libraries(digitor_media_tests PRIVATE Digitor::Engine)
+        add_custom_command(TARGET digitor_media_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/malformed.txt"
+                "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures/malformed.bin"
+            VERBATIM
+        )
+        if(DIGITOR_GENERATE_TEST_MEDIA)
+            add_custom_command(TARGET digitor_media_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E env
+                    "FFMPEG_EXECUTABLE=${DIGITOR_FFMPEG_CLI}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_media_fixtures.sh"
+                    "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
+                VERBATIM)
+        else()
+            message(STATUS
+                "DigitorEngine media tests: optional MP4/MOV/MKV fixtures will not be generated")
+        endif()
+        add_test(NAME digitor_media_tests COMMAND digitor_media_tests)
+        set_tests_properties(digitor_media_tests PROPERTIES
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:digitor_media_tests>"
+        )
+    endif()
+
+    add_executable(digitor_c_header_test tests/test_c_header.c)
+    set_target_properties(digitor_c_header_test PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        C_EXTENSIONS OFF
+    )
+    target_link_libraries(digitor_c_header_test PRIVATE Digitor::Engine)
+    if (MSVC)
+        target_compile_options(digitor_c_header_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(digitor_c_header_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME digitor_c_header_test COMMAND digitor_c_header_test)
+
+    # Informational only: intentionally not registered with CTest.
+    add_executable(digitor_rgb_curves_benchmark benchmarks/rgb_curves_benchmark.cpp)
+    target_link_libraries(digitor_rgb_curves_benchmark PRIVATE Digitor::Engine)
 endif()
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS digitor_engine
+    EXPORT DigitorEngineTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(EXPORT DigitorEngineTargets
+    FILE DigitorEngineTargets.cmake
+    NAMESPACE Digitor::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine
+)
+
+configure_package_config_file(cmake/DigitorEngineConfig.cmake.in
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}" COMPATIBILITY SameMajorVersion)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
