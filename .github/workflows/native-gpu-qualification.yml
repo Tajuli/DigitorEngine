@@ -1,0 +1,153 @@
+name: Native GPU Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-gpu-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-gpu-qualification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native:
+    name: Windows D3D12 and Vulkan
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B build
+          -A x64
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Unit tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Native qualification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          $env:DIGITOR_GPU_VALIDATION='1'
+          & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-native.log
+          exit $LASTEXITCODE
+
+      - name: Upload Windows qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-qualification
+          path: qualification/**
+          if-no-files-found: warn
+
+  macos-metal:
+    name: macOS Metal
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Native qualification
+        run: |
+          mkdir -p qualification
+          set +e
+          DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Upload Metal qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-metal-qualification
+          path: qualification/**
+          if-no-files-found: warn
+
+  android-compile-link:
+    name: Android arm64 compile and link
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        shell: bash
+        run: sdkmanager 'ndk;27.2.12479018'
+
+      - name: Configure Android NDK
+        shell: bash
+        run: >-
+          cmake -S . -B build-android
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_PLATFORM=android-24
+          -DCMAKE_BUILD_TYPE=Release
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+
+      - name: Build Android qualification target
+        shell: bash
+        run: cmake --build build-android --target digitor_native_gpu_tests --parallel 2
+
+      - name: Record Android build evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification
+          {
+            echo "classification=Compile/link verified, runtime hardware-unverified"
+            echo "abi=arm64-v8a"
+            echo "api=24"
+            echo "ndk=27.2.12479018"
+            echo "sha=${GITHUB_SHA}"
+          } > qualification/android-compile-link.txt
+
+      - name: Upload Android build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-compile-link-qualification
+          path: qualification/**
+          if-no-files-found: warn
