@@ -54,14 +54,16 @@ struct PreviewSourceConfiguration {
 struct ColorGraphConfiguration {
   static constexpr std::uint32_t schema_version = 2;
   ColorOperationOrder operation_order{ColorOperationOrder::PrimaryWheelsThenLogWheelsThenRgbCurves};
+  // Preserve the v4.8 aggregate-initialization field order. New v4.9 fields
+  // are appended so existing callers and tests remain source-compatible.
   std::string primary_wheels_serialization;
-  std::string log_wheels_serialization;
   std::string rgb_curves_serialization;
   RenderPrecision precision{RenderPrecision::Float32};
   std::string color_metadata_identity{"linear-rgba"};
   bool primary_wheels_enabled{};
-  bool log_wheels_enabled{};
   bool rgb_curves_enabled{};
+  std::string log_wheels_serialization;
+  bool log_wheels_enabled{};
   [[nodiscard]] std::string identity() const;
   [[nodiscard]] std::vector<std::string> operation_sequence() const;
 };
