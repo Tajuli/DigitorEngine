@@ -48,8 +48,8 @@ void test_hsl_qualifier_foundation() {
       {1.0f, 0.0f, 0.0f, .2f},
       {0.0f, 1.0f, 0.0f, .3f},
       {0.5f, 0.5f, 0.5f, .4f}};
-  const auto matte = apply_hsl_qualifier_reference(input, 3, 1, *parameters);
-  assert(matte.size() == input.size());
+  std::vector<float> matte(input.size());
+  apply_hsl_qualifier_reference(input, matte, *parameters);
   assert(matte[0] > .99f);
   assert(matte[1] == 0.0f);
   assert(matte[2] == 0.0f);
@@ -62,9 +62,10 @@ void test_hsl_qualifier_foundation() {
 
   HslQualifier qualifier;
   qualifier.set_settings(settings);
-  std::vector<float> output(input.size());
+  std::vector<float> output(input.size(), -1.0f);
   CommandBuffer buffer;
   CommandEncoder encoder(buffer);
+  const auto before_rejected_gpu = hsl_qualifier_reference_count();
   bool rejected = false;
   try {
     qualifier.matte_gpu(encoder, input, output, 3, 1);
@@ -72,7 +73,8 @@ void test_hsl_qualifier_foundation() {
     rejected = true;
   }
   assert(rejected);
-  assert(hsl_qualifier_reference_count() == input.size() + 1);
+  assert(hsl_qualifier_reference_count() == before_rejected_gpu);
+  for (float value : output) assert(value == -1.0f);
 
   auto invalid = settings;
   invalid.saturation.low = -0.1f;
