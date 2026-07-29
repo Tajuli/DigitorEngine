@@ -1,5 +1,6 @@
 #include "gpu/native_hsl_qualifier.hpp"
 
+#include "gpu/gpu_backend.hpp"
 #include "hsl_qualifier_shader.hpp"
 
 #include <limits>
@@ -38,6 +39,28 @@ std::string_view hsl_qualifier_shader_source() noexcept {
 
 std::string_view hsl_qualifier_shader_identity() noexcept {
   return "digitor-hsl-qualifier-v5.0.0-schema1";
+}
+
+// Truthful defaults for backends that have not yet wired native qualifier
+// execution. These definitions keep the virtual contract link-complete while
+// guaranteeing that a selected GPU backend never masquerades CPU work as GPU.
+DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
+    std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
+    const HslQualifierParameters&, ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
+
+DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
+    const GpuSourceResource&, std::int64_t, const HslQualifierParameters&,
+    ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
+
+DigitorResult IRenderBackend::execute_validation_readback_hsl_qualifier(
+    const ProcessedGpuFramePtr&, std::span<float>) noexcept {
+  return DIGITOR_RESULT_UNSUPPORTED;
 }
 
 } // namespace digitor
