@@ -12,6 +12,7 @@
 #include "digitor/rgb_curves.hpp"
 #include "digitor/primary_wheels.hpp"
 #include "digitor/log_wheels.hpp"
+#include "digitor/qualifier.hpp"
 #include "gpu/execution_provenance.hpp"
 #include "digitor/gpu_frame.hpp"
 #include "gpu/gpu_source.hpp"
@@ -42,9 +43,6 @@ public:
   virtual void destroy_buffer(void *) noexcept;
   virtual void destroy_sampler(void *) noexcept;
 
-  // Records and submits the backend's native clear/copy pass, then reads the
-  // RGBA8 render target back for preview.  Keeping this operation internal
-  // preserves the v2 C ABI while allowing preview to consume GPU pixels.
   virtual DigitorResult
   render_rgba8(uint32_t width, uint32_t height, std::span<const uint8_t> source,
                std::vector<uint8_t> &destination) noexcept;
@@ -54,8 +52,6 @@ public:
   DigitorResult curves_rgba32f(std::span<const Color> source,
                                std::span<Color> destination,
                                const CompiledRgbCurves&) noexcept;
-  // Live preview contract. Unlike curves_rgba32f (validation/export), this
-  // function cannot return CPU pixels and has no readback fallback.
   DigitorResult process_curves_gpu(std::span<const Color> source,
                                    std::uint32_t width, std::uint32_t height,
                                    std::int64_t timestamp,
@@ -69,6 +65,19 @@ public:
   DigitorResult process_log_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   DigitorResult process_log_wheels_gpu(const GpuSourceResource&,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   DigitorResult validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
+
+  // v5.0.0 GPU-first HSL qualifier contract. The matte is represented as an
+  // RGBA32F ProcessedGpuFrame with the scalar matte replicated to RGB and alpha
+  // fixed to 1.0. This lets preview/export/node-graph code reuse the existing
+  // resident frame ownership without introducing a host-visible matte path.
+  DigitorResult process_hsl_qualifier_gpu(std::span<const Color>,std::uint32_t,
+      std::uint32_t,std::int64_t,const HslQualifierParameters&,
+      ProcessedGpuFramePtr&) noexcept;
+  DigitorResult process_hsl_qualifier_gpu(const GpuSourceResource&,
+      std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
+  DigitorResult validation_readback_hsl_qualifier(const ProcessedGpuFramePtr&,
+      std::span<float>) noexcept;
+
   DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
       std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
@@ -99,6 +108,14 @@ protected:
   virtual DigitorResult execute_process_log_wheels_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_log_wheels_gpu(const GpuSourceResource&,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
+  virtual DigitorResult execute_process_hsl_qualifier_gpu(std::span<const Color>,
+      std::uint32_t,std::uint32_t,std::int64_t,const HslQualifierParameters&,
+      ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_hsl_qualifier_gpu(
+      const GpuSourceResource&,std::int64_t,const HslQualifierParameters&,
+      ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_validation_readback_hsl_qualifier(
+      const ProcessedGpuFramePtr&,std::span<float>) noexcept;
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_create_preview_consumer(const ProcessedGpuFramePtr&,
       std::shared_ptr<PreviewConsumerDestination>&) noexcept;
@@ -106,8 +123,6 @@ protected:
                               const char *device, const char *compiler,
                               const char *shader, const char *pipeline) noexcept;
   DigitorResult injected_failure(GpuFailurePoint point) noexcept;
-  // Must be called immediately before the native operation named by
-  // `operation`.  It is the sole stage-reached evidence seam.
   DigitorResult inject_at(GpuFailurePoint point, const char* operation) noexcept;
   ExecutionProvenance provenance_{};
 private:
@@ -116,19 +131,12 @@ private:
 };
 
 [[nodiscard]] bool gpu_validation_requested() noexcept;
-
 std::unique_ptr<IRenderBackend>
 create_gpu_backend(DigitorRendererBackend preferred);
-
-// Implemented by the platform-specific translation unit (or the portable stub).
 std::unique_ptr<IRenderBackend>
 create_native_backend(DigitorRendererBackend backend);
-
 using BackendFactory =
     std::function<std::unique_ptr<IRenderBackend>(DigitorRendererBackend)>;
-
-// Internal selection seam used to test platform policy without requiring GPU
-// hardware.
 std::unique_ptr<IRenderBackend>
 select_gpu_backend(HostPlatform platform, DigitorRendererBackend preferred,
                    const BackendFactory &factory);
