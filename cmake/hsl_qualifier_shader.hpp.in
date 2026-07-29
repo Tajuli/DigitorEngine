@@ -1,0 +1,2 @@
+#pragma once
+namespace digitor { inline constexpr char digitor_hsl_qualifier_hlsl[] = R"hlsl(@DIGITOR_HSL_QUALIFIER_HLSL@)hlsl"; }
