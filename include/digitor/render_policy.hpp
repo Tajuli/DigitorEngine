@@ -10,14 +10,20 @@
 
 namespace digitor {
 
-enum class ColorOperationOrder { PrimaryWheelsThenRgbCurves, RgbCurvesThenPrimaryWheels };
-
-enum class MediaSourceClass : std::uint32_t {
-  Original,
-  Proxy,
-  CompressedPreview,
-  DecodeScaled
+enum class ColorOperationOrder : std::uint32_t {
+  PrimaryWheelsThenLogWheelsThenRgbCurves = 0,
+  PrimaryWheelsThenRgbCurvesThenLogWheels = 1,
+  LogWheelsThenPrimaryWheelsThenRgbCurves = 2,
+  LogWheelsThenRgbCurvesThenPrimaryWheels = 3,
+  RgbCurvesThenPrimaryWheelsThenLogWheels = 4,
+  RgbCurvesThenLogWheelsThenPrimaryWheels = 5,
+  // Source compatibility for v4.8 callers. With Log Wheels disabled these aliases
+  // preserve the previous two-operation ordering exactly.
+  PrimaryWheelsThenRgbCurves = PrimaryWheelsThenLogWheelsThenRgbCurves,
+  RgbCurvesThenPrimaryWheels = RgbCurvesThenLogWheelsThenPrimaryWheels
 };
+
+enum class MediaSourceClass : std::uint32_t { Original, Proxy, CompressedPreview, DecodeScaled };
 enum class RenderPurpose : std::uint32_t { Preview, Export };
 enum class RenderPrecision : std::uint32_t { Float32, Float16 };
 
@@ -46,13 +52,15 @@ struct PreviewSourceConfiguration {
 };
 
 struct ColorGraphConfiguration {
-  static constexpr std::uint32_t schema_version = 1;
-  ColorOperationOrder operation_order{ColorOperationOrder::PrimaryWheelsThenRgbCurves};
+  static constexpr std::uint32_t schema_version = 2;
+  ColorOperationOrder operation_order{ColorOperationOrder::PrimaryWheelsThenLogWheelsThenRgbCurves};
   std::string primary_wheels_serialization;
+  std::string log_wheels_serialization;
   std::string rgb_curves_serialization;
   RenderPrecision precision{RenderPrecision::Float32};
   std::string color_metadata_identity{"linear-rgba"};
   bool primary_wheels_enabled{};
+  bool log_wheels_enabled{};
   bool rgb_curves_enabled{};
   [[nodiscard]] std::string identity() const;
   [[nodiscard]] std::vector<std::string> operation_sequence() const;
@@ -66,8 +74,6 @@ struct ColorRenderPlan {
   std::string source_cache_identity;
 };
 
-// This is the single source/graph policy path used by preview and export.
-// Export never falls back to a non-original source.
 [[nodiscard]] ColorRenderPlan build_color_render_plan(
     RenderPurpose purpose, std::span<const MediaSourceDescriptor> sources,
     const PreviewSourceConfiguration& preview,
