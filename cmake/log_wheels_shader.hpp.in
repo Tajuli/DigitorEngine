@@ -1,0 +1,4 @@
+#pragma once
+namespace digitor::generated {
+inline constexpr const char log_wheels_hlsl[] = R"DIGITOR_SHADER(@DIGITOR_LOG_WHEELS_HLSL@)DIGITOR_SHADER";
+}
