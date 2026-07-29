@@ -157,7 +157,10 @@ if(ANDROID)
             OUTPUT "${SPV}"
             COMMAND "${DIGITOR_ANDROID_GLSLC}"
                     -x hlsl -fshader-stage=compute -fentry-point=main
-                    --target-env=vulkan1.2 -O -fhlsl-offsets
+                    # Android baseline and the tested Mali-G57 device use Vulkan 1.1.
+                    # Vulkan 1.1 targets SPIR-V 1.3, where shaderc's legacy
+                    # BufferBlock decoration for HLSL StructuredBuffer is valid.
+                    --target-env=vulkan1.1 -O -fhlsl-offsets
                     -DDIGITOR_VULKAN=1 ${OPTIONS}
                     "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}" -o "${SPV}"
             DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}"
