@@ -1,0 +1,52 @@
+#include "digitor/gpu_frame.hpp"
+
+namespace digitor {
+
+ProcessedGpuFrame::ProcessedGpuFrame(const void* context,
+    DigitorRendererBackend backend, GpuFrameMetadata metadata,
+    std::uint64_t identity, NativeOwner native,
+    std::shared_ptr<std::atomic_bool> ready, bool validation_readback_supported)
+    : context_(context), backend_(backend), metadata_(std::move(metadata)),
+      identity_(identity), native_(std::move(native)), ready_(std::move(ready)),
+      validation_readback_supported_(validation_readback_supported) {}
+
+DigitorResult ProcessedGpuFrame::acquire(const void* context,
+                                         DigitorRendererBackend consumer) noexcept {
+  if (!context || context != context_ || consumer != backend_)
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  if (!context_live()) return DIGITOR_RESULT_NOT_INITIALIZED;
+  if (!native_ || !ready()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+  acquisitions_.fetch_add(1, std::memory_order_acq_rel);
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult ProcessedGpuFrame::release(const void* context) noexcept {
+  if (!context || context != context_) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto count = acquisitions_.load(std::memory_order_acquire);
+  while (count != 0) {
+    if (acquisitions_.compare_exchange_weak(count, count - 1,
+                                            std::memory_order_acq_rel))
+      return DIGITOR_RESULT_OK;
+  }
+  return DIGITOR_RESULT_INVALID_ARGUMENT;
+}
+
+bool ProcessedGpuFrame::ready() const noexcept {
+  return context_live() && ready_ && ready_->load(std::memory_order_acquire);
+}
+
+bool ProcessedGpuFrame::context_live() const noexcept {
+  const auto lifetime = context_lifetime_.lock();
+  // Unbound frames are retained for source compatibility with callers that
+  // construct standalone test resources. Backend-produced frames are bound by
+  // IRenderBackend before they are returned.
+  return !context_lifetime_bound_ || (lifetime && lifetime->live());
+}
+
+void ProcessedGpuFrame::bind_context_lifetime(
+    const std::shared_ptr<GpuContextLifetime>& lifetime) noexcept {
+  context_lifetime_ = lifetime;
+  context_lifetime_bound_ = true;
+}
+
+} // namespace digitor
