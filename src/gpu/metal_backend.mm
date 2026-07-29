@@ -748,7 +748,6 @@ public:
     }
   }
 
-  DigitorResult
   DigitorResult execute_process_log_wheels_gpu(
       std::span<const Color> source, std::uint32_t width, std::uint32_t height,
       std::int64_t timestamp, const LogWheelsParameters &parameters,
