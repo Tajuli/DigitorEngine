@@ -1691,7 +1691,7 @@ public:
     return DIGITOR_RESULT_OK;
   }
 
-  execute_process_curves_gpu(std::span<const Color> source, uint32_t width,
+  DigitorResult execute_process_curves_gpu(std::span<const Color> source, uint32_t width,
                              uint32_t height, int64_t timestamp,
                              const CompiledRgbCurves &curves,
                              ProcessedGpuFramePtr &out) noexcept override {
