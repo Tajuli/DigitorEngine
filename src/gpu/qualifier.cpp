@@ -1,5 +1,6 @@
 #include "digitor/qualifier.hpp"
 #include "core/numeric_utils.hpp"
+#include "gpu/gpu_backend.hpp"
 
 #include <algorithm>
 #include <array>
@@ -189,15 +190,8 @@ void apply_hsl_qualifier_reference(
     const HslQualifierParameters& parameters) {
   if (input.size() != output.size())
     throw std::invalid_argument("HSL qualifier image sizes differ");
-  const auto& settings = parameters.values();
   for (std::size_t i = 0; i < input.size(); ++i)
     output[i] = apply_hsl_qualifier_reference(input[i], parameters);
-
-  // Spatial cleanup is part of the reference contract and will be matched by
-  // dedicated native GPU passes. It is never called from a selected GPU path.
-  if (settings.denoise > 0.0f && !output.empty()) {
-    // Width/height-aware cleanup remains in HslQualifier::matte_cpu.
-  }
 }
 
 std::uint64_t hsl_qualifier_reference_count() noexcept {
@@ -273,6 +267,73 @@ void HslQualifier::matte_gpu(CommandEncoder&, std::span<const Color>,
                              std::uint32_t) const {
   throw std::logic_error(
       "HSL qualifier GPU execution requires a native backend; CPU fallback is forbidden");
+}
+
+DigitorResult IRenderBackend::process_hsl_qualifier_gpu(
+    std::span<const Color> source, std::uint32_t width, std::uint32_t height,
+    std::int64_t timestamp, const HslQualifierParameters& parameters,
+    ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  const auto before = hsl_qualifier_reference_count();
+  const auto result = execute_process_hsl_qualifier_gpu(
+      source, width, height, timestamp, parameters, out);
+  const auto cpu_delta = hsl_qualifier_reference_count() - before;
+  if (result != DIGITOR_RESULT_OK || !out || cpu_delta != 0 ||
+      provenance_.normal_preview_readback_count != 0) {
+    out.reset();
+    return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
+  }
+  out->bind_context_lifetime(context_lifetime_);
+  provenance_.preview_source = PreviewSource::gpu;
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult IRenderBackend::process_hsl_qualifier_gpu(
+    const GpuSourceResource& source, std::int64_t timestamp,
+    const HslQualifierParameters& parameters, ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  if (!source.usable_by(info().backend, context_identity_))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto before = hsl_qualifier_reference_count();
+  const auto result = execute_process_hsl_qualifier_gpu(
+      source, timestamp, parameters, out);
+  const auto cpu_delta = hsl_qualifier_reference_count() - before;
+  if (result != DIGITOR_RESULT_OK || !out || cpu_delta != 0 ||
+      provenance_.normal_preview_readback_count != 0) {
+    out.reset();
+    return result == DIGITOR_RESULT_OK ? DIGITOR_RESULT_INTERNAL_ERROR : result;
+  }
+  out->bind_context_lifetime(context_lifetime_);
+  provenance_.preview_source = PreviewSource::gpu;
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult IRenderBackend::validation_readback_hsl_qualifier(
+    const ProcessedGpuFramePtr& frame, std::span<float> output) noexcept {
+  if (!frame || !frame->validation_readback_supported())
+    return DIGITOR_RESULT_UNSUPPORTED;
+  const auto result = execute_validation_readback_hsl_qualifier(frame, output);
+  provenance_.validation_readback_completed = result == DIGITOR_RESULT_OK;
+  return result;
+}
+
+DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
+    std::span<const Color>, std::uint32_t, std::uint32_t, std::int64_t,
+    const HslQualifierParameters&, ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
+
+DigitorResult IRenderBackend::execute_process_hsl_qualifier_gpu(
+    const GpuSourceResource&, std::int64_t, const HslQualifierParameters&,
+    ProcessedGpuFramePtr& out) noexcept {
+  out.reset();
+  return DIGITOR_RESULT_UNSUPPORTED;
+}
+
+DigitorResult IRenderBackend::execute_validation_readback_hsl_qualifier(
+    const ProcessedGpuFramePtr&, std::span<float>) noexcept {
+  return DIGITOR_RESULT_UNSUPPORTED;
 }
 
 } // namespace digitor
