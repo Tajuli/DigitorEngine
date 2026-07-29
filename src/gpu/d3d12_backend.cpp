@@ -1867,7 +1867,7 @@ public:
     gpu.ptr += stride;
     list_->SetComputeRootDescriptorTable(1, gpu);
     auto params = native_hsl_qualifier_parameters(
-        parameters, s.width * s.height, s.width, s.height);
+        parameters, s.width, s.height);
     if (!record_stage(GpuFailurePoint::ParameterUpload,
                       "SetComputeRoot32BitConstants(parameters)"))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
