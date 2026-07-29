@@ -2,12 +2,19 @@ name: Native GPU Qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      run_android_hardware:
+        description: 'Run Log Wheels on a connected Android GPU self-hosted runner'
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'src/**'
       - 'include/**'
       - 'tests/**'
       - 'cmake/**'
+      - 'docs/**'
       - 'CMakeLists.txt'
       - '.github/workflows/native-gpu-qualification.yml'
   push:
@@ -17,6 +24,7 @@ on:
       - 'include/**'
       - 'tests/**'
       - 'cmake/**'
+      - 'docs/**'
       - 'CMakeLists.txt'
       - '.github/workflows/native-gpu-qualification.yml'
 
@@ -27,7 +35,7 @@ jobs:
   windows-native:
     name: Windows D3D12 and Vulkan
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -48,12 +56,21 @@ jobs:
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
 
-      - name: Native qualification
+      - name: Existing native qualification
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force qualification | Out-Null
           $env:DIGITOR_GPU_VALIDATION='1'
-          & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-native.log
+          & .\build\Release\digitor_native_gpu_tests.exe 2>&1 |
+            Tee-Object qualification\windows-native.log
+          exit $LASTEXITCODE
+
+      - name: Log Wheels production qualification
+        shell: pwsh
+        run: |
+          $env:DIGITOR_GPU_VALIDATION='1'
+          & .\build\Release\digitor_log_wheels_native_tests.exe 2>&1 |
+            Tee-Object qualification\windows-log-wheels.log
           exit $LASTEXITCODE
 
       - name: Upload Windows qualification
@@ -62,12 +79,12 @@ jobs:
         with:
           name: windows-native-qualification
           path: qualification/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   macos-metal:
     name: macOS Metal
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -85,11 +102,22 @@ jobs:
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Native qualification
+      - name: Existing native qualification
+        shell: bash
         run: |
           mkdir -p qualification
           set +e
-          DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
+          DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 |
+            tee qualification/macos-metal.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Log Wheels production qualification
+        shell: bash
+        run: |
+          set +e
+          DIGITOR_GPU_VALIDATION=1 ./build/digitor_log_wheels_native_tests 2>&1 |
+            tee qualification/macos-log-wheels.log
           status=${PIPESTATUS[0]}
           exit "$status"
 
@@ -99,12 +127,12 @@ jobs:
         with:
           name: macos-metal-qualification
           path: qualification/**
-          if-no-files-found: warn
+          if-no-files-found: error
 
   android-compile-link:
     name: Android arm64 compile and link
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -127,9 +155,12 @@ jobs:
           -DDIGITOR_BUILD_TESTS=ON
           -DDIGITOR_BUILD_EXAMPLES=OFF
 
-      - name: Build Android qualification target
+      - name: Build Android qualification targets
         shell: bash
-        run: cmake --build build-android --target digitor_native_gpu_tests --parallel 2
+        run: >-
+          cmake --build build-android
+          --target digitor_native_gpu_tests digitor_log_wheels_native_tests
+          --parallel 2
 
       - name: Record Android build evidence
         if: always()
@@ -142,6 +173,7 @@ jobs:
             echo "api=24"
             echo "ndk=27.2.12479018"
             echo "sha=${GITHUB_SHA}"
+            echo "log_wheels_qualification_binary=digitor_log_wheels_native_tests"
           } > qualification/android-compile-link.txt
 
       - name: Upload Android build evidence
@@ -150,4 +182,76 @@ jobs:
         with:
           name: android-compile-link-qualification
           path: qualification/**
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  android-hardware:
+    name: Android Vulkan and GLES hardware
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_android_hardware }}
+    runs-on: [self-hosted, linux, arm64, android-gpu]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm connected device
+        shell: bash
+        run: |
+          adb wait-for-device
+          adb devices
+          test "$(adb shell getprop ro.product.cpu.abi | tr -d '\r')" = "arm64-v8a"
+
+      - name: Install NDK
+        shell: bash
+        run: sdkmanager 'ndk;27.2.12479018'
+
+      - name: Configure Android NDK
+        shell: bash
+        run: >-
+          cmake -S . -B build-android
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_PLATFORM=android-24
+          -DCMAKE_BUILD_TYPE=Release
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+
+      - name: Build Log Wheels hardware qualification
+        shell: bash
+        run: >-
+          cmake --build build-android
+          --target digitor_log_wheels_native_tests
+          --parallel 2
+
+      - name: Execute on Android hardware
+        shell: bash
+        run: |
+          mkdir -p qualification
+          adb push build-android/digitor_log_wheels_native_tests \
+            /data/local/tmp/digitor_log_wheels_native_tests
+          adb shell chmod 755 /data/local/tmp/digitor_log_wheels_native_tests
+          set +e
+          adb shell 'DIGITOR_GPU_VALIDATION=1 /data/local/tmp/digitor_log_wheels_native_tests' \
+            2>&1 | tee qualification/android-log-wheels-hardware.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
+
+      - name: Record device identity
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "manufacturer=$(adb shell getprop ro.product.manufacturer | tr -d '\r')"
+            echo "model=$(adb shell getprop ro.product.model | tr -d '\r')"
+            echo "device=$(adb shell getprop ro.product.device | tr -d '\r')"
+            echo "android=$(adb shell getprop ro.build.version.release | tr -d '\r')"
+            echo "abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+          } > qualification/android-device.txt
+
+      - name: Upload Android hardware qualification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-log-wheels-hardware
+          path: qualification/**
+          if-no-files-found: error
