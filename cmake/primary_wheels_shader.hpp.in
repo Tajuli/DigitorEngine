@@ -1,2 +1,0 @@
-#pragma once
-namespace digitor { inline constexpr char digitor_primary_wheels_hlsl[] = R"hlsl(@DIGITOR_PRIMARY_WHEELS_HLSL@)hlsl"; }
