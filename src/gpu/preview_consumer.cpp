@@ -9,6 +9,13 @@ PreviewConsumerDestination::PreviewConsumerDestination(PreviewConsumerMetadata m
       submit_(std::move(submit)) {}
 
 DigitorResult PreviewConsumerDestination::submit(const ProcessedGpuFramePtr& frame) noexcept {
+  if (frame && !retirement_bound_.exchange(true, std::memory_order_acq_rel)) {
+    const std::weak_ptr<PreviewConsumerDestination> weak_self = weak_from_this();
+    frame->add_context_retirement_callback([weak_self]() noexcept {
+      if (auto consumer = weak_self.lock()) consumer->retire();
+    });
+  }
+
   std::scoped_lock lock(mutex_);
   if (!frame || !ownership_token_ || !native_destination_ || !live_ || !submit_ ||
       !live_->load(std::memory_order_acquire)) return DIGITOR_RESULT_NOT_INITIALIZED;

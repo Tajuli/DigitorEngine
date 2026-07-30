@@ -61,6 +61,8 @@ public:
   [[nodiscard]] std::uint64_t identity() const noexcept { return identity_; }
   [[nodiscard]] bool validation_readback_supported() const noexcept { return validation_readback_supported_; }
   [[nodiscard]] bool context_live() const noexcept;
+  void add_context_retirement_callback(
+      GpuContextLifetime::RetirementCallback callback) const noexcept;
 
 private:
   friend class IRenderBackend;

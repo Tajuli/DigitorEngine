@@ -23,7 +23,8 @@ struct PreviewConsumerMetadata {
 // not by ProcessedGpuFrame. The callback is implemented by a native consumer
 // (the qualification harness is one such consumer) and must record/submit a
 // GPU-only copy, blit, or draw before returning success.
-class PreviewConsumerDestination final {
+class PreviewConsumerDestination final
+    : public std::enable_shared_from_this<PreviewConsumerDestination> {
 public:
   using NativeSubmit = std::function<DigitorResult(const ProcessedGpuFramePtr&,
                                                     const std::shared_ptr<void>&)>;
@@ -42,6 +43,7 @@ private:
   std::shared_ptr<std::atomic_bool> live_;
   NativeSubmit submit_;
   std::atomic_uint64_t submissions_{};
+  std::atomic_bool retirement_bound_{};
   std::mutex mutex_;
 };
 
