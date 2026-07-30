@@ -1,10 +1,13 @@
 #include "digitor/native_node_executor.hpp"
 #include "gpu/gpu_backend.hpp"
+
 #include <exception>
+#include <optional>
 #include <unordered_map>
 
 namespace digitor {
 namespace {
+
 struct NativeNodeValue {
   ProcessedGpuFramePtr frame;
   bool source_backed{};
@@ -14,7 +17,8 @@ bool is_node_mask(NodeOperationKind kind) noexcept {
   return kind == NodeOperationKind::hsl_qualifier ||
          kind == NodeOperationKind::power_window;
 }
-}
+
+} // namespace
 
 NativeNodeGraphPreflight preflight_native_node_graph(
     const IRenderBackend& backend, const ProductionNodeGraph& graph) noexcept {
@@ -30,7 +34,7 @@ NativeNodeGraphPreflight preflight_native_node_graph(
         return out;
       }
 
-      bool has_enabled_mask = false;
+      std::optional<NodeOperationKind> enabled_mask;
       bool has_enabled_processing = false;
       for (const auto& operation : node.operations) {
         if (!operation.enabled) continue;
@@ -38,22 +42,24 @@ NativeNodeGraphPreflight preflight_native_node_graph(
           out.supported = false;
           out.node = id;
           out.operation = operation.kind;
-          out.message = "backend does not implement selected-node native operation";
+          out.message =
+              "backend does not implement selected-node native operation";
           return out;
         }
-        if (is_node_mask(operation.kind)) has_enabled_mask = true;
-        else has_enabled_processing = true;
+        if (is_node_mask(operation.kind)) {
+          if (!enabled_mask) enabled_mask = operation.kind;
+        } else {
+          has_enabled_processing = true;
+        }
       }
 
-      // HSL qualifier and Power Window are node-local mattes. The current
-      // backend contract can produce a matte and can run color passes, but it
-      // cannot yet bind original + processed + matte as one native composite.
-      // Reject this graph before execution rather than treating matte pixels as
-      // an RGBA color frame or silently falling back to CPU.
-      if (has_enabled_mask) {
+      // Qualifiers and Power Windows are node-local mattes. Until every native
+      // backend can bind original + processed + matte for one composite pass,
+      // reject the graph before execution instead of returning incorrect RGBA.
+      if (enabled_mask) {
         out.supported = false;
         out.node = id;
-        out.operation = NodeOperationKind::hsl_qualifier;
+        out.operation = *enabled_mask;
         out.message = has_enabled_processing
             ? "backend does not implement native node-local mask composition"
             : "node-local mask requires a following processing operation";
@@ -161,9 +167,6 @@ NativeNodeGraphResult execute_native_node_graph(
       }
       NativeNodeValue current = predecessor->second;
 
-      // Empty, disabled, and bypassed nodes are aliases. Preserve whether the
-      // value is still backed by the original CPU source so a later native pass
-      // can perform the one required upload.
       if (!node.enabled || node.bypassed || node.operations.empty()) {
         outputs[id] = current;
         continue;
@@ -220,7 +223,7 @@ NativeNodeGraphResult execute_native_node_graph(
           result.message =
               "node-local mask reached execution after successful preflight";
           return result;
-        default: {
+        default:
           if (first) {
             result.status = NativeNodeGraphStatus::unsupported_operation;
             result.node = id;
@@ -232,7 +235,6 @@ NativeNodeGraphResult execute_native_node_graph(
           backend_result = backend.process_node_operation_gpu(
               backend.gpu_source(current.frame), timestamp, operation, next);
           break;
-        }
         }
 
         if (backend_result != DIGITOR_RESULT_OK || !next) {
@@ -270,4 +272,5 @@ NativeNodeGraphResult execute_native_node_graph(
     return result;
   }
 }
+
 } // namespace digitor
