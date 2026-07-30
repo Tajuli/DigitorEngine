@@ -281,7 +281,12 @@ DigitorResult IRenderBackend::present_gpu_frame(const ProcessedGpuFramePtr& fram
   provenance_.direct_preview_consumed = false;
   if (!frame) return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto result = execute_present_gpu_frame(frame);
-  provenance_.direct_preview_consumed = result == DIGITOR_RESULT_OK;
+  const bool presented = result == DIGITOR_RESULT_OK;
+  provenance_.direct_preview_consumed = presented;
+  // Native present implementations may reset provenance while establishing
+  // their qualification scope. Restore the public preview-source contract
+  // after a successful direct GPU presentation.
+  if (presented) provenance_.preview_source = PreviewSource::gpu;
   return result;
 }
 DigitorResult IRenderBackend::create_preview_consumer(const ProcessedGpuFramePtr& frame,
