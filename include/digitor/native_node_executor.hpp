@@ -1,6 +1,7 @@
 #pragma once
 #include "digitor/production_node_graph.hpp"
 #include "digitor/gpu_frame.hpp"
+#include "digitor/gpu_matte.hpp"
 #include "digitor/digitor.h"
 #include <span>
 #include <string>
@@ -8,6 +9,15 @@ namespace digitor {
 class IRenderBackend;
 enum class NativeNodeGraphStatus : std::uint32_t {
  ok, invalid_graph, unsupported_parallel_mixer, unsupported_operation, backend_failure
+};
+struct NativeNodeMaskCapabilities {
+ bool hsl_qualifier_matte{};
+ bool power_window_matte{};
+ bool matte_multiply{};
+ bool masked_composite{};
+ [[nodiscard]] bool complete() const noexcept {
+  return hsl_qualifier_matte && power_window_matte && matte_multiply && masked_composite;
+ }
 };
 struct NativeNodeGraphPreflight {
  bool supported{};
