@@ -54,7 +54,18 @@ jobs:
           New-Item -ItemType Directory -Force qualification | Out-Null
           $env:DIGITOR_GPU_VALIDATION='1'
           & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-native.log
-          exit $LASTEXITCODE
+          $status = $LASTEXITCODE
+          if ($status -eq 77) {
+            '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification\windows-native.json
+            Write-Host 'Native GPU hardware is unavailable on this runner; qualification skipped.'
+            exit 0
+          }
+          if ($status -eq 0) {
+            '{"status":"executed-passed","exit_code":0}' | Set-Content qualification\windows-native.json
+            exit 0
+          }
+          "{`"status`":`"failed`",`"exit_code`":$status}" | Set-Content qualification\windows-native.json
+          exit $status
 
       - name: Upload Windows qualification
         if: always()
@@ -86,12 +97,27 @@ jobs:
         run: ctest --test-dir build --output-on-failure -LE hardware
 
       - name: Native qualification
+        shell: bash
         run: |
           mkdir -p qualification
           set +e
           DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
           status=${PIPESTATUS[0]}
-          exit "$status"
+          set -e
+          case "$status" in
+            0)
+              printf '{"status":"executed-passed","exit_code":0}\n' > qualification/macos-metal.json
+              ;;
+            77)
+              printf '{"status":"hardware-unavailable","exit_code":77}\n' > qualification/macos-metal.json
+              echo 'Native GPU hardware is unavailable on this runner; qualification skipped.'
+              exit 0
+              ;;
+            *)
+              printf '{"status":"failed","exit_code":%s}\n' "$status" > qualification/macos-metal.json
+              exit "$status"
+              ;;
+          esac
 
       - name: Upload Metal qualification
         if: always()
