@@ -119,7 +119,7 @@ bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
   const std::array validation{F::ValidationReadbackResourceCreation,
     F::BufferMemoryAllocation,F::BufferMemoryBinding,
     F::CommandBufferOrListAllocation,F::CommandBufferOrListBeginReset,
-    F::CommandRecording,F::ValidationTransition,F::ValidationReadbackCopy,F::CommandBufferOrListClose,
+    F::CommandRecording,F::ValidationReadbackCopy,F::CommandBufferOrListClose,
     F::QueueSubmission,F::SynchronizationWait,F::ValidationReadbackMap,
     F::DeterministicOutOfMemory};
   auto contains=[](auto const& values,F point){return std::find(values.begin(),values.end(),point)!=values.end();};
@@ -160,6 +160,7 @@ bool qualify_vulkan_failure_matrix(digitor::IRenderBackend& backend) {
         reason="GLES-only-stage";
       else if(point==F::LutUploadRecording||point==F::ParameterUploadRecording)
         reason="Vulkan-host-coherent-LUT-parameter-upload-has-no-command-copy";
+      else if(point==F::ValidationTransition)reason="Vulkan-validation-readback-uses-a-general-memory-barrier-without-a-distinct-transition-stage";
       else if(point==F::FenceSignal)reason="Vulkan-path-uses-queue-idle-without-explicit-fence";
       std::cerr<<"FAILURE_STAGE backend=Vulkan path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)
         <<" classification=NOT_APPLICABLE reached=0 output_cleared=1 cleanup=1 cache_ok=1 cpu_primary_delta=0 cpu_curves_delta=0 fallback=0 intermediate_readback=0 intermediate_reupload=0 normal_readback=0 acquisition_balanced=1 recovery=0 reason="<<reason<<"\n";
