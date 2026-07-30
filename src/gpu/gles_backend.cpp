@@ -76,6 +76,11 @@ class GlBackend final : public IRenderBackend {
     glDisable(GL_RASTERIZER_DISCARD);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_FALSE);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    if (fullscreen_vao_ != 0) glBindVertexArray(fullscreen_vao_);
   }
   bool make_framebuffer(GLuint& out,GLuint texture,GLenum target,const char* label) noexcept {
     if(allocation_fail(GpuFailurePoint::FramebufferCreation,label)) return false;
@@ -111,6 +116,7 @@ class GlBackend final : public IRenderBackend {
   }
   DigitorRendererInfo i_{};
   bool fp32_renderable_{};
+  GLuint fullscreen_vao_{};
   EGLDisplay display_{EGL_NO_DISPLAY};
   EGLContext context_{EGL_NO_CONTEXT};
   EGLSurface surface_{EGL_NO_SURFACE};
@@ -162,6 +168,24 @@ public:
     if (major < 3)
       return false;
     fp32_renderable_ = has_gl_extension("GL_EXT_color_buffer_float");
+    if (fp32_renderable_) {
+      GLuint probe_texture = 0, probe_fbo = 0;
+      glGenTextures(1, &probe_texture);
+      glBindTexture(GL_TEXTURE_2D, probe_texture);
+      glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 1, 1);
+      glGenFramebuffers(1, &probe_fbo);
+      glBindFramebuffer(GL_FRAMEBUFFER, probe_fbo);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, probe_texture, 0);
+      fp32_renderable_ = glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                             GL_FRAMEBUFFER_COMPLETE &&
+                         glGetError() == GL_NO_ERROR;
+      glDeleteFramebuffers(1, &probe_fbo);
+      glDeleteTextures(1, &probe_texture);
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    glGenVertexArrays(1, &fullscreen_vao_);
+    if (fullscreen_vao_ != 0) glBindVertexArray(fullscreen_vao_);
     i_.supports_fp32 = fp32_renderable_ ? 1 : 0;
     const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     if (renderer != nullptr)
@@ -178,6 +202,7 @@ public:
         DIGITOR_RENDERER_OPENGL_ES,
         reinterpret_cast<std::uintptr_t>(context));
     if (eglGetCurrentContext() == context) glFinish();
+    if (eglGetCurrentContext() == context && fullscreen_vao_ != 0) { glDeleteVertexArrays(1, &fullscreen_vao_); fullscreen_vao_ = 0; }
     if (owns_egl_context_ && display != EGL_NO_DISPLAY) {
       (void)eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                            EGL_NO_CONTEXT);
@@ -211,7 +236,7 @@ public:
 
 
   DigitorResult execute_validation_readback_primary_wheels(const ProcessedGpuFramePtr&frame,std::span<Color>out)noexcept override{
-    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,"GLES driver","validation-readback","glReadPixels");if(!frame||frame->backend()!=DIGITOR_RENDERER_OPENGL_ES||eglGetCurrentContext()==EGL_NO_CONTEXT||out.size()!=std::size_t(frame->metadata().width)*frame->metadata().height)return DIGITOR_RESULT_INVALID_ARGUMENT;auto owner=std::static_pointer_cast<GlPreviewOwner>(native_owner(*frame));if(!owner||owner->context!=eglGetCurrentContext())return DIGITOR_RESULT_INVALID_ARGUMENT;auto baseline=counts();provenance_.resources_before=baseline;if(fail(GpuFailurePoint::ValidationReadbackResourceCreation,"validation readback setup")){finish_failure_evidence(baseline);return provenance_.failure_result;}glBindFramebuffer(GL_FRAMEBUFFER,owner->framebuffer);const auto&m=frame->metadata();if(fail(GpuFailurePoint::ValidationReadbackCopy,"glReadPixels")){finish_failure_evidence(baseline);return provenance_.failure_result;}glReadPixels(0,0,m.width,m.height,GL_RGBA,GL_FLOAT,out.data());if(fail(GpuFailurePoint::ValidationReadbackMap,"validation readback finalize")){finish_failure_evidence(baseline);return provenance_.failure_result;}provenance_.validation_readback_completed=true;provenance_.readback_performed=true;return glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    begin_grade_provenance(DIGITOR_RENDERER_OPENGL_ES,true,i_.device_name,"GLES driver","validation-readback","glReadPixels");if(!frame||frame->backend()!=DIGITOR_RENDERER_OPENGL_ES||eglGetCurrentContext()==EGL_NO_CONTEXT||out.size()!=std::size_t(frame->metadata().width)*frame->metadata().height)return DIGITOR_RESULT_INVALID_ARGUMENT;auto owner=std::static_pointer_cast<GlPreviewOwner>(native_owner(*frame));if(!owner||owner->context!=eglGetCurrentContext())return DIGITOR_RESULT_INVALID_ARGUMENT;auto baseline=counts();provenance_.resources_before=baseline;if(fail(GpuFailurePoint::ValidationReadbackResourceCreation,"validation readback setup")){finish_failure_evidence(baseline);return provenance_.failure_result;}glBindFramebuffer(GL_READ_FRAMEBUFFER,owner->framebuffer);glReadBuffer(GL_COLOR_ATTACHMENT0);glPixelStorei(GL_PACK_ALIGNMENT,1);glBindBuffer(GL_PIXEL_PACK_BUFFER,0);const auto&m=frame->metadata();if(fail(GpuFailurePoint::ValidationReadbackCopy,"glReadPixels")){finish_failure_evidence(baseline);return provenance_.failure_result;}glFinish();glReadPixels(0,0,m.width,m.height,GL_RGBA,GL_FLOAT,out.data());if(fail(GpuFailurePoint::ValidationReadbackMap,"validation readback finalize")){finish_failure_evidence(baseline);return provenance_.failure_result;}provenance_.validation_readback_completed=true;provenance_.readback_performed=true;return glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   DigitorResult execute_process_primary_wheels_gpu(const GpuSourceResource&s,int64_t timestamp,const PrimaryWheelsParameters&parameters,ProcessedGpuFramePtr&out)noexcept override{
     out.reset();auto prior=std::static_pointer_cast<GlPreviewOwner>(native_owner(*s.frame));auto context=eglGetCurrentContext();if(!prior||context==EGL_NO_CONTEXT||prior->context!=context)return DIGITOR_RESULT_INVALID_ARGUMENT;
