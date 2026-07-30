@@ -60,10 +60,28 @@ class GlBackend final : public IRenderBackend {
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
     return true;
   }
+  void prepare_offscreen_draw_state() noexcept {
+    // Native qualification deliberately injects failures at many points. GLES
+    // raster state is context-global, so a failed pass must not leak app/test
+    // state into the next offscreen color pass. Keep every pass deterministic.
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DITHER);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+    glDisable(GL_SAMPLE_COVERAGE);
+    glDisable(GL_RASTERIZER_DISCARD);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_FALSE);
+  }
   bool make_framebuffer(GLuint& out,GLuint texture,GLenum target,const char* label) noexcept {
     if(allocation_fail(GpuFailurePoint::FramebufferCreation,label)) return false;
     glGenFramebuffers(1,&out); if(!out) return false; ++gl_live.framebuffers;
     glBindFramebuffer(target,out);
+    prepare_offscreen_draw_state();
     if(fail(GpuFailurePoint::FramebufferAttachment,label)) return false;
     glFramebufferTexture2D(target,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
     if(fail(GpuFailurePoint::FramebufferValidation,label)) return false;
