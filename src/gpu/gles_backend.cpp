@@ -96,6 +96,7 @@ class GlBackend final : public IRenderBackend {
   EGLDisplay display_{EGL_NO_DISPLAY};
   EGLContext context_{EGL_NO_CONTEXT};
   EGLSurface surface_{EGL_NO_SURFACE};
+  bool owns_egl_context_{};
 
   bool make_context_current() noexcept {
     return display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
@@ -112,6 +113,7 @@ public:
   }
   bool initialize(bool) override {
     if (eglGetCurrentContext() == EGL_NO_CONTEXT) {
+      owns_egl_context_ = true;
       display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
       EGLint egl_major = 0, egl_minor = 0;
       if (display_ == EGL_NO_DISPLAY || !eglInitialize(display_, &egl_major, &egl_minor))
@@ -131,6 +133,7 @@ public:
       context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, context_attributes);
       if (context_ == EGL_NO_CONTEXT || !make_context_current()) return false;
     } else {
+      owns_egl_context_ = false;
       context_ = eglGetCurrentContext();
       display_ = eglGetCurrentDisplay();
       surface_ = eglGetCurrentSurface(EGL_DRAW);
@@ -148,15 +151,26 @@ public:
     return glGetError() == GL_NO_ERROR;
   }
   void shutdown() noexcept override {
-    if (context_ != EGL_NO_CONTEXT) (void)make_context_current();
-    pipeline_cache_.invalidate_device(DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(context_));
-    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
-      eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-      eglDestroyContext(display_, context_);
+    const auto display = display_;
+    const auto context = context_;
+    const auto surface = surface_;
+    if (context != EGL_NO_CONTEXT && display != EGL_NO_DISPLAY)
+      (void)eglMakeCurrent(display, surface, surface, context);
+    pipeline_cache_.invalidate_device(
+        DIGITOR_RENDERER_OPENGL_ES,
+        reinterpret_cast<std::uintptr_t>(context));
+    if (eglGetCurrentContext() == context) glFinish();
+    if (owns_egl_context_ && display != EGL_NO_DISPLAY) {
+      (void)eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                           EGL_NO_CONTEXT);
+      if (surface != EGL_NO_SURFACE) (void)eglDestroySurface(display, surface);
+      if (context != EGL_NO_CONTEXT) (void)eglDestroyContext(display, context);
+      (void)eglTerminate(display);
     }
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) eglDestroySurface(display_, surface_);
-    if (display_ != EGL_NO_DISPLAY) eglTerminate(display_);
-    display_=EGL_NO_DISPLAY; context_=EGL_NO_CONTEXT; surface_=EGL_NO_SURFACE;
+    display_ = EGL_NO_DISPLAY;
+    context_ = EGL_NO_CONTEXT;
+    surface_ = EGL_NO_SURFACE;
+    owns_egl_context_ = false;
   }
   NativePipelineCacheCounters native_pipeline_cache_counters()const noexcept override{return pipeline_cache_.counters();}
   NativeResourceCounts native_resource_counts()const noexcept override{return counts();}
