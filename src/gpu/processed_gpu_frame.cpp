@@ -2,12 +2,32 @@
 
 namespace digitor {
 
+void GpuContextLifetime::add_retirement_callback(RetirementCallback callback) {
+  if (!callback) return;
+  if (!live()) { callback(); return; }
+  std::scoped_lock lock(retirement_mutex_);
+  if (!live()) { callback(); return; }
+  retirement_callbacks_.push_back(std::move(callback));
+}
+
+void GpuContextLifetime::retire() noexcept {
+  if (!live_.exchange(false, std::memory_order_acq_rel)) return;
+  std::vector<RetirementCallback> callbacks;
+  {
+    std::scoped_lock lock(retirement_mutex_);
+    callbacks.swap(retirement_callbacks_);
+  }
+  for (auto &callback : callbacks) {
+    try { callback(); } catch (...) {}
+  }
+}
+
 ProcessedGpuFrame::ProcessedGpuFrame(const void* context,
     DigitorRendererBackend backend, GpuFrameMetadata metadata,
     std::uint64_t identity, NativeOwner native,
     std::shared_ptr<std::atomic_bool> ready, bool validation_readback_supported)
     : context_(context), backend_(backend), metadata_(std::move(metadata)),
-      identity_(identity), native_(std::move(native)), ready_(std::move(ready)),
+      identity_(identity), native_holder_(std::make_shared<NativeOwner>(std::move(native))), ready_(std::move(ready)),
       validation_readback_supported_(validation_readback_supported) {}
 
 DigitorResult ProcessedGpuFrame::acquire(const void* context,
@@ -15,7 +35,7 @@ DigitorResult ProcessedGpuFrame::acquire(const void* context,
   if (!context || context != context_ || consumer != backend_)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   if (!context_live()) return DIGITOR_RESULT_NOT_INITIALIZED;
-  if (!native_ || !ready()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+  if (!native_holder_ || !*native_holder_ || !ready()) return DIGITOR_RESULT_RESOURCE_IN_USE;
   acquisitions_.fetch_add(1, std::memory_order_acq_rel);
   return DIGITOR_RESULT_OK;
 }
@@ -47,6 +67,12 @@ void ProcessedGpuFrame::bind_context_lifetime(
     const std::shared_ptr<GpuContextLifetime>& lifetime) noexcept {
   context_lifetime_ = lifetime;
   context_lifetime_bound_ = true;
+  if (lifetime && native_holder_) {
+    std::weak_ptr<NativeOwner> weak_owner = native_holder_;
+    lifetime->add_retirement_callback([weak_owner]() noexcept {
+      if (auto owner = weak_owner.lock()) owner->reset();
+    });
+  }
 }
 
 } // namespace digitor

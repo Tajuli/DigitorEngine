@@ -102,7 +102,7 @@ public:
   [[nodiscard]] virtual bool supports_native_node_mixer() const noexcept { return false; }
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
-      const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
+      const ProcessedGpuFrame& frame) noexcept { return *frame.native_holder_; }
   virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
                                                 std::span<Color> destination,
                                                 const CompiledRgbCurves&) noexcept;
