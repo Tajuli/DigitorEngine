@@ -75,7 +75,7 @@ bool create_vulkan_native_node_pipeline(
   pci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
   pci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
   pci.stage.module = module;
-  pci.stage.pName = contract.entry_point;
+  pci.stage.pName = contract.entry_point.data();
   pci.layout = pipeline_layout;
   VkPipeline pipeline{};
   const VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline);
@@ -120,7 +120,7 @@ bool create_d3d12_native_node_pipeline(
     std::string& diagnostic) noexcept {
   out = {};
 #if defined(_WIN32)
-  if (compiled.backend != DIGITOR_RENDERER_DIRECT3D12 ||
+  if (compiled.backend != DIGITOR_RENDERER_D3D12 ||
       binary.format != NativeNodeBinaryFormat::dxil ||
       !binary.valid_for(compiled) || !ctx.device || binary.bytes.empty()) {
     diagnostic = "invalid D3D12 native-node pipeline input";
@@ -140,9 +140,11 @@ bool create_d3d12_native_node_pipeline(
       params[i].Constants.Num32BitValues = contract.constant_bytes / 4u;
     } else {
       auto& range = ranges[range_count++];
-      range.RangeType = b.writable ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV : D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+      range.RangeType = b.kind == NativeNodeBindingKind::storage_output
+          ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
+          : D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
       range.NumDescriptors = 1;
-      range.BaseShaderRegister = b.slot;
+      range.BaseShaderRegister = b.binding;
       params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
       params[i].DescriptorTable.NumDescriptorRanges = 1;
       params[i].DescriptorTable.pDescriptorRanges = &range;
@@ -198,7 +200,6 @@ void destroy_d3d12_native_node_pipeline(
   (void)handle;
 #endif
 }
-
 
 bool record_vulkan_native_node_dispatch(
     const NativeNodePlatformFactoryContext& ctx,
@@ -292,7 +293,6 @@ bool record_d3d12_native_node_dispatch(
   command_list->SetPipelineState(
       reinterpret_cast<ID3D12PipelineState*>(handle.pipeline));
 
-  // Root parameter order exactly follows the authoritative binding contract.
   const auto backend = DIGITOR_RENDERER_D3D12;
   NativeNodeKernel kernel = resources.textures.size() == 3
       ? NativeNodeKernel::parallel_mixer
