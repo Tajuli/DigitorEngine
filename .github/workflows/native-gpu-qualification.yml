@@ -10,6 +10,7 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - '.github/workflows/native-gpu-qualification.yml'
+      - '.github/workflows/production-native-gpu-signoff.yml'
   push:
     branches: [main]
     paths:
@@ -19,13 +20,14 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - '.github/workflows/native-gpu-qualification.yml'
+      - '.github/workflows/production-native-gpu-signoff.yml'
 
 permissions:
   contents: read
 
 jobs:
   windows-native:
-    name: Windows D3D12 and Vulkan
+    name: Windows D3D12 real GPU; Vulkan opportunistic
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -55,16 +57,20 @@ jobs:
           $env:DIGITOR_GPU_VALIDATION='1'
           & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-native.log
           $status = $LASTEXITCODE
+          $log = Get-Content qualification\windows-native.log -Raw
           if ($status -eq 77) {
-            '{"status":"hardware-unavailable","exit_code":77}' | Set-Content qualification\windows-native.json
+            '{"status":"hardware-unavailable","exit_code":77,"production_qualified":false}' | Set-Content qualification\windows-native.json
             Write-Host 'Native GPU hardware is unavailable on this runner; qualification skipped.'
             exit 0
           }
           if ($status -eq 0) {
-            '{"status":"executed-passed","exit_code":0}' | Set-Content qualification\windows-native.json
+            $d3d12 = $log -match 'BACKEND RESULT backend=Direct3D12 status=PASS'
+            $vulkan = $log -match 'BACKEND RESULT backend=Vulkan status=PASS'
+            "{`"status`":`"executed-passed`",`"exit_code`":0,`"d3d12_real_pass`":$($d3d12.ToString().ToLower()),`"vulkan_real_pass`":$($vulkan.ToString().ToLower()),`"full_production_matrix`":false}" | Set-Content qualification\windows-native.json
+            if (-not $d3d12) { throw 'Required D3D12 real GPU evidence missing' }
             exit 0
           }
-          "{`"status`":`"failed`",`"exit_code`":$status}" | Set-Content qualification\windows-native.json
+          "{`"status`":`"failed`",`"exit_code`":$status,`"production_qualified`":false}" | Set-Content qualification\windows-native.json
           exit $status
 
       - name: Upload Windows qualification
@@ -76,7 +82,7 @@ jobs:
           if-no-files-found: warn
 
   macos-metal:
-    name: macOS Metal
+    name: macOS Metal real GPU
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -106,15 +112,19 @@ jobs:
           set -e
           case "$status" in
             0)
-              printf '{"status":"executed-passed","exit_code":0}\n' > qualification/macos-metal.json
+              if ! grep -q 'BACKEND RESULT backend=Metal status=PASS' qualification/macos-metal.log; then
+                printf '{"status":"failed","reason":"metal-pass-evidence-missing","production_qualified":false}\n' > qualification/macos-metal.json
+                exit 1
+              fi
+              printf '{"status":"executed-passed","exit_code":0,"metal_real_pass":true,"full_production_matrix":false}\n' > qualification/macos-metal.json
               ;;
             77)
-              printf '{"status":"hardware-unavailable","exit_code":77}\n' > qualification/macos-metal.json
+              printf '{"status":"hardware-unavailable","exit_code":77,"production_qualified":false}\n' > qualification/macos-metal.json
               echo 'Native GPU hardware is unavailable on this runner; qualification skipped.'
               exit 0
               ;;
             *)
-              printf '{"status":"failed","exit_code":%s}\n' "$status" > qualification/macos-metal.json
+              printf '{"status":"failed","exit_code":%s,"production_qualified":false}\n' "$status" > qualification/macos-metal.json
               exit "$status"
               ;;
           esac
@@ -128,7 +138,7 @@ jobs:
           if-no-files-found: warn
 
   android-compile-link:
-    name: Android arm64 compile and link
+    name: Android arm64 compile/link only — not qualification
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -164,6 +174,7 @@ jobs:
           mkdir -p qualification
           {
             echo "classification=Compile/link verified, runtime hardware-unverified"
+            echo "production_qualified=false"
             echo "abi=arm64-v8a"
             echo "api=24"
             echo "ndk=27.2.12479018"
