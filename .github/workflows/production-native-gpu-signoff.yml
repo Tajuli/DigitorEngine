@@ -1,0 +1,192 @@
+name: Production Native GPU Sign-off
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# This workflow is intentionally strict. Compile-only, unavailable, skipped, or
+# emulated results are not production qualification. Windows Vulkan and Android
+# require repository-owned self-hosted runners with real GPU/device access.
+jobs:
+  windows-d3d12:
+    name: Windows D3D12 real GPU
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 2
+      - name: Execute qualification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          $env:DIGITOR_GPU_VALIDATION='1'
+          & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-d3d12.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $log = Get-Content qualification\windows-d3d12.log -Raw
+          if ($log -notmatch 'BACKEND RESULT backend=Direct3D12 status=PASS') { throw 'D3D12 real GPU PASS evidence missing' }
+          if ($log -notmatch 'NATIVE_CACHE backend=Direct3D12 .* status=PASS') { throw 'D3D12 cache qualification missing' }
+          if ($log -notmatch 'NATIVE_CONSUMER backend=Direct3D12 .* status=PASS') { throw 'D3D12 consumer qualification missing' }
+          if ($log -notmatch 'cpu_primary_delta=0' -or $log -notmatch 'cpu_curves_delta=0' -or $log -notmatch 'fallback=0') { throw 'D3D12 zero-CPU/fallback evidence missing' }
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-windows-d3d12
+          path: qualification/**
+
+  macos-metal:
+    name: macOS Metal real GPU
+    runs-on: macos-26-arm64
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Execute qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification
+          DIGITOR_GPU_VALIDATION=1 ./build/digitor_native_gpu_tests 2>&1 | tee qualification/macos-metal.log
+          grep -q 'BACKEND RESULT backend=Metal status=PASS' qualification/macos-metal.log
+          grep -Eq 'NATIVE_CACHE backend=Metal .* status=PASS' qualification/macos-metal.log
+          grep -Eq 'NATIVE_CONSUMER backend=Metal .* status=PASS' qualification/macos-metal.log
+          grep -q 'cpu_primary_delta=0' qualification/macos-metal.log
+          grep -q 'cpu_curves_delta=0' qualification/macos-metal.log
+          grep -q 'fallback=0' qualification/macos-metal.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-macos-metal
+          path: qualification/**
+
+  windows-vulkan:
+    name: Windows Vulkan real GPU
+    runs-on: [self-hosted, windows, x64, digitor-vulkan-gpu]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 2
+      - name: Execute strict Vulkan qualification
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force qualification | Out-Null
+          $env:DIGITOR_GPU_VALIDATION='1'
+          & .\build\Release\digitor_native_gpu_tests.exe 2>&1 | Tee-Object qualification\windows-vulkan.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $log = Get-Content qualification\windows-vulkan.log -Raw
+          if ($log -match 'BACKEND UNAVAILABLE backend=Vulkan') { throw 'Vulkan unavailable is not qualification' }
+          if ($log -notmatch 'BACKEND RESULT backend=Vulkan status=PASS') { throw 'Vulkan real GPU PASS evidence missing' }
+          if ($log -notmatch 'NATIVE_CACHE backend=Vulkan .* status=PASS') { throw 'Vulkan cache qualification missing' }
+          if ($log -notmatch 'NATIVE_CONSUMER backend=Vulkan .* status=PASS') { throw 'Vulkan consumer qualification missing' }
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-windows-vulkan
+          path: qualification/**
+
+  android-device:
+    name: Android Vulkan and GLES real device
+    runs-on: [self-hosted, linux, x64, android-device]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify connected physical device
+        shell: bash
+        run: |
+          set -euo pipefail
+          adb start-server
+          serial="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+          test -n "$serial"
+          test "$(adb -s "$serial" shell getprop ro.kernel.qemu | tr -d '\r')" != "1"
+          echo "ANDROID_SERIAL=$serial" >> "$GITHUB_ENV"
+      - name: Configure Android arm64
+        shell: bash
+        run: >-
+          cmake -S . -B build-android
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_PLATFORM=android-24
+          -DCMAKE_BUILD_TYPE=Release
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+      - name: Build qualification executable
+        run: cmake --build build-android --target digitor_native_gpu_tests --parallel 2
+      - name: Execute on physical Android GPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification
+          adb -s "$ANDROID_SERIAL" push build-android/digitor_native_gpu_tests /data/local/tmp/digitor_native_gpu_tests
+          adb -s "$ANDROID_SERIAL" shell chmod 755 /data/local/tmp/digitor_native_gpu_tests
+          set +e
+          adb -s "$ANDROID_SERIAL" shell 'DIGITOR_GPU_VALIDATION=1 /data/local/tmp/digitor_native_gpu_tests' 2>&1 | tee qualification/android-device.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          ! grep -q 'BACKEND UNAVAILABLE backend=OpenGL ES' qualification/android-device.log
+          ! grep -q 'BACKEND UNAVAILABLE backend=Vulkan' qualification/android-device.log
+          grep -q 'BACKEND RESULT backend=OpenGL ES status=PASS' qualification/android-device.log
+          grep -q 'BACKEND RESULT backend=Vulkan status=PASS' qualification/android-device.log
+          grep -Eq 'NATIVE_CACHE backend=OpenGL ES .* status=PASS' qualification/android-device.log
+          grep -Eq 'NATIVE_CACHE backend=Vulkan .* status=PASS' qualification/android-device.log
+          grep -Eq 'NATIVE_CONSUMER backend=OpenGL ES .* status=PASS' qualification/android-device.log
+          grep -Eq 'NATIVE_CONSUMER backend=Vulkan .* status=PASS' qualification/android-device.log
+      - name: Record device identity
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p qualification
+          {
+            echo "serial=$ANDROID_SERIAL"
+            echo "manufacturer=$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.manufacturer | tr -d '\r')"
+            echo "model=$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.model | tr -d '\r')"
+            echo "device=$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.device | tr -d '\r')"
+            echo "android=$(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.release | tr -d '\r')"
+            echo "fingerprint=$(adb -s "$ANDROID_SERIAL" shell getprop ro.build.fingerprint | tr -d '\r')"
+            echo "sha=$GITHUB_SHA"
+          } > qualification/android-device-identity.txt
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-android-vulkan-gles
+          path: qualification/**
+
+  production-signoff:
+    name: Production GPU matrix complete
+    if: always()
+    needs: [windows-d3d12, macos-metal, windows-vulkan, android-device]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce complete real-hardware matrix
+        shell: bash
+        env:
+          D3D12_RESULT: ${{ needs.windows-d3d12.result }}
+          METAL_RESULT: ${{ needs.macos-metal.result }}
+          VULKAN_RESULT: ${{ needs.windows-vulkan.result }}
+          ANDROID_RESULT: ${{ needs.android-device.result }}
+        run: |
+          set -euo pipefail
+          test "$D3D12_RESULT" = success
+          test "$METAL_RESULT" = success
+          test "$VULKAN_RESULT" = success
+          test "$ANDROID_RESULT" = success
+          echo 'All required native GPU backends have real-hardware PASS evidence.'
