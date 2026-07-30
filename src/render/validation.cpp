@@ -93,3 +93,21 @@ PixelValidation validate_preview_export(SharedRenderer &r,
   return validate_pixels(preview, preencode, p, s);
 }
 } // namespace digitor
+
+#include <bit>
+namespace digitor {
+std::uint64_t deterministic_frame_hash(const VideoFrame& frame){
+  std::uint64_t hash=1469598103934665603ull;
+  auto mix=[&](std::uint64_t value){for(unsigned i=0;i<8;++i){hash^=static_cast<unsigned char>((value>>(i*8))&0xffu);hash*=1099511628211ull;}};
+  mix(static_cast<std::uint64_t>(frame.number));mix(frame.width);mix(frame.height);mix(static_cast<std::uint64_t>(frame.pixel_format));
+  for(const auto& p:frame.pixels){mix(std::bit_cast<std::uint32_t>(p.r));mix(std::bit_cast<std::uint32_t>(p.g));mix(std::bit_cast<std::uint32_t>(p.b));mix(std::bit_cast<std::uint32_t>(p.a));}
+  return hash;
+}
+PreviewExportHashQualification qualify_preview_export_hashes(const VideoFrame& preview,const VideoFrame& export_frame,double minimum_psnr,double minimum_ssim){
+  PreviewExportHashQualification result;
+  result.preview_hash=deterministic_frame_hash(preview);result.export_hash=deterministic_frame_hash(export_frame);
+  result.pixels=validate_pixels(preview,export_frame,minimum_psnr,minimum_ssim);
+  result.passed=result.pixels.passed&&(result.preview_hash==result.export_hash||result.pixels.max_absolute_error<=1.0/255.0);
+  return result;
+}
+} // namespace digitor

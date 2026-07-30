@@ -13,6 +13,7 @@
 #include "digitor/primary_wheels.hpp"
 #include "digitor/log_wheels.hpp"
 #include "digitor/qualifier.hpp"
+#include "digitor/production_node_graph.hpp"
 #include "gpu/execution_provenance.hpp"
 #include "digitor/gpu_frame.hpp"
 #include "gpu/gpu_source.hpp"
@@ -72,8 +73,20 @@ public:
   DigitorResult validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   DigitorResult process_hsl_qualifier_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
   DigitorResult process_hsl_qualifier_gpu(const GpuSourceResource&,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
+  // Generic backend-native selected-node pass. Backends override this for
+  // LUT/effects/window/masked composition without exposing platform resources.
+  DigitorResult process_node_operation_gpu(const GpuSourceResource&, std::int64_t,
+      const NodeOperation&, ProcessedGpuFramePtr&) noexcept;
+  // Backend-native parallel mixer. Inputs must belong to this backend/context.
+  DigitorResult mix_gpu_sources(std::span<const GpuSourceResource>, std::int64_t,
+      ProcessedGpuFramePtr&) noexcept;
   DigitorResult validation_readback_hsl_qualifier(const ProcessedGpuFramePtr&,std::span<float>) noexcept;
   DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,
+      std::span<Color>) noexcept;
+  // Operation-independent final-frame readback contract used by export and
+  // validation. Backends may override the protected generic seam later; the
+  // default routes through their established RGBA32F readback implementation.
+  DigitorResult validation_readback_final_frame(const ProcessedGpuFramePtr&,
       std::span<Color>) noexcept;
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   DigitorResult create_preview_consumer(const ProcessedGpuFramePtr&,
@@ -85,6 +98,8 @@ public:
   [[nodiscard]] virtual NativeResourceCounts native_resource_counts() const noexcept { return {}; }
   [[nodiscard]] virtual std::size_t native_pipeline_cache_size() const noexcept { return 0; }
   virtual void clear_native_pipeline_cache_for_test() noexcept {}
+  [[nodiscard]] virtual bool supports_native_node_operation(NodeOperationKind kind) const noexcept;
+  [[nodiscard]] virtual bool supports_native_node_mixer() const noexcept { return false; }
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return frame.native_; }
@@ -105,6 +120,10 @@ protected:
   virtual DigitorResult execute_validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>) noexcept;
   virtual DigitorResult execute_process_hsl_qualifier_gpu(std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_process_hsl_qualifier_gpu(const GpuSourceResource&,std::int64_t,const HslQualifierParameters&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_process_node_operation_gpu(const GpuSourceResource&,
+      std::int64_t,const NodeOperation&,ProcessedGpuFramePtr&) noexcept;
+  virtual DigitorResult execute_mix_gpu_sources(std::span<const GpuSourceResource>,
+      std::int64_t,ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_validation_readback_hsl_qualifier(const ProcessedGpuFramePtr&,std::span<float>) noexcept;
   virtual DigitorResult execute_present_gpu_frame(const ProcessedGpuFramePtr&) noexcept;
   virtual DigitorResult execute_create_preview_consumer(const ProcessedGpuFramePtr&,

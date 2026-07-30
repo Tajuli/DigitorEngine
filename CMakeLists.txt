@@ -66,6 +66,18 @@ add_library(digitor_engine
     src/gpu/lut.cpp
     src/gpu/effects.cpp
     src/gpu/node_graph.cpp
+    src/gpu/production_node_graph.cpp
+    src/gpu/native_node_executor.cpp
+    src/gpu/native_node_kernels.cpp
+    src/gpu/native_node_shader_contracts.cpp
+    src/gpu/native_node_pipeline_runtime.cpp
+    src/gpu/native_node_pipeline_objects.cpp
+    src/gpu/native_node_backend_runtime.cpp
+    src/gpu/native_node_platform_factories.cpp
+    src/gpu/native_node_qualification.cpp
+    src/gpu/native_node_hardware_qualification.cpp
+    src/gpu/native_node_hardware_harness.cpp
+    src/gpu/native_node_production_signoff.cpp
     src/cpu/cpu_backend.cpp
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp
@@ -114,13 +126,13 @@ if(WIN32)
     target_sources(digitor_engine PRIVATE src/gpu/d3d12_backend.cpp)
 elseif(APPLE)
     enable_language(OBJCXX)
-    target_sources(digitor_engine PRIVATE src/gpu/metal_backend.mm)
+    target_sources(digitor_engine PRIVATE src/gpu/metal_backend.mm src/gpu/native_node_metal_factory.mm)
     # Metal uses explicit bridge ownership for opaque native handles. ARC is
     # intentionally limited to this Objective-C++ translation unit.
-    set_source_files_properties(src/gpu/metal_backend.mm PROPERTIES
+    set_source_files_properties(src/gpu/metal_backend.mm src/gpu/native_node_metal_factory.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc")
 elseif(ANDROID)
-    target_sources(digitor_engine PRIVATE src/gpu/gles_backend.cpp)
+    target_sources(digitor_engine PRIVATE src/gpu/gles_backend.cpp src/gpu/native_node_gles_factory.cpp)
 else()
     target_sources(digitor_engine PRIVATE src/gpu/native_stub.cpp)
 endif()
@@ -181,6 +193,8 @@ if(ANDROID)
     digitor_add_embedded_spirv(rgb_curves_texture src/gpu/shaders/rgb_curves.hlsl digitor_rgb_curves_texture_spirv -DDIGITOR_TEXTURE_OUTPUT=1)
     digitor_add_embedded_spirv(rgb_curves_buffer src/gpu/shaders/rgb_curves.hlsl digitor_rgb_curves_buffer_spirv)
     digitor_add_embedded_spirv(color_pipeline_buffer src/gpu/shaders/color_pipeline.hlsl digitor_color_pipeline_buffer_spirv)
+    digitor_add_embedded_spirv(node_mixer src/gpu/shaders/node_mixer.hlsl digitor_node_mixer_spirv)
+    digitor_add_embedded_spirv(node_masked_composite src/gpu/shaders/node_masked_composite.hlsl digitor_node_masked_composite_spirv)
 
     add_custom_target(digitor_android_spirv DEPENDS ${DIGITOR_EMBEDDED_SPIRV_HEADERS})
     add_dependencies(digitor_engine digitor_android_spirv)

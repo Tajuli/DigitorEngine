@@ -40,7 +40,22 @@ private:
     std::unordered_map<FrameNumber,typename std::list<Entry>::iterator> index_;
 };
 
-class VideoDecoder { public: virtual ~VideoDecoder()=default; virtual std::shared_ptr<VideoFrame> decode(FrameNumber)=0; virtual void seek(std::int64_t pts_us)=0; virtual DecoderInfo info()const=0; };
+class VideoDecoder { public:
+    virtual ~VideoDecoder()=default;
+    virtual std::shared_ptr<VideoFrame> decode(FrameNumber)=0;
+    virtual void seek(std::int64_t pts_us)=0;
+    virtual DecoderInfo info()const=0;
+    // Authoritative full-resolution sample access used by qualifier eyedroppers.
+    // Implementations must sample the decoded original frame, never a proxy.
+    virtual Color sample_pixel(FrameNumber frame,std::uint32_t x,std::uint32_t y) {
+        auto decoded=decode(frame);
+        if(!decoded)throw std::out_of_range("decoded frame unavailable");
+        if(x>=decoded->width||y>=decoded->height)throw std::out_of_range("sample coordinate out of range");
+        const auto index=static_cast<std::size_t>(y)*decoded->width+x;
+        if(index>=decoded->pixels.size())throw std::runtime_error("decoded frame has no RGBA32F sample");
+        return decoded->pixels[index];
+    }
+};
 class AudioDecoder { public: virtual ~AudioDecoder()=default; virtual std::shared_ptr<AudioFrame> decode(FrameNumber)=0; virtual void seek(std::int64_t pts_us)=0; virtual DecoderInfo info()const=0; };
 std::unique_ptr<VideoDecoder> open_video_decoder(const std::string& path, DecoderOptions options={});
 std::unique_ptr<AudioDecoder> open_audio_decoder(const std::string& path, DecoderOptions options={});

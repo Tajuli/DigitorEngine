@@ -23,6 +23,7 @@ DigitorResult Engine::process_log_wheels_gpu(std::span<const Color>s,std::uint32
 DigitorResult Engine::process_log_wheels_gpu(const ProcessedGpuFramePtr&s,std::int64_t ts,const LogWheelsParameters&p,ProcessedGpuFramePtr&o){std::lock_guard lock(mutex_);o.reset();if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->process_log_wheels_gpu(backend_->gpu_source(s),ts,p,o);}
 DigitorResult Engine::validation_readback_primary_wheels(const ProcessedGpuFramePtr&f,std::span<Color>o){std::lock_guard lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->validation_readback_primary_wheels(f,o);}
 DigitorResult Engine::validation_readback_log_wheels(const ProcessedGpuFramePtr&f,std::span<Color>o){std::lock_guard lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->validation_readback_log_wheels(f,o);}
+DigitorResult Engine::validation_readback_final_frame(const ProcessedGpuFramePtr&f,std::span<Color>o){std::lock_guard lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->validation_readback_final_frame(f,o);}
 DigitorResult Engine::present_gpu_frame(const ProcessedGpuFramePtr&f){std::scoped_lock lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->present_gpu_frame(f);}
 
 } // namespace digitor

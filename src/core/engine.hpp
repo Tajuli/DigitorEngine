@@ -29,6 +29,7 @@ public:
   DigitorResult process_log_wheels_gpu(const ProcessedGpuFramePtr&,std::int64_t,const LogWheelsParameters&,ProcessedGpuFramePtr&);
   DigitorResult validation_readback_primary_wheels(const ProcessedGpuFramePtr&,std::span<Color>);
   DigitorResult validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>);
+  DigitorResult validation_readback_final_frame(const ProcessedGpuFramePtr&,std::span<Color>);
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&);
 private:
   Engine() = default;

@@ -27,6 +27,44 @@ enum class MediaSourceClass : std::uint32_t { Original, Proxy, CompressedPreview
 enum class RenderPurpose : std::uint32_t { Preview, Export };
 enum class RenderPrecision : std::uint32_t { Float32, Float16 };
 
+enum class PreviewQuality : std::uint32_t {
+  Full,
+  Half,
+  Quarter,
+  Proxy,
+  Adaptive
+};
+
+enum class DroppedFramePolicy : std::uint32_t {
+  Never,
+  DropLateFrames
+};
+
+struct AdaptivePreviewConfiguration {
+  double target_frame_time_ms{33.333};
+  double demote_threshold{1.10};
+  double promote_threshold{0.72};
+  std::uint32_t stability_window{6};
+};
+
+class AdaptivePreviewController {
+public:
+  explicit AdaptivePreviewController(AdaptivePreviewConfiguration configuration = {});
+  void reset() noexcept;
+  void observe(double frame_time_ms);
+  [[nodiscard]] PreviewQuality effective_quality() const noexcept { return effective_quality_; }
+private:
+  AdaptivePreviewConfiguration configuration_;
+  PreviewQuality effective_quality_{PreviewQuality::Half};
+  std::uint32_t fast_samples_{};
+  std::uint32_t slow_samples_{};
+};
+
+struct RenderDimensions {
+  std::uint32_t width{};
+  std::uint32_t height{};
+};
+
 struct PreviewFrameRatePolicy {
   std::uint32_t numerator{};
   std::uint32_t denominator{1};
@@ -67,6 +105,24 @@ struct ColorGraphConfiguration {
   [[nodiscard]] std::string identity() const;
   [[nodiscard]] std::vector<std::string> operation_sequence() const;
 };
+
+struct SourcePixelCoordinate { double x{}; double y{}; };
+
+struct QualifierSampleRequest {
+  std::string original_source_identity;
+  std::int64_t frame{};
+  std::uint32_t source_x{};
+  std::uint32_t source_y{};
+};
+
+[[nodiscard]] SourcePixelCoordinate map_preview_pixel_to_source(
+    double preview_x, double preview_y, const RenderDimensions& preview_dimensions,
+    const MediaSourceDescriptor& original_source);
+
+[[nodiscard]] RenderDimensions resolve_preview_dimensions(
+    std::uint32_t viewport_width, std::uint32_t viewport_height,
+    PreviewQuality quality, const PreviewSourceConfiguration& preview,
+    const MediaSourceDescriptor* selected_source = nullptr);
 
 struct ColorRenderPlan {
   RenderPurpose purpose{RenderPurpose::Preview};

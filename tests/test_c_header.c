@@ -1,6 +1,8 @@
 #include <digitor/digitor.h>
 
 #include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -45,5 +47,38 @@ int main(void) {
     /* Referencing these values verifies that the public enums remain available to C. */
     assert(DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT);
     assert(DIGITOR_RENDERER_CPU != DIGITOR_RENDERER_AUTO);
+
+    DigitorNodeGraph* graph = 0;
+    assert(digitor_node_graph_create(&graph) == DIGITOR_RESULT_OK);
+    DigitorNodeId input = 0, output = 0, grade = 0;
+    assert(digitor_node_graph_get_endpoints(graph, &input, &output) == DIGITOR_RESULT_OK);
+    assert(input != 0 && output != 0);
+    assert(digitor_node_graph_add_serial_after(graph, input, "Grade 1", &grade) == DIGITOR_RESULT_OK);
+    assert(digitor_node_graph_select(graph, grade) == DIGITOR_RESULT_OK);
+    DigitorPrimaryWheelsControls wheels = {0};
+    wheels.gamma.r = wheels.gamma.g = wheels.gamma.b = 1.0f; wheels.gamma_master = 1.0f; wheels.gamma_enabled = 1;
+    wheels.gain.r = wheels.gain.g = wheels.gain.b = 1.0f; wheels.gain_master = 1.0f; wheels.gain_enabled = 1;
+    wheels.lift_enabled = wheels.offset_enabled = 1; wheels.offset.r = 0.1f;
+    assert(digitor_node_graph_add_primary_wheels(graph, &wheels) == DIGITOR_RESULT_OK);
+    DigitorCurvePoint identity_points[2] = {{0.0f,0.0f},{1.0f,1.0f}};
+    DigitorCurveChannel identity_channel = {identity_points,2,1};
+    DigitorRgbCurvesControls curves = {identity_channel,identity_channel,identity_channel,identity_channel,256};
+    assert(digitor_node_graph_add_rgb_curves(graph, &curves) == DIGITOR_RESULT_OK);
+    DigitorHslQualifierControls qualifier = {{0.0f,1.0f,0.0f},{0.0f,1.0f,0.0f},{0.0f,1.0f,0.0f},0,0,0,0,0,0};
+    assert(digitor_node_graph_add_hsl_qualifier(graph, &qualifier) == DIGITOR_RESULT_OK);
+    DigitorLutColor lut_values[2] = {{0,0,0,1},{1,1,1,1}};
+    DigitorLut1DControls lut1d = {lut_values,2,DIGITOR_LUT_LINEAR};
+    assert(digitor_node_graph_add_lut1d(graph, &lut1d) == DIGITOR_RESULT_OK);
+    DigitorNodeEffectSettings effect = {DIGITOR_NODE_EFFECT_VIGNETTE,0.25f,0.5f,0.0f,1};
+    assert(digitor_node_graph_add_effect(graph, &effect) == DIGITOR_RESULT_OK);
+    DigitorPowerWindowSettings window = {DIGITOR_WINDOW_ELLIPSE,0.5f,0.5f,0.8f,0.8f,0.0f,0.1f,1.0f,0};
+    assert(digitor_node_graph_add_power_window(graph, &window) == DIGITOR_RESULT_OK);
+    uint64_t required = 0;
+    assert(digitor_node_graph_to_json(graph, 0, 0, &required) == DIGITOR_RESULT_OK && required > 2);
+    char* json = (char*)malloc((size_t)required);
+    assert(json != 0 && digitor_node_graph_to_json(graph, json, required, &required) == DIGITOR_RESULT_OK);
+    assert(strstr(json, "Grade 1") != 0); free(json);
+    assert(digitor_node_graph_destroy(graph) == DIGITOR_RESULT_OK);
+
     return 0;
 }

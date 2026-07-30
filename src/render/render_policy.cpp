@@ -2,6 +2,7 @@
 
 #include <array>
 #include <charconv>
+#include <algorithm>
 #include <stdexcept>
 
 namespace digitor {
@@ -65,6 +66,92 @@ std::string ColorGraphConfiguration::identity() const {
   number(result, rgb_curves_enabled); field(result, rgb_curves_serialization);
   for (const auto& operation : operation_sequence()) field(result, operation);
   return result;
+}
+
+
+
+AdaptivePreviewController::AdaptivePreviewController(AdaptivePreviewConfiguration configuration)
+    : configuration_(configuration) {
+  if (configuration_.target_frame_time_ms <= 0.0 ||
+      configuration_.demote_threshold <= 1.0 ||
+      configuration_.promote_threshold <= 0.0 ||
+      configuration_.promote_threshold >= 1.0 ||
+      configuration_.stability_window == 0)
+    throw std::invalid_argument("invalid adaptive preview configuration");
+}
+
+void AdaptivePreviewController::reset() noexcept {
+  effective_quality_ = PreviewQuality::Half;
+  fast_samples_ = slow_samples_ = 0;
+}
+
+void AdaptivePreviewController::observe(double frame_time_ms) {
+  if (!(frame_time_ms >= 0.0)) throw std::invalid_argument("frame time must be non-negative");
+  const auto slow = configuration_.target_frame_time_ms * configuration_.demote_threshold;
+  const auto fast = configuration_.target_frame_time_ms * configuration_.promote_threshold;
+  if (frame_time_ms > slow) { ++slow_samples_; fast_samples_ = 0; }
+  else if (frame_time_ms < fast) { ++fast_samples_; slow_samples_ = 0; }
+  else { fast_samples_ = slow_samples_ = 0; }
+  if (slow_samples_ >= configuration_.stability_window) {
+    effective_quality_ = effective_quality_ == PreviewQuality::Full ? PreviewQuality::Half : PreviewQuality::Quarter;
+    slow_samples_ = fast_samples_ = 0;
+  } else if (fast_samples_ >= configuration_.stability_window) {
+    effective_quality_ = effective_quality_ == PreviewQuality::Quarter ? PreviewQuality::Half : PreviewQuality::Full;
+    slow_samples_ = fast_samples_ = 0;
+  }
+}
+
+SourcePixelCoordinate map_preview_pixel_to_source(
+    double preview_x, double preview_y, const RenderDimensions& preview_dimensions,
+    const MediaSourceDescriptor& original_source) {
+  if (!preview_dimensions.width || !preview_dimensions.height ||
+      !original_source.width || !original_source.height)
+    throw std::invalid_argument("pixel mapping requires non-zero dimensions");
+  if (preview_x < 0.0 || preview_y < 0.0 ||
+      preview_x >= preview_dimensions.width || preview_y >= preview_dimensions.height)
+    throw std::out_of_range("preview pixel is outside the frame");
+  return {(preview_x + 0.5) * original_source.width / preview_dimensions.width - 0.5,
+          (preview_y + 0.5) * original_source.height / preview_dimensions.height - 0.5};
+}
+
+RenderDimensions resolve_preview_dimensions(
+    std::uint32_t viewport_width, std::uint32_t viewport_height,
+    PreviewQuality quality, const PreviewSourceConfiguration& preview,
+    const MediaSourceDescriptor* selected_source) {
+  if (!viewport_width || !viewport_height)
+    throw std::invalid_argument("preview viewport dimensions must be non-zero");
+
+  auto scaled = [&](std::uint32_t divisor) {
+    return RenderDimensions{std::max(1u, viewport_width / divisor),
+                            std::max(1u, viewport_height / divisor)};
+  };
+
+  switch (quality) {
+  case PreviewQuality::Full: return {viewport_width, viewport_height};
+  case PreviewQuality::Half: return scaled(2);
+  case PreviewQuality::Quarter: return scaled(4);
+  case PreviewQuality::Adaptive:
+    // The runtime may promote/demote this later from frame-time feedback. Half
+    // quality is the deterministic baseline and therefore cache-safe.
+    return scaled(2);
+  case PreviewQuality::Proxy: {
+    std::uint32_t width = preview.requested_width;
+    std::uint32_t height = preview.requested_height;
+    if ((!width || !height) && selected_source) {
+      width = selected_source->width;
+      height = selected_source->height;
+    }
+    if (!width || !height)
+      throw std::invalid_argument("proxy preview requires configured dimensions");
+    // Never upscale a proxy beyond the preview viewport.
+    const double scale = std::min(1.0, std::min(
+        static_cast<double>(viewport_width) / width,
+        static_cast<double>(viewport_height) / height));
+    return {std::max(1u, static_cast<std::uint32_t>(width * scale)),
+            std::max(1u, static_cast<std::uint32_t>(height * scale))};
+  }
+  }
+  throw std::logic_error("unknown preview quality");
 }
 
 ColorRenderPlan build_color_render_plan(RenderPurpose purpose,
