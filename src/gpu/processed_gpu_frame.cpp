@@ -63,6 +63,20 @@ bool ProcessedGpuFrame::context_live() const noexcept {
   return !context_lifetime_bound_ || (lifetime && lifetime->live());
 }
 
+void ProcessedGpuFrame::add_context_retirement_callback(
+    GpuContextLifetime::RetirementCallback callback) const noexcept {
+  if (!callback) return;
+  try {
+    if (const auto lifetime = context_lifetime_.lock()) {
+      lifetime->add_retirement_callback(std::move(callback));
+    } else if (context_lifetime_bound_) {
+      callback();
+    }
+  } catch (...) {
+    try { callback(); } catch (...) {}
+  }
+}
+
 void ProcessedGpuFrame::bind_context_lifetime(
     const std::shared_ptr<GpuContextLifetime>& lifetime) noexcept {
   context_lifetime_ = lifetime;
