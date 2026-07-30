@@ -48,6 +48,7 @@ std::string encode(const CorrectionSettings& settings) {
 }
 
 Color rotate_hue(Color color, float degrees) noexcept {
+  if (degrees == 0.0f) return color;
   const float angle = degrees * 3.1415926535f / 180.0f;
   const float co = std::cos(angle), s = std::sin(angle);
   const float r = color.r, g = color.g, b = color.b;
@@ -83,6 +84,7 @@ bool CorrectionParameters::is_identity() const noexcept {
 
 Color apply_correction_reference(Color color,
                                  const CorrectionParameters& parameters) noexcept {
+  if (parameters.is_identity()) return color;
   const auto& p = parameters.values();
   float r = color.r + p.temperature * .1f;
   float g = color.g + p.tint * .1f;
