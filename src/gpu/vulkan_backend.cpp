@@ -722,6 +722,7 @@ public:
   }
   ~VulkanBackend() {
     shutdown();
+    retire_context_resources();
     device_live_->store(false, std::memory_order_release);
     if (pool_)
       vkDestroyCommandPool(d_, pool_, nullptr);
