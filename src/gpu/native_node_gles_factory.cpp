@@ -2,6 +2,7 @@
 #if defined(__ANDROID__)
 #include <GLES3/gl31.h>
 #include <string>
+#include <algorithm>
 #endif
 namespace digitor {
 bool create_gles_native_node_pipeline(const NativeNodePlatformFactoryContext&,const NativeNodeCompiledPipeline& compiled,
@@ -31,11 +32,22 @@ bool record_gles_native_node_dispatch(const NativeNodePlatformFactoryContext&,co
 #if defined(__ANDROID__)
  if(!h.pipeline||geometry.groups_x==0||geometry.groups_y==0||geometry.groups_z==0){diagnostic="invalid GLES node dispatch context";return false;}
  GLuint program=static_cast<GLuint>(h.pipeline); glUseProgram(program);
- for(const auto&t:resources.textures){ if(!t.native_texture){diagnostic="invalid GLES texture";return false;} GLenum access=(t.slot==2&&resources.textures.size()==3)||(t.slot==3&&resources.textures.size()==4)?GL_WRITE_ONLY:GL_READ_ONLY; GLenum format=(resources.textures.size()==4&&t.slot==2)?GL_R32F:GL_RGBA32F; glBindImageTexture(t.slot,static_cast<GLuint>(t.native_texture),0,GL_FALSE,0,access,format); }
+ const auto contract=native_node_pipeline_contract(DIGITOR_RENDERER_OPENGL_ES,resources.kernel);
+ if(!validate_native_node_pipeline_contract(contract)){diagnostic="invalid GLES node kernel contract";return false;}
+ GLuint constant_binding=0;
+ for(std::uint32_t i=0;i<contract.binding_count;++i){
+  const auto& expected=contract.bindings[i];
+  if(expected.kind==NativeNodeBindingKind::constants){constant_binding=expected.binding;continue;}
+  auto it=std::find_if(resources.textures.begin(),resources.textures.end(),[&](const auto&t){return t.slot==expected.binding;});
+  if(it==resources.textures.end()||!it->native_texture){diagnostic="invalid GLES texture binding";return false;}
+  const GLenum access=expected.kind==NativeNodeBindingKind::storage_output?GL_WRITE_ONLY:GL_READ_ONLY;
+  const GLenum format=expected.format=="r32f"?GL_R32F:GL_RGBA32F;
+  glBindImageTexture(expected.binding,static_cast<GLuint>(it->native_texture),0,GL_FALSE,0,access,format);
+ }
  GLuint ubo=0;glGenBuffers(1,&ubo);glBindBuffer(GL_UNIFORM_BUFFER,ubo);glBufferData(GL_UNIFORM_BUFFER,resources.constants.size(),resources.constants.data(),GL_STREAM_DRAW);
- const GLuint binding=resources.textures.size()==3?3u:4u;glBindBufferBase(GL_UNIFORM_BUFFER,binding,ubo);
+ glBindBufferBase(GL_UNIFORM_BUFFER,constant_binding,ubo);
  glDispatchCompute(geometry.groups_x,geometry.groups_y,geometry.groups_z);glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);glFinish();
- glBindBufferBase(GL_UNIFORM_BUFFER,binding,0);glDeleteBuffers(1,&ubo); GLenum error=glGetError(); if(error!=GL_NO_ERROR){diagnostic="GLES node dispatch failed";return false;} diagnostic.clear();return true;
+ glBindBufferBase(GL_UNIFORM_BUFFER,constant_binding,0);glDeleteBuffers(1,&ubo); GLenum error=glGetError(); if(error!=GL_NO_ERROR){diagnostic="GLES node dispatch failed";return false;} diagnostic.clear();return true;
 #else
  (void)h;(void)geometry;(void)resources;diagnostic="GLES support not compiled";return false;
 #endif

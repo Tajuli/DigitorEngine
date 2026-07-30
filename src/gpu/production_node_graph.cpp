@@ -24,10 +24,78 @@ void ProductionNodeGraph::normalize_mixers(){bool changed=true;while(changed){ch
 void ProductionNodeGraph::remove_node(NodeId id){auto n=node(id);if(n.kind==ProductionNodeKind::input||n.kind==ProductionNodeKind::output)throw std::invalid_argument("cannot remove endpoint");NodeId replacement=n.inputs.empty()?input_:n.inputs.front();NodeId owning_mixer{};NodeId surviving_branch{};for(auto&[nid,x]:nodes_)if(x.kind==ProductionNodeKind::mixer&&std::find(x.inputs.begin(),x.inputs.end(),id)!=x.inputs.end()){owning_mixer=nid;for(auto v:x.inputs)if(v!=id){surviving_branch=v;break;}}nodes_.erase(id);if(owning_mixer&&surviving_branch){for(auto&[nid,x]:nodes_)if(nid!=owning_mixer)for(auto&i:x.inputs)if(i==owning_mixer)i=surviving_branch;nodes_.erase(owning_mixer);nodes_.at(surviving_branch).kind=ProductionNodeKind::serial;replacement=surviving_branch;}else{for(auto&[_,x]:nodes_)for(auto&i:x.inputs)if(i==id)i=replacement;}if(selected_==id)selected_=(nodes_.contains(replacement)&&nodes_.at(replacement).kind!=ProductionNodeKind::input)?replacement:0;normalize_mixers();}
 void ProductionNodeGraph::set_enabled(NodeId id,bool v){nodes_.at(id).enabled=v;}void ProductionNodeGraph::set_bypassed(NodeId id,bool v){nodes_.at(id).bypassed=v;}
 void ProductionNodeGraph::add_operation_to_selected(NodeOperation op){if(!selected_)throw std::logic_error("no selected node");nodes_.at(selected_).operations.push_back(std::move(op));}
+void ProductionNodeGraph::set_operation_on_selected(NodeOperation op){
+ if(!selected_)throw std::logic_error("no selected node");
+ auto& operations=nodes_.at(selected_).operations;
+ auto it=std::find_if(operations.begin(),operations.end(),[&](const NodeOperation& current){return current.kind==op.kind;});
+ if(it==operations.end())operations.push_back(std::move(op));else *it=std::move(op);
+}
+bool ProductionNodeGraph::remove_operation(NodeId id,NodeOperationKind kind){
+ auto& operations=nodes_.at(id).operations;
+ const auto old=operations.size();
+ operations.erase(std::remove_if(operations.begin(),operations.end(),[&](const NodeOperation& op){return op.kind==kind;}),operations.end());
+ return operations.size()!=old;
+}
+bool ProductionNodeGraph::set_operation_enabled(NodeId id,NodeOperationKind kind,bool enabled){
+ auto& operations=nodes_.at(id).operations;
+ auto it=std::find_if(operations.begin(),operations.end(),[&](const NodeOperation& op){return op.kind==kind;});
+ if(it==operations.end())return false;
+ if(it->enabled!=enabled)it->enabled=enabled;
+ return true;
+}
 void ProductionNodeGraph::clear_operations(NodeId id){nodes_.at(id).operations.clear();}
 std::vector<NodeId>ProductionNodeGraph::execution_order()const{std::vector<NodeId>out;std::unordered_set<NodeId>visiting,done;std::function<void(NodeId)>visit=[&](NodeId id){if(visiting.contains(id))throw std::logic_error("production node cycle");if(done.contains(id))return;visiting.insert(id);for(auto x:node(id).inputs)visit(x);visiting.erase(id);done.insert(id);out.push_back(id);};visit(output_);return out;}
 NodeValue ProductionNodeGraph::mix_inputs(const std::vector<NodeValue>&v){if(v.empty())return{};NodeValue out=v.front();for(std::size_t p=0;p<out.size();++p){Color s{};for(auto&x:v){if(x.size()!=out.size())throw std::invalid_argument("mixer dimensions");s.r+=x[p].r;s.g+=x[p].g;s.b+=x[p].b;s.a+=x[p].a;}float n=1.f/v.size();out[p]={s.r*n,s.g*n,s.b*n,s.a*n};}return out;}
-NodeValue ProductionNodeGraph::apply_operations(const ProductionNode&n,NodeValue value,std::uint32_t w,std::uint32_t h)const{NodeValue base=value;std::optional<PowerWindowSettings>window;std::vector<float>qualifier;for(const auto&o:n.operations){if(!o.enabled)continue;if(o.kind==NodeOperationKind::power_window){window=std::get<PowerWindowSettings>(o.payload);continue;}NodeValue before=value;if(o.kind==NodeOperationKind::primary_wheels){auto p=std::get<std::shared_ptr<const PrimaryWheelsParameters>>(o.payload);apply_primary_wheels_reference(before,value,*p);}else if(o.kind==NodeOperationKind::log_wheels){auto p=std::get<std::shared_ptr<const LogWheelsParameters>>(o.payload);apply_log_wheels_reference(before,value,*p);}else if(o.kind==NodeOperationKind::rgb_curves){auto p=std::get<std::shared_ptr<const CompiledRgbCurves>>(o.payload);p->apply(before,value);}else if(o.kind==NodeOperationKind::hsl_qualifier){auto p=std::get<std::shared_ptr<const HslQualifierParameters>>(o.payload);qualifier.resize(value.size());apply_hsl_qualifier_reference(value,qualifier,*p);continue;}else if(o.kind==NodeOperationKind::correction){auto p=std::get<std::shared_ptr<const CorrectionParameters>>(o.payload);apply_correction_reference(before,value,*p);}else if(o.kind==NodeOperationKind::lut1d){apply_lut_cpu(before.data(),value.data(),value.size(),*std::get<std::shared_ptr<const Lut1D>>(o.payload));}else if(o.kind==NodeOperationKind::lut3d){apply_lut_cpu(before.data(),value.data(),value.size(),*std::get<std::shared_ptr<const Lut3D>>(o.payload));}else if(o.kind==NodeOperationKind::effect){CommandBuffer cb;CommandEncoder enc(cb);apply_effect_gpu(enc,before.data(),value.data(),w,h,std::get<EffectSettings>(o.payload));enc.finish();CommandQueue q;q.submit(cb);}if(!qualifier.empty()||window){for(std::size_t i=0;i<value.size();++i){float m=qualifier.empty()?1.f:qualifier[i];if(window)m*=window_matte(*window,(float(i%w)+.5f)/w,(float(i/w)+.5f)/h);value[i]=blend(before[i],value[i],m);}}}return value;}
+NodeValue ProductionNodeGraph::apply_operations(const ProductionNode& node,NodeValue value,std::uint32_t width,std::uint32_t height)const {
+ const NodeValue original=value;
+ std::vector<float> combined_mask(value.size(),1.0f);
+ bool has_mask=false;
+
+ for(const auto& operation:node.operations){
+  if(!operation.enabled)continue;
+  if(operation.kind==NodeOperationKind::hsl_qualifier){
+   auto parameters=std::get<std::shared_ptr<const HslQualifierParameters>>(operation.payload);
+   if(!parameters)throw std::invalid_argument("HSL qualifier parameters are missing");
+   std::vector<float> matte(value.size());
+   apply_hsl_qualifier_reference(original,matte,*parameters);
+   for(std::size_t i=0;i<matte.size();++i)combined_mask[i]*=std::clamp(matte[i],0.0f,1.0f);
+   has_mask=true;
+  }else if(operation.kind==NodeOperationKind::power_window){
+   const auto settings=std::get<PowerWindowSettings>(operation.payload);
+   for(std::size_t i=0;i<combined_mask.size();++i){
+    const float x=(float(i%width)+.5f)/float(width);
+    const float y=(float(i/width)+.5f)/float(height);
+    combined_mask[i]*=window_matte(settings,x,y);
+   }
+   has_mask=true;
+  }
+ }
+
+ for(const auto& operation:node.operations){
+  if(!operation.enabled||operation.kind==NodeOperationKind::hsl_qualifier||operation.kind==NodeOperationKind::power_window)continue;
+  NodeValue before=value;
+  if(operation.kind==NodeOperationKind::primary_wheels){
+   auto p=std::get<std::shared_ptr<const PrimaryWheelsParameters>>(operation.payload);if(!p)throw std::invalid_argument("Primary Wheels parameters are missing");apply_primary_wheels_reference(before,value,*p);
+  }else if(operation.kind==NodeOperationKind::log_wheels){
+   auto p=std::get<std::shared_ptr<const LogWheelsParameters>>(operation.payload);if(!p)throw std::invalid_argument("Log Wheels parameters are missing");apply_log_wheels_reference(before,value,*p);
+  }else if(operation.kind==NodeOperationKind::rgb_curves){
+   auto p=std::get<std::shared_ptr<const CompiledRgbCurves>>(operation.payload);if(!p)throw std::invalid_argument("RGB Curves parameters are missing");p->apply(before,value);
+  }else if(operation.kind==NodeOperationKind::correction){
+   auto p=std::get<std::shared_ptr<const CorrectionParameters>>(operation.payload);if(!p)throw std::invalid_argument("Correction parameters are missing");apply_correction_reference(before,value,*p);
+  }else if(operation.kind==NodeOperationKind::lut1d){
+   auto p=std::get<std::shared_ptr<const Lut1D>>(operation.payload);if(!p)throw std::invalid_argument("1D LUT is missing");apply_lut_cpu(before.data(),value.data(),value.size(),*p);
+  }else if(operation.kind==NodeOperationKind::lut3d){
+   auto p=std::get<std::shared_ptr<const Lut3D>>(operation.payload);if(!p)throw std::invalid_argument("3D LUT is missing");apply_lut_cpu(before.data(),value.data(),value.size(),*p);
+  }else if(operation.kind==NodeOperationKind::effect){
+   CommandBuffer cb;CommandEncoder enc(cb);apply_effect_gpu(enc,before.data(),value.data(),width,height,std::get<EffectSettings>(operation.payload));enc.finish();CommandQueue queue;queue.submit(cb);
+  }
+ }
+
+ if(has_mask){
+  for(std::size_t i=0;i<value.size();++i)value[i]=blend(original[i],value[i],std::clamp(combined_mask[i],0.0f,1.0f));
+ }
+ return value;
+}
 NodeValue ProductionNodeGraph::render(std::span<const Color>source,std::uint32_t w,std::uint32_t h,std::int64_t)const{if(source.size()!=std::size_t(w)*h)throw std::invalid_argument("source dimensions");std::unordered_map<NodeId,NodeValue>values;for(auto id:execution_order()){auto&n=node(id);if(n.kind==ProductionNodeKind::input){values[id]=NodeValue(source.begin(),source.end());continue;}std::vector<NodeValue>in;for(auto x:n.inputs)in.push_back(values.at(x));NodeValue v=n.kind==ProductionNodeKind::mixer?mix_inputs(in):(in.empty()?NodeValue{}:in.front());if(n.enabled&&!n.bypassed&&n.kind!=ProductionNodeKind::output)v=apply_operations(n,std::move(v),w,h);values[id]=std::move(v);}return values.at(output_);}
 void ProductionNodeGraph::clear_render_cache()const{render_cache_.clear();render_cache_bytes_=0;}
 void ProductionNodeGraph::set_render_cache_budget_bytes(std::size_t bytes)const{render_cache_budget_bytes_=bytes;trim_render_cache(0,nullptr);}

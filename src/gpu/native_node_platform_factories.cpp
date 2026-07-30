@@ -294,10 +294,11 @@ bool record_d3d12_native_node_dispatch(
       reinterpret_cast<ID3D12PipelineState*>(handle.pipeline));
 
   const auto backend = DIGITOR_RENDERER_D3D12;
-  NativeNodeKernel kernel = resources.textures.size() == 3
-      ? NativeNodeKernel::parallel_mixer
-      : NativeNodeKernel::masked_composite;
-  const auto contract = native_node_pipeline_contract(backend, kernel);
+  const auto contract = native_node_pipeline_contract(backend, resources.kernel);
+  if (!validate_native_node_pipeline_contract(contract)) {
+    diagnostic = "invalid D3D12 node kernel contract";
+    return false;
+  }
   for (std::uint32_t root_index = 0; root_index < contract.binding_count;
        ++root_index) {
     const auto& binding = contract.bindings[root_index];

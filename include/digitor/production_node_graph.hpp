@@ -32,7 +32,11 @@ public:
  NodeId convert_to_parallel(NodeId existing,std::string new_branch="Parallel Node");
  void remove_node(NodeId); void connect(NodeId,NodeId); void disconnect(NodeId,NodeId);
  void set_enabled(NodeId,bool); void set_bypassed(NodeId,bool); void set_position(NodeId,NodePosition);
- void add_operation_to_selected(NodeOperation); void clear_operations(NodeId);
+ void add_operation_to_selected(NodeOperation);
+ void set_operation_on_selected(NodeOperation);
+ bool remove_operation(NodeId,NodeOperationKind);
+ bool set_operation_enabled(NodeId,NodeOperationKind,bool);
+ void clear_operations(NodeId);
  const ProductionNode& node(NodeId)const; std::vector<NodeId> execution_order()const;
  NodeValue render(std::span<const Color>,std::uint32_t width,std::uint32_t height,std::int64_t frame=0)const;
  NodeValue render_cached(std::span<const Color>,std::uint32_t width,std::uint32_t height,std::uint64_t source_generation,NodeRenderStats* stats=nullptr,std::int64_t frame=0)const;

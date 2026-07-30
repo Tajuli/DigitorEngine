@@ -24,6 +24,7 @@ void test_hsl_qualifier();
 void test_color_science();
 void test_render_export();
 void test_render_graph();
+void test_node_system();
 
 namespace {
 class FakeBackend final : public digitor::IRenderBackend {
@@ -130,6 +131,7 @@ int main() {
     test_color_science();
     test_render_export();
     test_render_graph();
+    test_node_system();
 
     { digitor::CommandQueue q; digitor::CommandBuffer b; digitor::CommandEncoder e(b); int value=0; e.dispatch([&]{value=7;}); e.finish(); digitor::Fence f; q.submit(b,&f,2); assert(value==7 && f.value()==2); }
     { digitor::ShaderCompiler c; digitor::ShaderCompileRequest request; request.source="[numthreads(8,1,1)] void main(){}"; auto s=c.compile(request); assert(s.error==digitor::ShaderError::compiler_unavailable); assert(!s); }

@@ -19,6 +19,7 @@ const char* native_node_operation_name(NodeOperationKind k) noexcept {
     case NodeOperationKind::log_wheels:return "log_wheels";
     case NodeOperationKind::rgb_curves:return "rgb_curves";
     case NodeOperationKind::hsl_qualifier:return "hsl_qualifier";
+    case NodeOperationKind::correction:return "correction";
     case NodeOperationKind::lut1d:return "lut1d";
     case NodeOperationKind::lut3d:return "lut3d";
     case NodeOperationKind::effect:return "effect";
