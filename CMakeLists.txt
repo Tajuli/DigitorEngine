@@ -291,6 +291,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_color_science.cpp
         tests/test_render_export.cpp
         tests/test_render_graph.cpp
+        tests/test_node_system.cpp
     )
     set_target_properties(digitor_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_tests PRIVATE Digitor::Engine)
