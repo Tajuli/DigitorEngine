@@ -29,6 +29,7 @@ struct NativeNodeTextureBinding {
 struct NativeNodeDispatchResources {
   std::vector<NativeNodeTextureBinding> textures;
   std::vector<std::byte> constants;
+  NativeNodeKernel kernel{NativeNodeKernel::parallel_mixer};
 };
 
 struct NativeNodeBackendPipelineHandle {

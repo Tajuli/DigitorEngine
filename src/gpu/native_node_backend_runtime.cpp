@@ -73,6 +73,7 @@ bool NativeNodeBackendRuntime::prepare(DigitorRendererBackend b,NativeNodeKernel
 bool NativeNodeBackendRuntime::dispatch(DigitorRendererBackend b,NativeNodeKernel k,
  std::uint32_t w,std::uint32_t h,std::uint64_t device,const NativeNodeDispatchResources&r,
  std::string&diag) noexcept {
+ if(r.kernel!=k){diag="native dispatch kernel identity mismatch";return false;}
  if(!prepare(b,k,w,h,device,diag))return false;
  auto p=prepare_native_node_pipeline(b,k,w,h);auto id=key(b,k,p.contract_hash,device);std::shared_ptr<Entry>e;
  {std::lock_guard l(mutex_);auto it=entries_.find(id);if(it==entries_.end()){diag="prepared pipeline disappeared";return false;}e=it->second;}

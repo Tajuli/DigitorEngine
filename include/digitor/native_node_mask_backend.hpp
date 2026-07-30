@@ -25,6 +25,9 @@ public:
       const HslQualifierParameters& parameters,
       GpuMatteResourcePtr& output) noexcept = 0;
 
+  // The implementation belongs to one exact backend/context, so it owns the
+  // context identity used by the returned matte even though no source pixels
+  // are required to evaluate a geometric Power Window.
   virtual DigitorResult generate_power_window_matte(
       std::uint32_t width,
       std::uint32_t height,
