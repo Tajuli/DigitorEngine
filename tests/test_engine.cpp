@@ -16,6 +16,7 @@
 void test_editor();
 void test_v2();
 void test_color_pipeline();
+void test_correction();
 void test_rgb_curves();
 void test_primary_wheels();
 void test_log_wheels();
@@ -121,11 +122,12 @@ int main() {
     test_editor();
     test_v2();
     test_color_pipeline();
+    test_correction();
     test_rgb_curves();
     test_primary_wheels();
     test_log_wheels();
     test_hsl_qualifier();
-  test_color_science();
+    test_color_science();
     test_render_export();
     test_render_graph();
 
@@ -144,8 +146,7 @@ int main() {
       assert(backend.render_rgba8(1, 1, {}, output) == DIGITOR_RESULT_OK);
       assert((output == std::vector<uint8_t>{0,0,0,255}));
       output = {9};
-      assert(backend.render_rgba8(UINT32_MAX, UINT32_MAX, {}, output) ==
-             DIGITOR_RESULT_INVALID_ARGUMENT);
+      assert(backend.render_rgba8(UINT32_MAX, UINT32_MAX, {}, output) == DIGITOR_RESULT_INVALID_ARGUMENT);
       assert((output == std::vector<uint8_t>{9})); }
 
     DigitorEngineConfig invalid_config{static_cast<DigitorRendererBackend>(99), 0, 1};
