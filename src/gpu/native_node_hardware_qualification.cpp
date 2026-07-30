@@ -39,6 +39,9 @@ const char* native_node_kernel_name(NativeNodeKernel kernel) noexcept {
   switch (kernel) {
     case NativeNodeKernel::parallel_mixer: return "parallel_mixer";
     case NativeNodeKernel::masked_composite: return "masked_composite";
+    case NativeNodeKernel::hsl_matte: return "hsl_matte";
+    case NativeNodeKernel::power_window_matte: return "power_window_matte";
+    case NativeNodeKernel::matte_multiply: return "matte_multiply";
     default: return "unknown";
   }
 }
