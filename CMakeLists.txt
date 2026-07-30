@@ -109,8 +109,6 @@ if(DIGITOR_ENABLE_FFMPEG)
 endif()
 message(STATUS "DigitorEngine FFmpeg: ${DIGITOR_FFMPEG_STATUS}")
 
-# The command-line program is a test-fixture tool, not an engine dependency.
-# Discover it independently and require it only when generation is requested.
 find_program(DIGITOR_FFMPEG_CLI NAMES ffmpeg DOC "Optional FFmpeg command-line fixture generator")
 if(DIGITOR_GENERATE_TEST_MEDIA AND NOT DIGITOR_FFMPEG_CLI)
     message(FATAL_ERROR
@@ -285,6 +283,7 @@ if (DIGITOR_BUILD_TESTS)
         tests/test_editor.cpp
         tests/test_v2.cpp
         tests/test_color_pipeline.cpp
+        tests/test_correction.cpp
         tests/test_rgb_curves.cpp
         tests/test_primary_wheels.cpp
         tests/test_log_wheels.cpp
@@ -319,52 +318,32 @@ if (DIGITOR_BUILD_TESTS)
         SKIP_RETURN_CODE 77
     )
 
-    add_executable(digitor_log_wheels_native_tests
-        tests/test_log_wheels_native.cpp
-    )
-    set_target_properties(digitor_log_wheels_native_tests PROPERTIES
-        CXX_STANDARD 20
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
-    )
+    add_executable(digitor_log_wheels_native_tests tests/test_log_wheels_native.cpp)
+    set_target_properties(digitor_log_wheels_native_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_log_wheels_native_tests PRIVATE Digitor::Engine)
-    target_include_directories(digitor_log_wheels_native_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
+    target_include_directories(digitor_log_wheels_native_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if (MSVC)
         target_compile_options(digitor_log_wheels_native_tests PRIVATE /UNDEBUG)
     else()
         target_compile_options(digitor_log_wheels_native_tests PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME digitor_log_wheels_native_tests
-        COMMAND digitor_log_wheels_native_tests
-    )
+    add_test(NAME digitor_log_wheels_native_tests COMMAND digitor_log_wheels_native_tests)
     set_tests_properties(digitor_log_wheels_native_tests PROPERTIES
         ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
         LABELS "native-gpu;hardware;log-wheels;v4.9.0"
         SKIP_RETURN_CODE 77
     )
 
-    add_executable(digitor_hsl_qualifier_native_tests
-        tests/test_hsl_qualifier_native.cpp
-    )
-    set_target_properties(digitor_hsl_qualifier_native_tests PROPERTIES
-        CXX_STANDARD 20
-        CXX_STANDARD_REQUIRED ON
-        CXX_EXTENSIONS OFF
-    )
+    add_executable(digitor_hsl_qualifier_native_tests tests/test_hsl_qualifier_native.cpp)
+    set_target_properties(digitor_hsl_qualifier_native_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_hsl_qualifier_native_tests PRIVATE Digitor::Engine)
-    target_include_directories(digitor_hsl_qualifier_native_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
+    target_include_directories(digitor_hsl_qualifier_native_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if (MSVC)
         target_compile_options(digitor_hsl_qualifier_native_tests PRIVATE /UNDEBUG)
     else()
         target_compile_options(digitor_hsl_qualifier_native_tests PRIVATE -UNDEBUG)
     endif()
-    add_test(NAME digitor_hsl_qualifier_native_tests
-        COMMAND digitor_hsl_qualifier_native_tests
-    )
+    add_test(NAME digitor_hsl_qualifier_native_tests COMMAND digitor_hsl_qualifier_native_tests)
     set_tests_properties(digitor_hsl_qualifier_native_tests PROPERTIES
         ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
         LABELS "native-gpu;hardware;hsl-qualifier;v5.0.0"
@@ -391,8 +370,7 @@ if (DIGITOR_BUILD_TESTS)
                     "$<TARGET_FILE_DIR:digitor_media_tests>/digitor_media_fixtures"
                 VERBATIM)
         else()
-            message(STATUS
-                "DigitorEngine media tests: optional MP4/MOV/MKV fixtures will not be generated")
+            message(STATUS "DigitorEngine media tests: optional MP4/MOV/MKV fixtures will not be generated")
         endif()
     endif()
 endif()
