@@ -50,14 +50,32 @@ class GlBackend final : public IRenderBackend {
   bool make_texture(GLuint& out,GpuFailurePoint create,GpuFailurePoint storage,GLenum internal,GLsizei w,GLsizei h,const char* label) noexcept {
     if(allocation_fail(create,label)) return false;
     glGenTextures(1,&out); if(!out) return false; ++gl_live.textures;
+    // Texture bindings are per active texture unit. Preserve the caller's
+    // binding so allocating an output/LUT cannot silently replace an already
+    // bound source texture. Leaving the new texture bound caused render-to-
+    // texture feedback in Primary Wheels and replaced the Curves LUT binding.
+    GLint active_texture = GL_TEXTURE0;
+    GLint previous_binding = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &active_texture);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_binding);
     glBindTexture(GL_TEXTURE_2D,out);
-    if(fail(storage,label)){delete_texture(out,eglGetCurrentContext());return false;}
+    if(fail(storage,label)){
+      glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_binding));
+      delete_texture(out,eglGetCurrentContext());
+      return false;
+    }
     glTexStorage2D(GL_TEXTURE_2D,1,internal,w,h);
-    if(glGetError()!=GL_NO_ERROR){delete_texture(out,eglGetCurrentContext());return false;}
+    if(glGetError()!=GL_NO_ERROR){
+      glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_binding));
+      delete_texture(out,eglGetCurrentContext());
+      return false;
+    }
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_binding));
+    glActiveTexture(static_cast<GLenum>(active_texture));
     return true;
   }
   void prepare_offscreen_draw_state() noexcept {
