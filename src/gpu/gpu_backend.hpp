@@ -103,6 +103,9 @@ public:
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return *frame.native_holder_; }
+  void retire_context_resources() noexcept {
+    if (context_lifetime_) context_lifetime_->retire();
+  }
   virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
                                                 std::span<Color> destination,
                                                 const CompiledRgbCurves&) noexcept;
