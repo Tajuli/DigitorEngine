@@ -429,11 +429,30 @@ bool qualify_gles_failure_matrix(digitor::IRenderBackend& backend) {
     if(backend.process_primary_wheels_gpu(pixels,2,2,1210,*wheels,upstream)!=DIGITOR_RESULT_OK||!upstream)return false;
     std::shared_ptr<digitor::PreviewConsumerDestination> destination; if(path=="preview-submit"&&backend.create_preview_consumer(upstream,destination)!=DIGITOR_RESULT_OK)return false;
     if(has(pipeline,point)) backend.clear_native_pipeline_cache_for_test();
-    const auto baseline=backend.native_resource_counts(); digitor::ProcessedGpuFramePtr output; std::shared_ptr<digitor::PreviewConsumerDestination> consumer; std::vector<digitor::Color> readback(4);
-    auto invoke=[&](bool recovery){if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,2,2,recovery?1212:1211,*wheels,output);if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?1212:1211,*wheels,output);if(path=="curves-cpu")return backend.process_curves_gpu(pixels,2,2,recovery?1212:1211,*curves,output);if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?1212:1211,*curves,output);if(path=="preview-create")return backend.create_preview_consumer(upstream,consumer);if(path=="preview-submit")return destination->submit(upstream);return backend.validation_readback_primary_wheels(upstream,readback);};
-    digitor::set_gpu_failure_point(point); const auto failure=invoke(false); const auto evidence=backend.execution_provenance(); output.reset(); consumer.reset(); const bool cleanup=backend.native_resource_counts()==baseline; digitor::set_gpu_failure_point(F::None); const auto recovery=invoke(true);
+    const auto baseline=backend.native_resource_counts();
+    digitor::ProcessedGpuFramePtr failed_output, recovery_output;
+    std::shared_ptr<digitor::PreviewConsumerDestination> failed_consumer, recovery_consumer;
+    std::vector<digitor::Color> readback(4);
+    auto invoke=[&](bool recovery){
+      auto& output = recovery ? recovery_output : failed_output;
+      auto& consumer = recovery ? recovery_consumer : failed_consumer;
+      if(path=="primary-cpu")return backend.process_primary_wheels_gpu(pixels,2,2,recovery?1212:1211,*wheels,output);
+      if(path=="primary-gpu")return backend.process_primary_wheels_gpu(backend.gpu_source(upstream),recovery?1212:1211,*wheels,output);
+      if(path=="curves-cpu")return backend.process_curves_gpu(pixels,2,2,recovery?1212:1211,*curves,output);
+      if(path=="curves-gpu")return backend.process_curves_gpu(backend.gpu_source(upstream),recovery?1212:1211,*curves,output);
+      if(path=="preview-create")return backend.create_preview_consumer(upstream,consumer);
+      if(path=="preview-submit")return destination->submit(upstream);
+      return backend.validation_readback_primary_wheels(upstream,readback);
+    };
+    digitor::set_gpu_failure_point(point);
+    const auto failure=invoke(false);
+    const auto evidence=backend.execution_provenance();
+    failed_output.reset(); failed_consumer.reset();
+    const bool cleanup=backend.native_resource_counts()==baseline;
+    digitor::set_gpu_failure_point(F::None);
+    const auto recovery=invoke(true);
     const bool reached=evidence.requested_failure_point==point&&evidence.actual_stage_reached==point; const bool fallback=evidence.primary_wheels_fallback_invocations||evidence.curve_fallback_invocations; const bool ok=failure!=DIGITOR_RESULT_OK&&reached&&evidence.output_cleared&&cleanup&&evidence.cache_valid&&!fallback&&!evidence.normal_preview_readback_count&&recovery==DIGITOR_RESULT_OK;
-    std::cerr<<"FAILURE_STAGE backend=GLES path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification="<<(ok?"PASS":"FAIL")<<" reached="<<reached<<" output_cleared="<<evidence.output_cleared<<" cleanup="<<cleanup<<" cache_ok="<<evidence.cache_valid<<" cpu_primary_delta="<<evidence.cpu_primary_wheels_invocations<<" cpu_curves_delta="<<evidence.cpu_curve_invocations<<" fallback="<<fallback<<" intermediate_readback="<<evidence.intermediate_readback_count<<" intermediate_reupload="<<evidence.intermediate_reupload_count<<" normal_readback="<<evidence.normal_preview_readback_count<<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)<<" recovery="<<(recovery==DIGITOR_RESULT_OK)<<'\n'; passed&=ok;
+    std::cerr<<"FAILURE_STAGE backend=GLES path="<<path<<" stage="<<digitor::gpu_failure_point_name(point)<<" classification="<<(ok?"PASS":"FAIL")<<" reached="<<reached<<" output_cleared="<<evidence.output_cleared<<" cleanup="<<cleanup<<" cache_ok="<<evidence.cache_valid<<" cpu_primary_delta="<<evidence.cpu_primary_wheels_invocations<<" cpu_curves_delta="<<evidence.cpu_curve_invocations<<" fallback="<<fallback<<" intermediate_readback="<<evidence.intermediate_readback_count<<" intermediate_reupload="<<evidence.intermediate_reupload_count<<" normal_readback="<<evidence.normal_preview_readback_count<<" acquisition_balanced="<<(evidence.preview_acquisition_balance==0)<<" recovery="<<(recovery==DIGITOR_RESULT_OK)<<'\n'; recovery_output.reset(); recovery_consumer.reset(); destination.reset(); upstream.reset(); passed&=ok;
   }
   return passed;
 }
@@ -527,11 +546,14 @@ int main() {
                  <<" recovery="<<consumer_recovery<<'\n';
         all_passed&=acquisition_failure&&submission_failure&&consumer_recovery;
         const void* retired_context=backend.get();
+        if(native_consumer)native_consumer->retire();
+        if(recovery_consumer)recovery_consumer->retire();
+        native_consumer.reset();
+        recovery_consumer.reset();
+        failed_consumer.reset();
         backend->shutdown();
         const auto retired_cache=backend->native_pipeline_cache_counters();
         const bool cache_invalidated=retired_cache.invalidations>=populated_cache.creations;
-        if(native_consumer)native_consumer->retire();
-        if(recovery_consumer)recovery_consumer->retire();
         backend.reset();
         const bool retired=retirement_produce==DIGITOR_RESULT_OK&&retained&&
             !retained->ready()&&
