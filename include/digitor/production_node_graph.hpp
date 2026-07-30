@@ -4,6 +4,7 @@
 #include "digitor/log_wheels.hpp"
 #include "digitor/rgb_curves.hpp"
 #include "digitor/qualifier.hpp"
+#include "digitor/correction.hpp"
 #include "digitor/lut.hpp"
 #include "digitor/effects.hpp"
 #include <memory>
@@ -12,11 +13,11 @@
 
 namespace digitor {
 enum class ProductionNodeKind : std::uint32_t { input, serial, parallel, mixer, output };
-enum class NodeOperationKind : std::uint32_t { primary_wheels, log_wheels, rgb_curves, hsl_qualifier, lut1d, lut3d, effect, power_window };
+enum class NodeOperationKind : std::uint32_t { primary_wheels, log_wheels, rgb_curves, hsl_qualifier, correction, lut1d, lut3d, effect, power_window };
 enum class WindowShape : std::uint32_t { rectangle, ellipse, linear_gradient };
 struct NodePosition { float x{}, y{}; };
 struct PowerWindowSettings { WindowShape shape{WindowShape::ellipse}; float center_x{.5f},center_y{.5f},width{1},height{1},rotation{},feather{.1f},opacity{1}; bool invert{}; };
-using NodeOperationPayload=std::variant<std::shared_ptr<const PrimaryWheelsParameters>,std::shared_ptr<const LogWheelsParameters>,std::shared_ptr<const CompiledRgbCurves>,std::shared_ptr<const HslQualifierParameters>,std::shared_ptr<const Lut1D>,std::shared_ptr<const Lut3D>,EffectSettings,PowerWindowSettings>;
+using NodeOperationPayload=std::variant<std::shared_ptr<const PrimaryWheelsParameters>,std::shared_ptr<const LogWheelsParameters>,std::shared_ptr<const CompiledRgbCurves>,std::shared_ptr<const HslQualifierParameters>,std::shared_ptr<const CorrectionParameters>,std::shared_ptr<const Lut1D>,std::shared_ptr<const Lut3D>,EffectSettings,PowerWindowSettings>;
 struct NodeOperation { NodeOperationKind kind{}; NodeOperationPayload payload; bool enabled{true}; std::string identity; };
 struct NodeRenderStats { std::size_t executed_nodes{}; std::size_t cache_hits{}; std::size_t cache_misses{}; std::size_t cache_evictions{}; std::size_t cache_bytes{}; };
 struct ProductionNode { NodeId id{}; ProductionNodeKind kind{ProductionNodeKind::serial}; std::string name; std::vector<NodeId> inputs; std::vector<NodeOperation> operations; bool enabled{true}; bool bypassed{}; NodePosition position{}; };
@@ -56,6 +57,7 @@ NodeOperation make_primary_wheels_operation(std::shared_ptr<const PrimaryWheelsP
 NodeOperation make_log_wheels_operation(std::shared_ptr<const LogWheelsParameters>);
 NodeOperation make_rgb_curves_operation(std::shared_ptr<const CompiledRgbCurves>);
 NodeOperation make_hsl_qualifier_operation(std::shared_ptr<const HslQualifierParameters>);
+NodeOperation make_correction_operation(std::shared_ptr<const CorrectionParameters>);
 NodeOperation make_lut_operation(std::shared_ptr<const Lut1D>,LutInterpolation=LutInterpolation::linear);
 NodeOperation make_lut_operation(std::shared_ptr<const Lut3D>,LutInterpolation=LutInterpolation::tetrahedral);
 NodeOperation make_effect_operation(EffectSettings);
