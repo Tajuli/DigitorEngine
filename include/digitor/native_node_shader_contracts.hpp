@@ -3,7 +3,13 @@
 #include <string_view>
 #include "digitor/digitor.h"
 namespace digitor {
-enum class NativeNodeKernel : std::uint32_t { parallel_mixer=0, masked_composite=1 };
+enum class NativeNodeKernel : std::uint32_t {
+  parallel_mixer = 0,
+  masked_composite = 1,
+  hsl_matte = 2,
+  power_window_matte = 3,
+  matte_multiply = 4
+};
 enum class NativeNodeShaderLanguage : std::uint32_t { unknown=0, spirv_glsl=1, hlsl=2, metal=3, gles_glsl=4 };
 enum class NativeNodeBindingKind : std::uint32_t { sampled_or_storage_input=0, storage_output=1, constants=2 };
 struct NativeNodeBinding { std::uint32_t binding{}; NativeNodeBindingKind kind{}; std::string_view format; };
