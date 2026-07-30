@@ -47,7 +47,7 @@ public:
 
 [[nodiscard]] inline bool native_node_mask_stack_complete(
     const NativeNodeMaskCapabilities& capabilities) noexcept {
-  return capabilities.hsl_matte && capabilities.power_window_matte &&
+  return capabilities.hsl_qualifier_matte && capabilities.power_window_matte &&
          capabilities.matte_multiply && capabilities.masked_composite;
 }
 
