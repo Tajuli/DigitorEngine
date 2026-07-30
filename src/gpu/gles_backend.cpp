@@ -434,8 +434,19 @@ public:
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
     GLuint input = 0, target = 0, fbo = 0;
+    // render_rgba8() runs after the failure-injection matrix. GLES state is
+    // context-global, so explicitly restore the deterministic offscreen state
+    // before allocating/uploading/drawing. Otherwise a leaked color mask,
+    // scissor, rasterizer-discard, pixel-buffer binding, or non-default VAO can
+    // make the final upload/copy/clear qualification silently fail even though
+    // the FP32 grading metrics already pass.
+    prepare_offscreen_draw_state();
+    drain_errors();
+    glActiveTexture(GL_TEXTURE0);
     glGenTextures(1, &input);
     glBindTexture(GL_TEXTURE_2D, input);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -446,9 +457,18 @@ public:
     glBindTexture(GL_TEXTURE_2D, target);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
     glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           target, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, target, 0);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+      glDeleteFramebuffers(1, &fbo);
+      glDeleteTextures(1, &target);
+      glDeleteTextures(1, &input);
+      glDeleteProgram(program);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    prepare_offscreen_draw_state();
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
     if (src.empty()) {
       glClearColor(0, 0, 0, 1);
@@ -465,6 +485,11 @@ public:
     } catch (...) {
       return DIGITOR_RESULT_OUT_OF_MEMORY;
     }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glFinish();
     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out.data());
     glFinish();
     GLenum error = glGetError();
