@@ -480,6 +480,13 @@ class VulkanBackend final : public IRenderBackend {
   }
   void dispatch(VkCommandBuffer command, std::uint32_t x, std::uint32_t y,
                 std::uint32_t z) noexcept {
+    // A prior injected failure (for example ResourceBinding) leaves the
+    // command buffer without a valid bound compute pipeline/descriptors.
+    // Never emit vkCmdDispatch after any earlier stage has failed: some
+    // Android Vulkan drivers treat that invalid command stream as a fatal
+    // process error instead of reporting a validation failure.
+    if (provenance_.failure_result != DIGITOR_RESULT_OK)
+      return;
     if (injected_vk_result(GpuFailurePoint::DispatchOrDraw, "vkCmdDispatch") !=
         VK_SUCCESS)
       return;
