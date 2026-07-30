@@ -26,8 +26,7 @@ public:
       GpuMatteResourcePtr& output) noexcept = 0;
 
   virtual DigitorResult generate_power_window_matte(
-      std::uint32_t width,
-      std::uint32_t height,
+      const GpuSourceResource& source,
       std::int64_t timestamp,
       const PowerWindowSettings& settings,
       GpuMatteResourcePtr& output) noexcept = 0;
