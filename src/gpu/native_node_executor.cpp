@@ -8,7 +8,7 @@ namespace {
 struct NativeValue { ProcessedGpuFramePtr frame; bool source{}; };
 bool mask(NodeOperationKind k) { return k==NodeOperationKind::hsl_qualifier||k==NodeOperationKind::power_window; }
 const char* missing_mask_capability(const NativeNodeMaskCapabilities& c) noexcept {
- if(!c.hsl_matte)return "native HSL matte generation";
+ if(!c.hsl_qualifier_matte)return "native HSL matte generation";
  if(!c.power_window_matte)return "native Power Window matte generation";
  if(!c.matte_multiply)return "native matte multiplication";
  if(!c.masked_composite)return "native masked composite";
