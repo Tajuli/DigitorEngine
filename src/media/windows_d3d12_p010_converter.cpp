@@ -51,19 +51,18 @@ struct WindowsD3D12P010Converter::Impl {
   mutable std::mutex mutex;
   WindowsP010ConverterTelemetry telemetry;
 #ifdef _WIN32
-  using Microsoft::WRL::ComPtr;
   struct Slot {
-    ComPtr<ID3D12Resource> d3d12;
-    ComPtr<ID3D11Texture2D> d3d11;
+    Microsoft::WRL::ComPtr<ID3D12Resource> d3d12;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11;
     std::atomic_bool in_use{false};
   };
-  ComPtr<ID3D12Device> device12;
-  ComPtr<ID3D12CommandQueue> queue12;
-  ComPtr<ID3D11Device1> device11_1;
-  ComPtr<ID3D11Device5> device11_5;
-  ComPtr<ID3D11DeviceContext4> context11_4;
-  ComPtr<ID3D12Fence> fence12;
-  ComPtr<ID3D11Fence> fence11;
+  Microsoft::WRL::ComPtr<ID3D12Device> device12;
+  Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue12;
+  Microsoft::WRL::ComPtr<ID3D11Device1> device11_1;
+  Microsoft::WRL::ComPtr<ID3D11Device5> device11_5;
+  Microsoft::WRL::ComPtr<ID3D11DeviceContext4> context11_4;
+  Microsoft::WRL::ComPtr<ID3D12Fence> fence12;
+  Microsoft::WRL::ComPtr<ID3D11Fence> fence11;
   HANDLE fence_handle{};
   std::atomic_uint64_t sequence{1};
   std::vector<std::shared_ptr<Slot>> slots;
