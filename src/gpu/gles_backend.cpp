@@ -3,7 +3,9 @@
 #include "core/numeric_utils.hpp"
 #include "gpu/gpu_backend.hpp"
 #include "gpu/native_pipeline_cache.hpp"
-#include <GLES3/gl3.h>
+#include "digitor/native_node_mask_backend.hpp"
+#include "digitor/native_node_shader_contracts.hpp"
+#include <GLES3/gl31.h>
 #include <EGL/egl.h>
 #include <cstring>
 #include <atomic>
@@ -24,6 +26,11 @@ struct GlPreviewOwner { GLuint output{},input{},lut{},framebuffer{},program{}; E
   GlPreviewOwner(){++gl_live.frame_owners;}
   ~GlPreviewOwner(){delete_texture(output,context);delete_texture(input,context);delete_texture(lut,context);delete_framebuffer(framebuffer,context);--gl_live.frame_owners;}
 };
+struct GlMatteOwner { GLuint texture{}; EGLContext context{}; std::vector<std::shared_ptr<void>> upstream;
+  GlMatteOwner(){++gl_live.frame_owners;}
+  ~GlMatteOwner(){delete_texture(texture,context);--gl_live.frame_owners;}
+};
+struct GlUpstreamBundle { std::vector<std::shared_ptr<void>> values; };
 struct GlPipelineOwner { GLuint program{};EGLContext context{};~GlPipelineOwner(){if(program&&eglGetCurrentContext()==context){glDeleteProgram(program);--gl_live.programs;}} };
 struct GlConsumerOwner { GLuint texture{},framebuffer{};EGLContext context{};
  GlConsumerOwner(){++gl_live.consumers;}
@@ -40,7 +47,7 @@ bool has_gl_extension(const char* required) noexcept {
   }
   return false;
 }
-class GlBackend final : public IRenderBackend {
+class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   NativePipelineCache pipeline_cache_{8};
   void drain_errors() noexcept { while(glGetError()!=GL_NO_ERROR){} }
   bool fail(GpuFailurePoint point,const char* operation) noexcept { return inject_at(point,operation)!=DIGITOR_RESULT_OK; }
@@ -146,7 +153,87 @@ class GlBackend final : public IRenderBackend {
            eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE;
   }
 
+
+  struct GlHslConstants { float hue[4],saturation[4],luminance[4],clean_black,clean_white; std::uint32_t invert,width,height,padding[3]; };
+  struct GlWindowConstants { float center_x,center_y,width_f,height_f,rotation,feather,opacity; std::uint32_t shape,invert,width,height,padding; };
+  struct GlSizeConstants { std::uint32_t width,height; };
+
+  std::shared_ptr<GlPipelineOwner> node_program(NativeNodeKernel kernel) noexcept {
+    const auto contract = native_node_pipeline_contract(DIGITOR_RENDERER_OPENGL_ES, kernel);
+    if (!validate_native_node_pipeline_contract(contract)) return {};
+    auto context = eglGetCurrentContext();
+    NativePipelineCacheKey key{DIGITOR_RENDERER_OPENGL_ES,
+      reinterpret_cast<std::uintptr_t>(context),
+      "node-mask-gles:" + std::to_string(static_cast<unsigned>(kernel)), 1,
+      GpuPrecisionMode::Float32, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};
+    return std::static_pointer_cast<GlPipelineOwner>(pipeline_cache_.get_or_create(key,[&]()->NativePipelineCache::Object{
+      const char* source = contract.source.data(); GLint length = static_cast<GLint>(contract.source.size());
+      GLuint shader = glCreateShader(GL_COMPUTE_SHADER); if(!shader) return {};
+      glShaderSource(shader,1,&source,&length); glCompileShader(shader); GLint ok=0; glGetShaderiv(shader,GL_COMPILE_STATUS,&ok);
+      if(!ok){glDeleteShader(shader);return {};}
+      auto owner=std::make_shared<GlPipelineOwner>(); owner->context=context; owner->program=glCreateProgram();
+      if(!owner->program){glDeleteShader(shader);return {};}
+      ++gl_live.programs; glAttachShader(owner->program,shader); glLinkProgram(owner->program); glDeleteShader(shader);
+      glGetProgramiv(owner->program,GL_LINK_STATUS,&ok); if(!ok)return {};
+      return std::static_pointer_cast<void>(owner);
+    }));
+  }
+
+  bool make_node_texture(GLuint& texture, GLenum format,
+                         std::uint32_t width, std::uint32_t height) noexcept {
+    return make_texture(texture, GpuFailurePoint::OutputResourceCreation,
+                        GpuFailurePoint::OutputResourceStorage, format,
+                        static_cast<GLsizei>(width), static_cast<GLsizei>(height),
+                        "native node texture");
+  }
+
+  DigitorResult dispatch_node_compute(NativeNodeKernel kernel,
+      std::uint32_t width, std::uint32_t height,
+      std::span<const GLuint> textures, const void* constants,
+      std::size_t constant_bytes) noexcept {
+    const auto contract=native_node_pipeline_contract(DIGITOR_RENDERER_OPENGL_ES,kernel);
+    if(!validate_native_node_pipeline_contract(contract)||!constants||constant_bytes!=contract.constant_bytes)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto pipeline=node_program(kernel); if(!pipeline)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    GLuint texture_index=0, ubo=0; glUseProgram(pipeline->program);
+    for(std::uint32_t i=0;i<contract.binding_count;++i){const auto& b=contract.bindings[i];
+      if(b.kind==NativeNodeBindingKind::constants){glGenBuffers(1,&ubo);glBindBuffer(GL_UNIFORM_BUFFER,ubo);glBufferData(GL_UNIFORM_BUFFER,constant_bytes,constants,GL_STREAM_DRAW);glBindBufferBase(GL_UNIFORM_BUFFER,b.binding,ubo);continue;}
+      if(texture_index>=textures.size()){if(ubo)glDeleteBuffers(1,&ubo);return DIGITOR_RESULT_INVALID_ARGUMENT;}
+      GLenum access=b.kind==NativeNodeBindingKind::storage_output?GL_WRITE_ONLY:GL_READ_ONLY;
+      GLenum format=b.format=="r32f"?GL_R32F:GL_RGBA32F;
+      glBindImageTexture(b.binding,textures[texture_index++],0,GL_FALSE,0,access,format);
+    }
+    glDispatchCompute((width+7u)/8u,(height+7u)/8u,1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT|GL_FRAMEBUFFER_BARRIER_BIT);
+    glFinish(); if(ubo){glBindBuffer(GL_UNIFORM_BUFFER,0);glDeleteBuffers(1,&ubo);}
+    return glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
 public:
+  [[nodiscard]] NativeNodeMaskCapabilities native_node_mask_capabilities() const noexcept override { return {true,true,true,true}; }
+
+  DigitorResult generate_hsl_matte(const GpuSourceResource& source,std::int64_t timestamp,
+      const HslQualifierParameters& parameters,GpuMatteResourcePtr& output) noexcept override {
+    output.reset(); auto context=eglGetCurrentContext();
+    if(!source.usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity()))return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto prior=std::static_pointer_cast<GlPreviewOwner>(native_owner(*source.frame)); if(!prior||prior->context!=context)return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto owner=std::make_shared<GlMatteOwner>(); owner->context=context;
+    if(!make_node_texture(owner->texture,GL_R32F,source.width,source.height))return DIGITOR_RESULT_OUT_OF_MEMORY;
+    const auto& v=parameters.values(); GlHslConstants c{}; auto set=[](float(&t)[4],const QualifierRange&r){t[0]=r.low;t[1]=r.high;t[2]=r.softness;t[3]=0;};
+    set(c.hue,v.hue);set(c.saturation,v.saturation);set(c.luminance,v.luminance);c.clean_black=v.clean_black;c.clean_white=v.clean_white;c.invert=v.invert?1u:0u;c.width=source.width;c.height=source.height;
+    const GLuint textures[]{prior->output,owner->texture}; auto status=dispatch_node_compute(NativeNodeKernel::hsl_matte,source.width,source.height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;
+    owner->upstream.push_back(prior);static std::atomic_uint64_t ids{1200000};output=std::make_shared<GpuMatteResource>(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity(),GpuMatteMetadata{source.width,source.height,timestamp,GpuMatteFormat::r32_float},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),backend_context_lifetime());return DIGITOR_RESULT_OK;
+  }
+  DigitorResult generate_power_window_matte(std::uint32_t width,std::uint32_t height,std::int64_t timestamp,const PowerWindowSettings& settings,GpuMatteResourcePtr& output) noexcept override {
+    output.reset();auto context=eglGetCurrentContext();if(!width||!height||context==EGL_NO_CONTEXT)return DIGITOR_RESULT_INVALID_ARGUMENT;auto owner=std::make_shared<GlMatteOwner>();owner->context=context;if(!make_node_texture(owner->texture,GL_R32F,width,height))return DIGITOR_RESULT_OUT_OF_MEMORY;GlWindowConstants c{settings.center_x,settings.center_y,settings.width,settings.height,settings.rotation,settings.feather,settings.opacity,static_cast<std::uint32_t>(settings.shape),settings.invert?1u:0u,width,height,0u};const GLuint textures[]{owner->texture};auto status=dispatch_node_compute(NativeNodeKernel::power_window_matte,width,height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;static std::atomic_uint64_t ids{1300000};output=std::make_shared<GpuMatteResource>(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity(),GpuMatteMetadata{width,height,timestamp,GpuMatteFormat::r32_float},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),backend_context_lifetime());return DIGITOR_RESULT_OK;
+  }
+  DigitorResult multiply_mattes(std::span<const GpuMatteResourcePtr> inputs,std::int64_t timestamp,GpuMatteResourcePtr& output) noexcept override {
+    output.reset();if(inputs.empty())return DIGITOR_RESULT_INVALID_ARGUMENT;if(inputs.size()==1){output=inputs.front();return DIGITOR_RESULT_OK;}GpuMatteResourcePtr current=inputs.front();for(std::size_t i=1;i<inputs.size();++i){auto rhs=inputs[i];if(!current||!rhs||!current->usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||!rhs->usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||current->metadata().width!=rhs->metadata().width||current->metadata().height!=rhs->metadata().height)return DIGITOR_RESULT_INVALID_ARGUMENT;auto a=std::static_pointer_cast<GlMatteOwner>(current->native_owner());auto b=std::static_pointer_cast<GlMatteOwner>(rhs->native_owner());auto owner=std::make_shared<GlMatteOwner>();owner->context=eglGetCurrentContext();if(!make_node_texture(owner->texture,GL_R32F,current->metadata().width,current->metadata().height))return DIGITOR_RESULT_OUT_OF_MEMORY;GlSizeConstants c{current->metadata().width,current->metadata().height};const GLuint textures[]{a->texture,b->texture,owner->texture};auto status=dispatch_node_compute(NativeNodeKernel::matte_multiply,c.width,c.height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;owner->upstream={a,b};static std::atomic_uint64_t ids{1400000};current=std::make_shared<GpuMatteResource>(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity(),GpuMatteMetadata{c.width,c.height,timestamp,GpuMatteFormat::r32_float},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),backend_context_lifetime());}output=std::move(current);return DIGITOR_RESULT_OK;
+  }
+  DigitorResult composite_with_matte(const GpuSourceResource& original,const GpuSourceResource& processed,const GpuMatteResourcePtr& matte,std::int64_t timestamp,ProcessedGpuFramePtr& output) noexcept override {
+    output.reset();auto context=eglGetCurrentContext();if(!original.usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||!processed.usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||!matte||!matte->usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||original.width!=processed.width||original.height!=processed.height||original.width!=matte->metadata().width||original.height!=matte->metadata().height)return DIGITOR_RESULT_INVALID_ARGUMENT;auto a=std::static_pointer_cast<GlPreviewOwner>(native_owner(*original.frame));auto b=std::static_pointer_cast<GlPreviewOwner>(native_owner(*processed.frame));auto m=std::static_pointer_cast<GlMatteOwner>(matte->native_owner());auto owner=std::make_shared<GlPreviewOwner>();owner->context=context;if(!make_node_texture(owner->output,GL_RGBA32F,original.width,original.height)||!make_framebuffer(owner->framebuffer,owner->output,GL_FRAMEBUFFER,"native node composite framebuffer"))return DIGITOR_RESULT_OUT_OF_MEMORY;GlSizeConstants c{original.width,original.height};const GLuint textures[]{a->output,b->output,m->texture,owner->output};auto status=dispatch_node_compute(NativeNodeKernel::masked_composite,c.width,c.height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;auto bundle=std::make_shared<GlUpstreamBundle>();bundle->values={a,b,m};owner->upstream=bundle;static std::atomic_uint64_t ids{1500000};output=std::make_shared<ProcessedGpuFrame>(this,DIGITOR_RENDERER_OPENGL_ES,GpuFrameMetadata{original.width,original.height,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,GpuFrameAlpha::straight,timestamp,original.color_metadata_identity},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),true);bind_frame_context_lifetime(output);return DIGITOR_RESULT_OK;
+  }
+
   GlBackend() {
     i_.backend = DIGITOR_RENDERER_OPENGL_ES;
     copy_bounded(i_.backend_name, "OpenGL ES");
