@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.21)
+project(DigitorWindowsD3D12P010Converter LANGUAGES C CXX)
+enable_testing()
+set(DIGITOR_BUILD_TESTS ON CACHE BOOL "" FORCE)
+set(DIGITOR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(DIGITOR_BUILD_WINDOWS_D3D12_P010_CONVERTER ON CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../.. digitor-engine)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/WindowsD3D12P010Converter.cmake)

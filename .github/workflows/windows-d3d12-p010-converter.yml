@@ -1,0 +1,43 @@
+name: Windows D3D12 P010 Converter
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_d3d12_p010_converter.hpp'
+      - 'src/media/windows_d3d12_p010_converter.cpp'
+      - 'cmake/WindowsD3D12P010Converter.cmake'
+      - 'tests/windows_d3d12_p010_converter_tests.cpp'
+      - 'p010/windows/**'
+      - '.github/workflows/windows-d3d12-p010-converter.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S p010/windows -B build-p010 -A x64
+      - name: Build
+        run: cmake --build build-p010 --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-p010 -C Release --output-on-failure
+
+  gpu-lab:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, digitor-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S p010/windows -B build-p010-gpu -A x64
+      - name: Build
+        run: cmake --build build-p010-gpu --config Release --parallel 2
+      - name: Contract tests
+        run: ctest --test-dir build-p010-gpu -C Release --output-on-failure
+      - name: Hardware qualification contract
+        shell: pwsh
+        run: |
+          if (-not $env:DIGITOR_P010_GPU_QUALIFICATION) {
+            throw 'DIGITOR_P010_GPU_QUALIFICATION command is required on the GPU lab runner'
+          }
+          Invoke-Expression $env:DIGITOR_P010_GPU_QUALIFICATION
