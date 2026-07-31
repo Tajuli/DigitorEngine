@@ -1,0 +1,28 @@
+name: Apply native HSL cleanup
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.head_ref == 'agent/native-hsl-cleanup' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/native-hsl-cleanup
+          fetch-depth: 0
+      - name: Apply scoped patch
+        run: python3 .agent/hsl_cleanup/apply.py
+      - name: Remove applicator files
+        run: rm -rf .agent/hsl_cleanup .github/workflows/apply-native-hsl-cleanup.yml
+      - name: Commit production changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/gpu/native_hsl_qualifier.cpp src/gpu/native_node_shader_contracts.cpp src/gpu/d3d12_backend.cpp src/gpu/vulkan_backend.cpp src/gpu/metal_backend.mm src/gpu/gles_backend.cpp tests/test_hsl_qualifier.cpp .agent .github/workflows
+          git diff --cached --check
+          git commit -m "Implement native HSL blur and denoise cleanup"
+          git push origin HEAD:agent/native-hsl-cleanup
