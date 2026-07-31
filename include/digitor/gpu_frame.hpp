@@ -13,6 +13,9 @@
 namespace digitor {
 class IRenderBackend;
 
+// Shared, address-independent context state. Frames keep only a weak reference:
+// this makes context retirement observable without dereferencing a backend that
+// has already been destroyed.
 class GpuContextLifetime final {
 public:
   using RetirementCallback = std::function<void()>;
@@ -56,7 +59,16 @@ public:
   [[nodiscard]] const GpuFrameMetadata& metadata() const noexcept { return metadata_; }
   [[nodiscard]] DigitorRendererBackend backend() const noexcept { return backend_; }
   [[nodiscard]] std::uint64_t identity() const noexcept { return identity_; }
-  [[nodiscard]] bool validation_readback_supported() const noexcept { return validation_readback_supported_ && static_cast<bool>(validation_readback_); }
+  // This flag describes whether the owning backend supports validation
+  // readback. Legacy backend-owned readback does not require a frame callback.
+  [[nodiscard]] bool validation_readback_supported() const noexcept {
+    return validation_readback_supported_;
+  }
+  // Direct frame readback is a separate, capability-gated path used by the
+  // isolated zero-copy qualification harness.
+  [[nodiscard]] bool direct_validation_readback_supported() const noexcept {
+    return validation_readback_supported_ && static_cast<bool>(validation_readback_);
+  }
   [[nodiscard]] DigitorResult validation_readback(std::vector<float>& out) const noexcept;
   [[nodiscard]] bool context_live() const noexcept;
   void add_context_retirement_callback(
