@@ -1,7 +1,6 @@
 #include "digitor/windows_d3d12_p010_converter.hpp"
 
 #include <atomic>
-#include <cmath>
 #include <mutex>
 #include <new>
 #include <utility>
@@ -21,7 +20,6 @@ namespace digitor {
 namespace {
 WindowsP010GpuConstants constants_for(const WindowsP010ConversionConfig& c) {
   WindowsP010GpuConstants o{};
-  // Rows are Y, Cb and Cr. Inputs are linear RGB plus an implicit constant.
   if (c.matrix == WindowsOutputMatrix::bt2020_ncl) {
     const float m[12]{0.2627f,0.6780f,0.0593f,0.0f,
                      -0.13963f,-0.36037f,0.5f,0.0f,
@@ -61,8 +59,9 @@ struct WindowsD3D12P010Converter::Impl {
   };
   ComPtr<ID3D12Device> device12;
   ComPtr<ID3D12CommandQueue> queue12;
-  ComPtr<ID3D11Device1> device11;
-  ComPtr<ID3D11DeviceContext4> context11;
+  ComPtr<ID3D11Device1> device11_1;
+  ComPtr<ID3D11Device5> device11_5;
+  ComPtr<ID3D11DeviceContext4> context11_4;
   ComPtr<ID3D12Fence> fence12;
   ComPtr<ID3D11Fence> fence11;
   HANDLE fence_handle{};
@@ -88,15 +87,18 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if((i.config.width&1u)||(i.config.height&1u)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     i.device12=static_cast<ID3D12Device*>(i.config.d3d12_device);
     i.queue12=static_cast<ID3D12CommandQueue*>(i.config.command_queue);
-    i.device11=static_cast<ID3D11Device1*>(i.config.d3d11_device);
+    auto* raw11=static_cast<ID3D11Device*>(i.config.d3d11_device);
+    if(FAILED(raw11->QueryInterface(IID_PPV_ARGS(&i.device11_1)))||
+       FAILED(raw11->QueryInterface(IID_PPV_ARGS(&i.device11_5))))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> base_context;
-    i.device11->GetImmediateContext(&base_context);
-    if(FAILED(base_context.As(&i.context11))) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    raw11->GetImmediateContext(&base_context);
+    if(FAILED(base_context.As(&i.context11_4))) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     if(FAILED(i.device12->CreateFence(0,D3D12_FENCE_FLAG_SHARED,IID_PPV_ARGS(&i.fence12))))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     if(FAILED(i.device12->CreateSharedHandle(i.fence12.Get(),nullptr,GENERIC_ALL,nullptr,&i.fence_handle)))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    if(FAILED(i.device11->OpenSharedFence(i.fence_handle,IID_PPV_ARGS(&i.fence11))))
+    if(FAILED(i.device11_5->OpenSharedFence(i.fence_handle,IID_PPV_ARGS(&i.fence11))))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_DEFAULT;
@@ -116,7 +118,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
       HANDLE shared{};
       if(FAILED(i.device12->CreateSharedHandle(slot->d3d12.Get(),nullptr,GENERIC_ALL,nullptr,&shared)))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-      const HRESULT opened=i.device11->OpenSharedResource1(shared,IID_PPV_ARGS(&slot->d3d11));
+      const HRESULT opened=i.device11_1->OpenSharedResource1(shared,IID_PPV_ARGS(&slot->d3d11));
       CloseHandle(shared);
       if(FAILED(opened)) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       i.slots.push_back(std::move(slot));
@@ -156,9 +158,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     const auto result=i.config.gpu_dispatch(input.resource,slot->d3d12.Get(),constants,
                                             i.queue12.Get(),i.fence12.Get(),value);
     if(result!=DIGITOR_RESULT_OK){release_on_error();return result;}
-    // GPU-to-GPU synchronization: D3D11 waits on the shared D3D12 fence. No CPU
-    // staging texture, map, or pixel copy is permitted in this path.
-    i.context11->Wait(i.fence11.Get(),value);
+    i.context11_4->Wait(i.fence11.Get(),value);
     auto lifetime=std::shared_ptr<void>(slot.get(),[slot](void*){
       slot->in_use.store(false,std::memory_order_release);
     });
