@@ -1,5 +1,6 @@
 #pragma once
 #include "digitor/color.hpp"
+#include "digitor/native_media.hpp"
 #include <cstdint>
 #include <list>
 #include <memory>
@@ -11,19 +12,50 @@
 namespace digitor {
 using FrameNumber = std::int64_t;
 struct Rational { std::int32_t numerator{1}, denominator{30}; };
-// Media timestamps and durations use microseconds. Video is always converted to
-// full-resolution, top-down, non-premultiplied RGBA32F in `pixels`.
-enum class PixelFormat { rgba32f, rgba8, bgra8, nv12, yuv420p };
+// Media timestamps and durations use microseconds. A decoded frame may contain
+// either a decoder-owned native GPU surface, CPU RGBA32F pixels, or both. When
+// native_surface is present, renderers must prefer it and must never silently
+// download it to CPU memory.
+enum class PixelFormat { rgba32f, rgba8, bgra8, nv12, yuv420p, p010, yuv420p10 };
 enum class ColorRange { unspecified, limited, full };
 struct ColorMetadata { std::int32_t primaries{}, transfer{}, matrix{}; ColorRange range{ColorRange::unspecified}; };
-struct VideoFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t width{}, height{}; PixelFormat pixel_format{PixelFormat::rgba32f}; ColorMetadata color; std::vector<Color> pixels; };
+struct VideoFrame {
+    FrameNumber number{};
+    std::int64_t pts{}, duration{};
+    std::uint32_t width{}, height{};
+    PixelFormat pixel_format{PixelFormat::rgba32f};
+    ColorMetadata color;
+    NativeMediaSurfacePtr native_surface;
+    std::vector<Color> pixels;
+    [[nodiscard]] bool gpu_resident()const noexcept{return static_cast<bool>(native_surface);}
+    [[nodiscard]] bool cpu_resident()const noexcept{return !pixels.empty();}
+};
 // Audio is interleaved native-endian float PCM in the decoder's reported layout.
 struct AudioFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t sample_rate{48000}, channels{2}; std::uint64_t channel_layout{}; std::vector<float> samples; };
 // `dxva` selects FFmpeg D3D11VA on Windows. Explicit hardware requests are
 // strict: failure is reported and never silently retried in software.
 enum class HardwareDecode { automatic, cpu, dxva, videotoolbox, mediacodec };
-struct DecoderOptions { HardwareDecode hardware{HardwareDecode::automatic}; bool allow_cpu_fallback{true}; std::size_t cache_capacity{16}; };
-struct DecoderInfo { HardwareDecode selected{HardwareDecode::cpu}; bool hardware_accelerated{}; std::string implementation; };
+enum class DecodeOutputMode : std::uint32_t {
+    automatic = 0,
+    cpu_rgba32f = 1,
+    native_gpu_surface = 2
+};
+struct DecoderOptions {
+    HardwareDecode hardware{HardwareDecode::automatic};
+    bool allow_cpu_fallback{true};
+    std::size_t cache_capacity{16};
+    DecodeOutputMode output_mode{DecodeOutputMode::automatic};
+    // When true, failure to expose a compatible decoder surface is an error.
+    // This prevents an accidental av_hwframe_transfer_data/sws_scale round trip.
+    bool require_zero_copy{false};
+};
+struct DecoderInfo {
+    HardwareDecode selected{HardwareDecode::cpu};
+    bool hardware_accelerated{};
+    bool native_surface_output{};
+    NativeMediaHandleType native_handle_type{NativeMediaHandleType::none};
+    std::string implementation;
+};
 
 template<class T> class FrameCache {
 public:
@@ -48,13 +80,14 @@ class VideoDecoder { public:
     virtual void seek(std::int64_t pts_us)=0;
     virtual DecoderInfo info()const=0;
     // Authoritative full-resolution sample access used by qualifier eyedroppers.
-    // Implementations must sample the decoded original frame, never a proxy.
+    // Implementations may perform an explicit one-pixel CPU staging operation,
+    // but must not mutate or replace the native preview/export surface.
     virtual Color sample_pixel(FrameNumber frame,std::uint32_t x,std::uint32_t y) {
         auto decoded=decode(frame);
         if(!decoded)throw std::out_of_range("decoded frame unavailable");
         if(x>=decoded->width||y>=decoded->height)throw std::out_of_range("sample coordinate out of range");
         const auto index=static_cast<std::size_t>(y)*decoded->width+x;
-        if(index>=decoded->pixels.size())throw std::runtime_error("decoded frame has no RGBA32F sample");
+        if(index>=decoded->pixels.size())throw std::runtime_error("decoded frame has no CPU sample; configure an explicit pixel sampler");
         return decoded->pixels[index];
     }
 };
