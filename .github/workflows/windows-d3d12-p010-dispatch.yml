@@ -1,0 +1,35 @@
+name: Windows D3D12 P010 Dispatch
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_d3d12_p010_dispatch.hpp'
+      - 'src/media/windows_d3d12_p010_dispatch.cpp'
+      - 'cmake/WindowsD3D12P010Dispatch.cmake'
+      - 'tests/windows_d3d12_p010_dispatch_tests.cpp'
+      - 'p010_dispatch/windows/**'
+      - '.github/workflows/windows-d3d12-p010-dispatch.yml'
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S p010_dispatch/windows -B build-p010-dispatch -A x64
+      - name: Build
+        run: cmake --build build-p010-dispatch --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-p010-dispatch -C Release --output-on-failure
+
+  gpu-lab:
+    if: ${{ vars.DIGITOR_GPU_LAB_ENABLED == 'true' }}
+    runs-on: [self-hosted, Windows, digitor-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure production dispatch
+        run: cmake -S p010_dispatch/windows -B build-p010-dispatch -A x64
+      - name: Build production dispatch
+        run: cmake --build build-p010-dispatch --config Release --parallel 2
+      - name: Run dispatch qualification
+        run: ctest --test-dir build-p010-dispatch -C Release --output-on-failure
