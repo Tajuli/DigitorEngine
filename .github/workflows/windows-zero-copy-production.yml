@@ -1,0 +1,41 @@
+name: Windows Zero-Copy Production Activation
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_zero_copy_production.hpp'
+      - 'src/media/windows_zero_copy_production.cpp'
+      - 'tests/windows_zero_copy_production_tests.cpp'
+      - 'cmake/WindowsZeroCopyProduction.cmake'
+      - 'production/windows/**'
+      - '.github/workflows/windows-zero-copy-production.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S production/windows -B build-production -A x64
+      - name: Build
+        run: cmake --build build-production --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-production -C Release --output-on-failure
+
+  gpu-lab:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, digitor-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure production activation
+        run: cmake -S production/windows -B build-production-gpu -A x64
+      - name: Build production activation
+        run: cmake --build build-production-gpu --config Release --parallel 2
+      - name: Run activation contract
+        run: ctest --test-dir build-production-gpu -C Release --output-on-failure
+      - name: Require qualification evidence
+        shell: pwsh
+        run: |
+          if (-not (Test-Path env:DIGITOR_WINDOWS_ZERO_COPY_EVIDENCE)) { throw 'DIGITOR_WINDOWS_ZERO_COPY_EVIDENCE is required' }
+          if (-not (Test-Path $env:DIGITOR_WINDOWS_ZERO_COPY_EVIDENCE)) { throw 'Qualification evidence file does not exist' }
