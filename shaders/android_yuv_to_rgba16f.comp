@@ -1,0 +1,24 @@
+#version 450
+layout(local_size_x=16, local_size_y=16) in;
+layout(binding=0) uniform sampler2D yPlane;
+layout(binding=1) uniform sampler2D uvPlane;
+layout(binding=2, rgba16f) writeonly uniform image2D rgbaOut;
+layout(push_constant) uniform Params {
+  mat3 yuvToRgb;
+  vec3 offset;
+  vec3 scale;
+  uint width;
+  uint height;
+  uint bitDepth;
+  uint flags;
+} p;
+void main(){
+  ivec2 xy=ivec2(gl_GlobalInvocationID.xy);
+  if(xy.x>=int(p.width)||xy.y>=int(p.height)) return;
+  vec2 uv=(vec2(xy)+vec2(0.5))/vec2(p.width,p.height);
+  float y=texture(yPlane,uv).r;
+  vec2 c=texture(uvPlane,uv).rg;
+  vec3 normalized=(vec3(y,c)-p.offset)*p.scale;
+  vec3 rgb=p.yuvToRgb*normalized;
+  imageStore(rgbaOut,xy,vec4(rgb,1.0));
+}
