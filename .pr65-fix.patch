@@ -1,0 +1,60 @@
+diff --git a/include/digitor/native_node_mask_backend.hpp b/include/digitor/native_node_mask_backend.hpp
+index 33b8ab6..f55c2a6 100644
+--- a/include/digitor/native_node_mask_backend.hpp
++++ b/include/digitor/native_node_mask_backend.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "digitor/gpu_matte.hpp"
++#include "digitor/native_node_executor.hpp"
+ #include "digitor/production_node_graph.hpp"
+ #include "gpu/gpu_source.hpp"
+ 
+diff --git a/src/gpu/gpu_backend.hpp b/src/gpu/gpu_backend.hpp
+index 5e851a1..80e6958 100644
+--- a/src/gpu/gpu_backend.hpp
++++ b/src/gpu/gpu_backend.hpp
+@@ -108,6 +108,9 @@ protected:
+   }
+   [[nodiscard]] std::uint64_t backend_context_identity() const noexcept { return context_identity_; }
+   [[nodiscard]] const std::shared_ptr<GpuContextLifetime>& backend_context_lifetime() const noexcept { return context_lifetime_; }
++  void bind_frame_context_lifetime(const ProcessedGpuFramePtr& frame) noexcept {
++    if (frame) frame->bind_context_lifetime(context_lifetime_);
++  }
+   virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
+                                                 std::span<Color> destination,
+                                                 const CompiledRgbCurves&) noexcept;
+diff --git a/src/gpu/vulkan_backend.cpp b/src/gpu/vulkan_backend.cpp
+index 9ad01de..432becd 100644
+--- a/src/gpu/vulkan_backend.cpp
++++ b/src/gpu/vulkan_backend.cpp
+@@ -794,7 +794,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend {
+         replace_all(source, "Texture2D<float> Matte : register(t2);",
+                     "[[vk::binding(2,0)]] Texture2D<float> Matte;");
+-        replace_all(source, "RWTexture2D<float4> Output : register(u0);"(u0);",
++        replace_all(source, "RWTexture2D<float4> Output : register(u0);",
+                     "[[vk::binding(3,0)]] RWTexture2D<float4> Output;");
+         break;
+       default:
+@@ -1188,7 +1188,7 @@ public:
+                          original.color_metadata_identity},
+         identities++, std::static_pointer_cast<void>(owner),
+         std::make_shared<std::atomic_bool>(true), true);
+-    output->bind_context_lifetime(backend_context_lifetime());
++    bind_frame_context_lifetime(output);
+     return DIGITOR_RESULT_OK;
+   }
+ 
+diff --git a/src/gpu/d3d12_backend.cpp b/src/gpu/d3d12_backend.cpp
+index 980fe32..74f28f6 100644
+--- a/src/gpu/d3d12_backend.cpp
++++ b/src/gpu/d3d12_backend.cpp
+@@ -806,7 +806,7 @@ public:
+                          original.color_metadata_identity},
+         identities++, std::static_pointer_cast<void>(owner),
+         std::make_shared<std::atomic_bool>(true), true);
+-    output->bind_context_lifetime(backend_context_lifetime());
++    bind_frame_context_lifetime(output);
+     return DIGITOR_RESULT_OK;
+   }
+ 
