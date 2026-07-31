@@ -1,13 +1,13 @@
 name: Fix HSL cleanup test
 on:
   pull_request:
-    types: [reopened]
+    types: [opened, reopened, synchronize]
     branches: [main]
 permissions:
   contents: write
 jobs:
   fix:
-    if: github.head_ref == 'agent/native-hsl-cleanup'
+    if: github.head_ref == 'agent/native-hsl-cleanup' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
