@@ -1,9 +1,9 @@
 name: Apply Real R32F Backend Patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/real-vulkan-d3d12-r32f
+      - main
 
 permissions:
   contents: write
