@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-# Implementation script is uploaded in the next atomic workflow commit.
+# Placeholder: full implementation payload is intentionally omitted from this intermediate commit.
+# The production patch will be committed atomically by the next workflow step.
