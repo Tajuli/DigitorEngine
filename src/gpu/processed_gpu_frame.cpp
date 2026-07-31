@@ -25,10 +25,12 @@ void GpuContextLifetime::retire() noexcept {
 ProcessedGpuFrame::ProcessedGpuFrame(const void* context,
     DigitorRendererBackend backend, GpuFrameMetadata metadata,
     std::uint64_t identity, NativeOwner native,
-    std::shared_ptr<std::atomic_bool> ready, bool validation_readback_supported)
+    std::shared_ptr<std::atomic_bool> ready, bool validation_readback_supported,
+    ValidationReadback validation_readback)
     : context_(context), backend_(backend), metadata_(std::move(metadata)),
-      identity_(identity), native_holder_(std::make_shared<NativeOwner>(std::move(native))), ready_(std::move(ready)),
-      validation_readback_supported_(validation_readback_supported) {}
+      identity_(identity), native_holder_(std::make_shared<NativeOwner>(std::move(native))),
+      ready_(std::move(ready)), validation_readback_supported_(validation_readback_supported),
+      validation_readback_(std::move(validation_readback)) {}
 
 DigitorResult ProcessedGpuFrame::acquire(const void* context,
                                          DigitorRendererBackend consumer) noexcept {
@@ -55,11 +57,18 @@ bool ProcessedGpuFrame::ready() const noexcept {
   return context_live() && ready_ && ready_->load(std::memory_order_acquire);
 }
 
+DigitorResult ProcessedGpuFrame::validation_readback(std::vector<float>& out) const noexcept {
+  out.clear();
+  if (!validation_readback_supported() || !context_live())
+    return DIGITOR_RESULT_UNSUPPORTED;
+  if (!ready()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+  try { return validation_readback_(out); }
+  catch (const std::bad_alloc&) { out.clear(); return DIGITOR_RESULT_OUT_OF_MEMORY; }
+  catch (...) { out.clear(); return DIGITOR_RESULT_INTERNAL_ERROR; }
+}
+
 bool ProcessedGpuFrame::context_live() const noexcept {
   const auto lifetime = context_lifetime_.lock();
-  // Unbound frames are retained for source compatibility with callers that
-  // construct standalone test resources. Backend-produced frames are bound by
-  // IRenderBackend before they are returned.
   return !context_lifetime_bound_ || (lifetime && lifetime->live());
 }
 

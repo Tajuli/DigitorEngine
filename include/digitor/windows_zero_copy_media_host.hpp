@@ -17,6 +17,9 @@ struct WindowsZeroCopyMediaHostOptions {
   bool require_nv12{};
   bool require_p010{};
   bool strict_gpu_first{true};
+  // Qualification-only. Enables guarded D3D12 readback and an independent
+  // FFmpeg software reference decoder. Never enable for preview/export.
+  bool complete_validation{};
 };
 
 struct WindowsZeroCopyMediaHostInfo {
@@ -28,6 +31,7 @@ struct WindowsZeroCopyMediaHostInfo {
   std::uint64_t decoded_frames{};
   bool hardware_decode{};
   bool d3d11va_surface{};
+  bool complete_validation{};
 };
 
 class WindowsZeroCopyMediaHost final {

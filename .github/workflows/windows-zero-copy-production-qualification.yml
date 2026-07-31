@@ -1,0 +1,44 @@
+name: Windows Zero-Copy Production Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      nv12_media:
+        description: Absolute NV12 qualification media path on GPU lab
+        required: true
+      p010_media:
+        description: Absolute P010 qualification media path on GPU lab
+        required: true
+
+jobs:
+  qualify:
+    runs-on: [self-hosted, windows, digitor-gpu-lab]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure qualification project
+        shell: pwsh
+        run: cmake -S qualification/windows -B build-zero-copy-production -A x64
+      - name: Build qualification project
+        shell: pwsh
+        run: cmake --build build-zero-copy-production --config Release --parallel
+      - name: Run contract tests
+        shell: pwsh
+        run: ctest --test-dir build-zero-copy-production -C Release --output-on-failure
+      - name: Run NV12 real-media qualification
+        shell: pwsh
+        run: build-zero-copy-production/Release/digitor_windows_zero_copy_media_cli.exe "${{ inputs.nv12_media }}" nv12 reports/nv12.json
+      - name: Run P010 real-media qualification
+        shell: pwsh
+        run: build-zero-copy-production/Release/digitor_windows_zero_copy_media_cli.exe "${{ inputs.p010_media }}" p010 reports/p010.json
+      - name: Require production-ready reports
+        shell: pwsh
+        run: |
+          $nv12 = Get-Content reports/nv12.json -Raw
+          $p010 = Get-Content reports/p010.json -Raw
+          if ($nv12 -notmatch '"production_ready"\s*:\s*true') { throw 'NV12 production qualification failed' }
+          if ($p010 -notmatch '"production_ready"\s*:\s*true') { throw 'P010 production qualification failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zero-copy-production-reports
+          path: reports/*.json

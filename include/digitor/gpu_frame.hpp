@@ -42,15 +42,15 @@ struct GpuFrameMetadata {
   std::string color_metadata{"linear-rgba"};
 };
 
-// Backend handles never leave this translation-unit boundary. The native owner
-// callback captures the typed RAII object; consumers receive only this object.
 class ProcessedGpuFrame final {
 public:
   using NativeOwner = std::shared_ptr<void>;
+  using ValidationReadback = std::function<DigitorResult(std::vector<float>&)>;
   ProcessedGpuFrame(const void* context, DigitorRendererBackend backend,
                     GpuFrameMetadata metadata, std::uint64_t identity,
                     NativeOwner native, std::shared_ptr<std::atomic_bool> ready,
-                    bool validation_readback_supported);
+                    bool validation_readback_supported,
+                    ValidationReadback validation_readback = {});
 
   [[nodiscard]] DigitorResult acquire(const void* context,
                                       DigitorRendererBackend consumer) noexcept;
@@ -59,7 +59,17 @@ public:
   [[nodiscard]] const GpuFrameMetadata& metadata() const noexcept { return metadata_; }
   [[nodiscard]] DigitorRendererBackend backend() const noexcept { return backend_; }
   [[nodiscard]] std::uint64_t identity() const noexcept { return identity_; }
-  [[nodiscard]] bool validation_readback_supported() const noexcept { return validation_readback_supported_; }
+  // This flag describes whether the owning backend supports validation
+  // readback. Legacy backend-owned readback does not require a frame callback.
+  [[nodiscard]] bool validation_readback_supported() const noexcept {
+    return validation_readback_supported_;
+  }
+  // Direct frame readback is a separate, capability-gated path used by the
+  // isolated zero-copy qualification harness.
+  [[nodiscard]] bool direct_validation_readback_supported() const noexcept {
+    return validation_readback_supported_ && static_cast<bool>(validation_readback_);
+  }
+  [[nodiscard]] DigitorResult validation_readback(std::vector<float>& out) const noexcept;
   [[nodiscard]] bool context_live() const noexcept;
   void add_context_retirement_callback(
       GpuContextLifetime::RetirementCallback callback) const noexcept;
@@ -76,6 +86,7 @@ private:
   std::weak_ptr<GpuContextLifetime> context_lifetime_;
   bool context_lifetime_bound_{};
   bool validation_readback_supported_{};
+  ValidationReadback validation_readback_;
   std::atomic_uint32_t acquisitions_{0};
 };
 
