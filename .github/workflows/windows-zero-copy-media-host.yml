@@ -1,0 +1,38 @@
+name: Windows Zero-Copy Real Media
+
+on:
+  workflow_dispatch:
+    inputs:
+      nv12_media:
+        description: Absolute NV12 qualification media path on runner
+        required: true
+      p010_media:
+        description: Absolute P010 qualification media path on runner
+        required: true
+
+jobs:
+  qualify:
+    runs-on: [self-hosted, Windows, X64, digitor-gpu-lab]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DDIGITOR_BUILD_WINDOWS_ZERO_COPY_MEDIA_HOST=ON -DDIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION=ON
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --target digitor_windows_zero_copy_media
+      - name: Contract tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: NV12 real-media qualification
+        shell: pwsh
+        run: build/Release/digitor_windows_zero_copy_media.exe "${{ inputs.nv12_media }}" nv12-report.json "$env:DIGITOR_D3D12_DEVICE"
+      - name: P010 real-media qualification
+        shell: pwsh
+        run: build/Release/digitor_windows_zero_copy_media.exe "${{ inputs.p010_media }}" p010-report.json "$env:DIGITOR_D3D12_DEVICE"
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zero-copy-real-media-reports
+          path: '*-report.json'
