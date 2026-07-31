@@ -25,10 +25,11 @@ index 5e851a1..80e6958 100644
                                                  std::span<Color> destination,
                                                  const CompiledRgbCurves&) noexcept;
 diff --git a/src/gpu/vulkan_backend.cpp b/src/gpu/vulkan_backend.cpp
-index 9ad01de..432becd 100644
+index 4d4b105..432becd 100644
 --- a/src/gpu/vulkan_backend.cpp
 +++ b/src/gpu/vulkan_backend.cpp
-@@ -794,7 +794,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend {
+@@ -794,7 +794,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend
+                     "[[vk::binding(1,0)]] Texture2D<float4> Processed;");
          replace_all(source, "Texture2D<float> Matte : register(t2);",
                      "[[vk::binding(2,0)]] Texture2D<float> Matte;");
 -        replace_all(source, "RWTexture2D<float4> Output : register(u0);"(u0);",
