@@ -17,13 +17,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode .agent/production-node-renderer-integration/files.tgz.b64 > /tmp/files.tgz
+          cat .agent/production-node-renderer-integration/chunk_* | base64 --decode > /tmp/files.tgz
           echo 'db3234ee75151535db7552eea3e3e7d3c54a1b940ae433072a7b6a6cc9b447df  /tmp/files.tgz' | sha256sum -c -
           tar -xzf /tmp/files.tgz
           rm -rf .agent/production-node-renderer-integration
           rm .github/workflows/apply-production-node-renderer-integration.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/core/engine.hpp src/core/engine.cpp include/digitor/renderer.hpp include/digitor/render_policy.hpp src/render/renderer.cpp src/render/render_policy.cpp tests/test_render_export.cpp .agent/production-node-renderer-integration/files.tgz.b64 .github/workflows/apply-production-node-renderer-integration.yml
+          git add src/core/engine.hpp src/core/engine.cpp include/digitor/renderer.hpp include/digitor/render_policy.hpp src/render/renderer.cpp src/render/render_policy.cpp tests/test_render_export.cpp
+          git add -A .agent/production-node-renderer-integration .github/workflows/apply-production-node-renderer-integration.yml
           git commit -m 'Integrate production node graph into preview and export'
           git push origin HEAD:agent/production-node-renderer-integration
