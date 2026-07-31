@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/gpu_matte.hpp"
+#include "digitor/native_node_executor.hpp"
 #include "digitor/production_node_graph.hpp"
 #include "gpu/gpu_source.hpp"
 

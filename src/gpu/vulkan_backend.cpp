@@ -794,7 +794,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
                     "[[vk::binding(1,0)]] Texture2D<float4> Processed;");
         replace_all(source, "Texture2D<float> Matte : register(t2);",
                     "[[vk::binding(2,0)]] Texture2D<float> Matte;");
-        replace_all(source, "RWTexture2D<float4> Output : register(u0);"(u0);",
+        replace_all(source, "RWTexture2D<float4> Output : register(u0);",
                     "[[vk::binding(3,0)]] RWTexture2D<float4> Output;");
         break;
       default:
@@ -1188,7 +1188,7 @@ public:
                          original.color_metadata_identity},
         identities++, std::static_pointer_cast<void>(owner),
         std::make_shared<std::atomic_bool>(true), true);
-    output->bind_context_lifetime(backend_context_lifetime());
+    bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
   }
 

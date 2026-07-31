@@ -806,7 +806,7 @@ public:
                          original.color_metadata_identity},
         identities++, std::static_pointer_cast<void>(owner),
         std::make_shared<std::atomic_bool>(true), true);
-    output->bind_context_lifetime(backend_context_lifetime());
+    bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
   }
 
