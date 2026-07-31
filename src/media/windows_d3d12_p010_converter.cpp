@@ -17,8 +17,9 @@
 #endif
 
 namespace digitor {
-namespace {
-WindowsP010GpuConstants constants_for(const WindowsP010ConversionConfig& c) {
+
+WindowsP010GpuConstants windows_p010_gpu_constants(
+    const WindowsP010ConversionConfig& c) noexcept {
   WindowsP010GpuConstants o{};
   if (c.matrix == WindowsOutputMatrix::bt2020_ncl) {
     const float m[12]{0.2627f,0.6780f,0.0593f,0.0f,
@@ -43,7 +44,6 @@ WindowsP010GpuConstants constants_for(const WindowsP010ConversionConfig& c) {
   o.transfer=static_cast<std::uint32_t>(c.transfer);
   o.flags=(c.full_range?1u:0u)|(c.preserve_superwhites?2u:0u);
   return o;
-}
 }
 
 struct WindowsD3D12P010Converter::Impl {
@@ -153,7 +153,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
       i.telemetry.diagnostic="P010 surface pool exhausted";return DIGITOR_RESULT_RESOURCE_IN_USE;}
     const auto release_on_error=[&](){slot->in_use.store(false,std::memory_order_release);};
     const auto value=i.sequence.fetch_add(1,std::memory_order_relaxed);
-    const auto constants=constants_for(i.config);
+    const auto constants=windows_p010_gpu_constants(i.config);
     {std::scoped_lock lock(i.mutex);++i.telemetry.submitted;}
     const auto result=i.config.gpu_dispatch(input.resource,slot->d3d12.Get(),constants,
                                             i.queue12.Get(),i.fence12.Get(),value);
