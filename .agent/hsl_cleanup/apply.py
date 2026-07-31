@@ -36,7 +36,7 @@ for path,old,new in specs:
  p=Path(path);s=p.read_text();p.write_text(once(s,old,new,path+' marshal'))
 
 p=Path('src/gpu/native_node_shader_contracts.cpp');s=p.read_text()
-for name in ('kHslHlsl','kHslVk','kHslGles','kHslMsl'):
+for name in ('kHslHlsl','kHslGles','kHslMsl'):
  src=Path(f'.agent/hsl_cleanup/{name}.txt').read_text()
  pat=rf'constexpr std::string_view {name} = R"\((.*?)\)";'
  s,n=re.subn(pat,f'constexpr std::string_view {name} = R"({src})";',s,count=1,flags=re.S)
