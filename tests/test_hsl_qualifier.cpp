@@ -69,11 +69,11 @@ void test_hsl_qualifier() {
   auto cleanup=settings;cleanup.blur=1.0f;
   const auto blurred=HslQualifierParameters::create(cleanup);
   const auto native_blurred=native_hsl_qualifier_parameters(*blurred,7,5);
-  assert(native_blurred.cleanup.w==1.0f && native_blurred.cleanup.z==0.0f);
+  assert(native_blurred.cleanup[3]==1.0f && native_blurred.cleanup[2]==0.0f);
   cleanup.blur=0.0f;cleanup.denoise=0.5f;
   const auto denoised=HslQualifierParameters::create(cleanup);
   const auto native_denoised=native_hsl_qualifier_parameters(*denoised,7,5);
-  assert(native_denoised.cleanup.z==0.5f && native_denoised.cleanup.w==0.0f);
+  assert(native_denoised.cleanup[2]==0.5f && native_denoised.cleanup[3]==0.0f);
 
   HslQualifier legacy;legacy.set_settings(settings);
   std::vector<Color> input{{1,0,0,1},{0,1,0,1}};std::vector<float> matte(2,-1);
