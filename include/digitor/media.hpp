@@ -11,17 +11,47 @@
 namespace digitor {
 using FrameNumber = std::int64_t;
 struct Rational { std::int32_t numerator{1}, denominator{30}; };
-// Media timestamps and durations use microseconds. Video is always converted to
-// full-resolution, top-down, non-premultiplied RGBA32F in `pixels`.
-enum class PixelFormat { rgba32f, rgba8, bgra8, nv12, yuv420p };
+// Media timestamps and durations use microseconds. Video is always exposed as
+// full-resolution, top-down, non-premultiplied RGBA32F in `pixels`. Hardware
+// decoders may retain a native surface internally, but sampling and the public
+// CPU contract remain deterministic and per-pixel addressable.
+enum class PixelFormat { rgba32f, rgba8, bgra8, nv12, p010, yuv420p, yuv420p10 };
 enum class ColorRange { unspecified, limited, full };
 struct ColorMetadata { std::int32_t primaries{}, transfer{}, matrix{}; ColorRange range{ColorRange::unspecified}; };
-struct VideoFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t width{}, height{}; PixelFormat pixel_format{PixelFormat::rgba32f}; ColorMetadata color; std::vector<Color> pixels; };
+struct VideoFrame {
+    FrameNumber number{};
+    std::int64_t pts{}, duration{};
+    std::uint32_t width{}, height{};
+    PixelFormat pixel_format{PixelFormat::rgba32f};
+    ColorMetadata color;
+    // Source precision before conversion to RGBA32F. This is never inferred
+    // from the output vector and is used by qualification to reject accidental
+    // 10-bit-to-8-bit decode paths.
+    std::uint8_t source_bit_depth{8};
+    bool hardware_decoded{};
+    std::vector<Color> pixels;
+};
 // Audio is interleaved native-endian float PCM in the decoder's reported layout.
 struct AudioFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t sample_rate{48000}, channels{2}; std::uint64_t channel_layout{}; std::vector<float> samples; };
+
 enum class HardwareDecode { automatic, cpu, dxva, videotoolbox, mediacodec };
-struct DecoderOptions { HardwareDecode hardware{HardwareDecode::automatic}; bool allow_cpu_fallback{true}; std::size_t cache_capacity{16}; };
-struct DecoderInfo { HardwareDecode selected{HardwareDecode::cpu}; bool hardware_accelerated{}; std::string implementation; };
+struct DecoderOptions {
+    HardwareDecode hardware{HardwareDecode::automatic};
+    bool allow_cpu_fallback{true};
+    std::size_t cache_capacity{16};
+    // Qualification mode rejects a decoded frame if a selected hardware path
+    // returns a software frame without an explicit transfer from the selected
+    // hardware pixel format.
+    bool strict_hardware_path{true};
+};
+struct DecoderInfo {
+    HardwareDecode selected{HardwareDecode::cpu};
+    bool hardware_accelerated{};
+    std::string implementation;
+    std::string device_type;
+    std::string hardware_pixel_format;
+    bool strict_no_silent_fallback{};
+};
 
 template<class T> class FrameCache {
 public:
