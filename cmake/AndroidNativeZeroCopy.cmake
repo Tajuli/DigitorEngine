@@ -1,8 +1,11 @@
 option(DIGITOR_BUILD_ANDROID_NATIVE_ZERO_COPY "Build Android native zero-copy interop" OFF)
 
 if(DIGITOR_BUILD_ANDROID_NATIVE_ZERO_COPY)
-  set(DIGITOR_BUILD_ANDROID_ZERO_COPY ON CACHE BOOL "" FORCE)
+  set(DIGITOR_BUILD_ANDROID_ZERO_COPY_PIPELINE ON CACHE BOOL "" FORCE)
   include(${CMAKE_CURRENT_LIST_DIR}/AndroidZeroCopyPipeline.cmake)
+  if(NOT TARGET digitor_android_zero_copy_pipeline)
+    message(FATAL_ERROR "Android zero-copy pipeline dependency target was not created")
+  endif()
 
   add_library(digitor_android_native_zero_copy STATIC
     ${CMAKE_CURRENT_LIST_DIR}/../src/media/android_native_zero_copy.cpp)
@@ -10,7 +13,7 @@ if(DIGITOR_BUILD_ANDROID_NATIVE_ZERO_COPY)
     ${CMAKE_CURRENT_LIST_DIR}/../include)
   target_compile_features(digitor_android_native_zero_copy PUBLIC cxx_std_20)
   target_link_libraries(digitor_android_native_zero_copy PUBLIC
-    digitor_android_zero_copy)
+    digitor_android_zero_copy_pipeline)
 
   if(ANDROID)
     target_link_libraries(digitor_android_native_zero_copy PUBLIC
