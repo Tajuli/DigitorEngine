@@ -1,0 +1,22 @@
+name: Windows Zero-Copy Runtime Contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64 -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF
+      - name: Build engine
+        run: cmake --build build --config Release --parallel 2
+      - name: Configure runtime contract
+        run: cmake -S qualification/windows/runtime -B runtime-build -A x64
+      - name: Build runtime contract
+        run: cmake --build runtime-build --config Release --parallel 2
+      - name: Test runtime contract
+        run: ctest --test-dir runtime-build -C Release --output-on-failure
