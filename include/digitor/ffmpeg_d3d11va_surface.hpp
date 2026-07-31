@@ -21,11 +21,13 @@ struct FfmpegD3D11vaExtractionResult {
 };
 
 // Extracts an FFmpeg AV_PIX_FMT_D3D11 frame into the existing Windows zero-copy
-// surface contract. `av_frame` must point to AVFrame. The returned lifetime
-// owns an av_frame_ref plus all COM/shared-handle resources required by the
-// importer. No av_hwframe_transfer_data or swscale operation is permitted.
+// surface contract. `av_frame` must point to AVFrame. `timestamp_us` must already
+// be rescaled from the stream time base to microseconds by the decoder. The
+// returned lifetime owns an av_frame_ref plus all COM/shared-handle resources.
+// No av_hwframe_transfer_data or swscale operation is permitted.
 [[nodiscard]] DigitorResult extract_ffmpeg_d3d11va_surface(
     void* av_frame,
+    std::int64_t timestamp_us,
     FfmpegD3D11vaExtractionResult& out) noexcept;
 
 } // namespace digitor
