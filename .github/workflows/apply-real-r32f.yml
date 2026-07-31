@@ -19,8 +19,19 @@ jobs:
           ref: agent/real-vulkan-d3d12-r32f
           fetch-depth: 0
 
-      - name: Apply source patch
-        run: python3 tools/apply_real_r32f_patch.py
+      - name: Recover and apply source patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/apply_real_r32f_patch.py')
+          source = path.read_text()
+          source = source.replace('import gzip\n', 'import gzip\nimport zlib\n')
+          source = source.replace(
+              'patch_bytes = gzip.decompress(base64.b64decode(PATCH_B64))',
+              "raw = base64.b64decode(PATCH_B64)\npatch_bytes = zlib.decompress(raw[10:-8], -zlib.MAX_WBITS)")
+          path.write_text(source)
+          PY
+          python3 tools/apply_real_r32f_patch.py
 
       - name: Commit production sources
         run: |
