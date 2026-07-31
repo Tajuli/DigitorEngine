@@ -350,8 +350,8 @@ struct VkMatteOwner {
 };
 struct VkHslMatteConstants {
   float hue[4], saturation[4], luminance[4];
-  float clean_black, clean_white;
-  std::uint32_t invert, width, height, padding[3];
+  float clean_black, clean_white, denoise, blur;
+  std::uint32_t invert, width, height, padding;
 };
 static_assert(sizeof(VkHslMatteConstants) == 80);
 struct VkWindowConstants {
@@ -1028,6 +1028,8 @@ public:
     set_range(constants.luminance, values.luminance);
     constants.clean_black = values.clean_black;
     constants.clean_white = values.clean_white;
+    constants.denoise = values.denoise;
+    constants.blur = values.blur;
     constants.invert = values.invert ? 1u : 0u;
     constants.width = source.width;
     constants.height = source.height;
