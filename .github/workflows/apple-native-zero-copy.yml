@@ -1,0 +1,25 @@
+name: Apple Native Zero-Copy
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S apple_native_zero_copy/contract -B build-apple-native
+      - name: Build contract target
+        run: cmake --build build-apple-native --target digitor_apple_native_zero_copy_contract_tests --parallel 2
+      - name: Test contract
+        run: ctest --test-dir build-apple-native -R '^digitor_apple_native_zero_copy_contract_tests$' --output-on-failure
+
+  apple-device-lab:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, macOS, digitor-apple-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Qualify CVMetalTextureCache and VideoToolbox path
+        run: ./scripts/run_apple_zero_copy_qualification.sh --native-bindings
