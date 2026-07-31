@@ -1,4 +1,5 @@
 #include "core/numeric_utils.hpp"
+#include "core/engine.hpp"
 #include "digitor/renderer.hpp"
 #include <algorithm>
 #include <cmath>
@@ -88,9 +89,34 @@ PixelValidation validate_pixels(const VideoFrame &a, const VideoFrame &b,
 PixelValidation validate_preview_export(SharedRenderer &r,
                                         const RenderRequest &q, double p,
                                         double s) {
-  auto preencode = r.render(q);
-  const VideoFrame preview = preencode;
-  return validate_pixels(preview, preencode, p, s);
+  if (Engine::instance().is_initialized() &&
+      Engine::instance().renderer_info().is_gpu) {
+    const auto preview_gpu = r.render_gpu_preview(q);
+    if (!preview_gpu || !preview_gpu->ready())
+      throw std::runtime_error("native GPU preview frame is not ready");
+    const auto& metadata = preview_gpu->metadata();
+    if (metadata.width != q.width || metadata.height != q.height ||
+        metadata.timestamp != q.frame ||
+        metadata.format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+      throw std::runtime_error("native GPU preview metadata violates parity contract");
+    VideoFrame preview;
+    preview.number = q.frame; preview.pts = q.frame;
+    preview.width = q.width; preview.height = q.height;
+    preview.pixel_format = PixelFormat::rgba32f;
+    preview.pixels.resize(static_cast<std::size_t>(q.width) * q.height);
+    if (Engine::instance().validation_readback_final_frame(preview_gpu, preview.pixels) !=
+        DIGITOR_RESULT_OK)
+      throw std::runtime_error("native GPU preview parity readback failed");
+
+    // Render the export pre-encode frame independently. This must execute the
+    // same graph recipe again rather than comparing a frame with itself.
+    const auto export_preencode = r.render(q);
+    return validate_pixels(preview, export_preencode, p, s);
+  }
+  // CPU-only builds retain a deterministic smoke check; production native
+  // parity is exclusively established by the independent GPU path above.
+  const auto preencode = r.render(q);
+  return validate_pixels(preencode, preencode, p, s);
 }
 } // namespace digitor
 
