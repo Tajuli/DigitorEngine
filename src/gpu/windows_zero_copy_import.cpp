@@ -1,6 +1,7 @@
 #include "digitor/windows_zero_copy_import.hpp"
 
 #include <new>
+#include <stdexcept>
 #include <utility>
 
 #ifdef _WIN32
@@ -107,9 +108,6 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
     }
     qualification.plane_views_valid = true;
 
-    // The callback records both plane SRVs, the shared NV12/P010-to-linear-RGB
-    // shader, and an RGBA16F UAV. Keeping the retained NativeMediaSurface in the
-    // callback-produced frame owner prevents decoder reuse before GPU completion.
     const auto result = impl_->converter(resource.Get(), surface, out);
     if (result != DIGITOR_RESULT_OK) {
       out.reset();
