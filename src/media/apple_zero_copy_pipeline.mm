@@ -42,8 +42,8 @@ DigitorResult AppleZeroCopyPipeline::initialize() noexcept {
   } catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
 }
 
-static DigitorResult process_frame(AppleZeroCopyPipeline::Impl& i,
-                                   std::int64_t timestamp_us,
+template <typename ImplT>
+static DigitorResult process_frame(ImplT& i, std::int64_t timestamp_us,
                                    bool preview, bool encode) noexcept {
   if (!i.initialized || i.telemetry.quarantined) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   const auto start = std::chrono::steady_clock::now();
