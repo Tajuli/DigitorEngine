@@ -154,7 +154,7 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   }
 
 
-  struct GlHslConstants { float hue[4],saturation[4],luminance[4],clean_black,clean_white; std::uint32_t invert,width,height,padding[3]; };
+  struct GlHslConstants { float hue[4],saturation[4],luminance[4],clean_black,clean_white,denoise,blur; std::uint32_t invert,width,height,padding; };
   struct GlWindowConstants { float center_x,center_y,width_f,height_f,rotation,feather,opacity; std::uint32_t shape,invert,width,height,padding; };
   struct GlSizeConstants { std::uint32_t width,height; };
 
@@ -220,7 +220,7 @@ public:
     auto owner=std::make_shared<GlMatteOwner>(); owner->context=context;
     if(!make_node_texture(owner->texture,GL_R32F,source.width,source.height))return DIGITOR_RESULT_OUT_OF_MEMORY;
     const auto& v=parameters.values(); GlHslConstants c{}; auto set=[](float(&t)[4],const QualifierRange&r){t[0]=r.low;t[1]=r.high;t[2]=r.softness;t[3]=0;};
-    set(c.hue,v.hue);set(c.saturation,v.saturation);set(c.luminance,v.luminance);c.clean_black=v.clean_black;c.clean_white=v.clean_white;c.invert=v.invert?1u:0u;c.width=source.width;c.height=source.height;
+    set(c.hue,v.hue);set(c.saturation,v.saturation);set(c.luminance,v.luminance);c.clean_black=v.clean_black;c.clean_white=v.clean_white;c.denoise=v.denoise;c.blur=v.blur;c.invert=v.invert?1u:0u;c.width=source.width;c.height=source.height;
     const GLuint textures[]{prior->output,owner->texture}; auto status=dispatch_node_compute(NativeNodeKernel::hsl_matte,source.width,source.height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;
     owner->upstream.push_back(prior);static std::atomic_uint64_t ids{1200000};output=std::make_shared<GpuMatteResource>(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity(),GpuMatteMetadata{source.width,source.height,timestamp,GpuMatteFormat::r32_float},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),backend_context_lifetime());return DIGITOR_RESULT_OK;
   }
