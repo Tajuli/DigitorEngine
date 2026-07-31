@@ -1,1 +1,0 @@
-Reopen the draft pull request to run the one-shot applicator.

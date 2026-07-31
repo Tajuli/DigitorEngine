@@ -90,7 +90,7 @@ struct PreviewSourceConfiguration {
 };
 
 struct ColorGraphConfiguration {
-  static constexpr std::uint32_t schema_version = 2;
+  static constexpr std::uint32_t schema_version = 3;
   ColorOperationOrder operation_order{ColorOperationOrder::PrimaryWheelsThenLogWheelsThenRgbCurves};
   // Preserve the v4.8 aggregate-initialization field order. New v4.9 fields
   // are appended so existing callers and tests remain source-compatible.
@@ -102,6 +102,8 @@ struct ColorGraphConfiguration {
   bool rgb_curves_enabled{};
   std::string log_wheels_serialization;
   bool log_wheels_enabled{};
+  std::string production_node_graph_identity;
+  bool production_node_graph_enabled{};
   [[nodiscard]] std::string identity() const;
   [[nodiscard]] std::vector<std::string> operation_sequence() const;
 };
