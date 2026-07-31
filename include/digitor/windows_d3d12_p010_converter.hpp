@@ -3,6 +3,7 @@
 #include "digitor/windows_zero_copy_concrete_bindings.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -19,10 +20,28 @@ enum class WindowsOutputTransfer : std::uint32_t {
   hlg = 3,
 };
 
+struct WindowsP010GpuConstants {
+  float rgb_to_yuv[12]{};
+  float y_offset{};
+  float y_scale{};
+  float uv_offset{};
+  float uv_scale{};
+  float mastering_peak_nits{100.0f};
+  std::uint32_t width{};
+  std::uint32_t height{};
+  std::uint32_t transfer{};
+  std::uint32_t flags{};
+};
+
+using WindowsP010GpuDispatch = std::function<DigitorResult(
+    void* rgba16f_resource, void* p010_resource,
+    const WindowsP010GpuConstants&, void* command_queue,
+    void* completion_fence, std::uint64_t completion_value)>;
+
 struct WindowsP010ConversionConfig {
   void* d3d12_device{};       // ID3D12Device*
   void* command_queue{};      // ID3D12CommandQueue*
-  void* d3d11_device{};       // ID3D11Device* used by Media Foundation
+  void* d3d11_device{};       // ID3D11Device1* used by Media Foundation
   std::uint32_t width{};
   std::uint32_t height{};
   std::uint32_t pool_size{6};
@@ -31,6 +50,7 @@ struct WindowsP010ConversionConfig {
   bool full_range{};
   bool preserve_superwhites{true};
   float mastering_peak_nits{100.0f};
+  WindowsP010GpuDispatch gpu_dispatch;
 };
 
 struct WindowsP010ConverterTelemetry {
