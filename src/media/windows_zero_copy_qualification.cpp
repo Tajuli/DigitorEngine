@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <numeric>
 #include <sstream>
@@ -74,7 +75,7 @@ DigitorResult WindowsZeroCopyQualificationRunner::run(
     }
     r.nv12_passed=saw_nv12;r.p010_passed=saw_p010;
     r.pixel_accuracy_passed=std::all_of(r.frames.begin(),r.frames.end(),[&](const auto& f){return f.max_abs_error<=t.max_abs_error&&f.mean_abs_error<=t.max_mean_abs_error&&f.metadata_match&&f.p010_precision_preserved;});
-    r.preview_export_identity_passed=std::all_of(r.frames.begin(),r.frames.end(),[](const auto& f){return f.gpu_hash==f.reference_hash||f.max_abs_error>0.0;});
+    r.preview_export_identity_passed=std::all_of(r.frames.begin(),r.frames.end(),[](const auto& f){return f.gpu_hash==f.reference_hash;});
     r.average_fps=elapsed_ms>0?1000.0*double(t.measured_frames)/elapsed_ms:0;r.p95_gpu_ms=percentile95(gpu_times);
     r.realtime_4k_passed=r.average_fps>=t.min_realtime_fps_4k;
     for(std::uint32_t i=0;i<t.stress_iterations;++i){void* f{};std::int64_t ts{};if(frame_provider_(i%total,f,ts)!=DIGITOR_RESULT_OK)break;ProcessedGpuFramePtr out;if(decoder_.decode(f,ts,out,nullptr)!=DIGITOR_RESULT_OK)break;if(i+1==t.stress_iterations)r.stress_passed=true;}
