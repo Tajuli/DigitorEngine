@@ -102,7 +102,7 @@ PixelValidation validate_preview_export(SharedRenderer &r,
     VideoFrame preview;
     preview.number = q.frame; preview.pts = q.frame;
     preview.width = q.width; preview.height = q.height;
-    preview.pixel_format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+    preview.pixel_format = PixelFormat::rgba32f;
     preview.pixels.resize(static_cast<std::size_t>(q.width) * q.height);
     if (Engine::instance().validation_readback_final_frame(preview_gpu, preview.pixels) !=
         DIGITOR_RESULT_OK)
