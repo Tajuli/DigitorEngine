@@ -61,7 +61,7 @@ DigitorResult WindowsD3D12P010Dispatch::initialize() noexcept {
     if(FAILED(hr)) {
       std::scoped_lock lock(i.mutex);++i.telemetry.shader_compile_failures;
       i.telemetry.diagnostic=errors?std::string(static_cast<const char*>(errors->GetBufferPointer()),errors->GetBufferSize()):"P010 shader compilation failed";
-      return DIGITOR_RESULT_SHADER_COMPILATION_FAILED;
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
 
     D3D12_DESCRIPTOR_RANGE ranges[2]{};
