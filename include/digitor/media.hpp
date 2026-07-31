@@ -19,6 +19,8 @@ struct ColorMetadata { std::int32_t primaries{}, transfer{}, matrix{}; ColorRang
 struct VideoFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t width{}, height{}; PixelFormat pixel_format{PixelFormat::rgba32f}; ColorMetadata color; std::vector<Color> pixels; };
 // Audio is interleaved native-endian float PCM in the decoder's reported layout.
 struct AudioFrame { FrameNumber number{}; std::int64_t pts{}, duration{}; std::uint32_t sample_rate{48000}, channels{2}; std::uint64_t channel_layout{}; std::vector<float> samples; };
+// `dxva` selects FFmpeg D3D11VA on Windows. Explicit hardware requests are
+// strict: failure is reported and never silently retried in software.
 enum class HardwareDecode { automatic, cpu, dxva, videotoolbox, mediacodec };
 struct DecoderOptions { HardwareDecode hardware{HardwareDecode::automatic}; bool allow_cpu_fallback{true}; std::size_t cache_capacity{16}; };
 struct DecoderInfo { HardwareDecode selected{HardwareDecode::cpu}; bool hardware_accelerated{}; std::string implementation; };
@@ -60,4 +62,6 @@ class AudioDecoder { public: virtual ~AudioDecoder()=default; virtual std::share
 std::unique_ptr<VideoDecoder> open_video_decoder(const std::string& path, DecoderOptions options={});
 std::unique_ptr<AudioDecoder> open_audio_decoder(const std::string& path, DecoderOptions options={});
 bool ffmpeg_available() noexcept;
+HardwareDecode preferred_hardware_decode() noexcept;
+const char* hardware_decode_name(HardwareDecode) noexcept;
 }
