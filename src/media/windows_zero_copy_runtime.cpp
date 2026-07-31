@@ -52,7 +52,10 @@ struct WindowsZeroCopyRuntime::Impl {
     const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-begin).count();
     if(elapsed>config.frame_timeout_ms)return fail(WindowsZeroCopyFailureClass::timeout,"zero-copy frame exceeded runtime deadline",DIGITOR_RESULT_BACKEND_UNAVAILABLE);
     if(result!=DIGITOR_RESULT_OK||!frame)return fail(WindowsZeroCopyFailureClass::decoder_failure,"zero-copy decoder did not return a GPU frame",result==DIGITOR_RESULT_OK?DIGITOR_RESULT_INTERNAL_ERROR:result);
-    if(frame->metadata().timestamp!=timestamp){std::scoped_lock lock(mutex);++telemetry.timestamp_mismatches;return fail(WindowsZeroCopyFailureClass::timestamp_mismatch,"zero-copy timestamp mismatch",DIGITOR_RESULT_INTERNAL_ERROR);}
+    if(frame->metadata().timestamp!=timestamp){
+      {std::scoped_lock lock(mutex);++telemetry.timestamp_mismatches;}
+      return fail(WindowsZeroCopyFailureClass::timestamp_mismatch,"zero-copy timestamp mismatch",DIGITOR_RESULT_INTERNAL_ERROR);
+    }
     if(frame->backend()!=DIGITOR_RENDERER_D3D12||!frame->ready())return fail(WindowsZeroCopyFailureClass::integrity_failure,"zero-copy frame is not a ready D3D12 resource",DIGITOR_RESULT_INTERNAL_ERROR);
     result=consume?consume(frame):DIGITOR_RESULT_NOT_INITIALIZED;
     if(result!=DIGITOR_RESULT_OK)return fail(WindowsZeroCopyFailureClass::integrity_failure,"GPU frame consumer rejected zero-copy output",result);
