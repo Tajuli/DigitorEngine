@@ -151,9 +151,6 @@ DigitorResult AndroidNativeZeroCopyBindings::import_vulkan(
     AHardwareBuffer_release(static_cast<AHardwareBuffer*>(p));
   });
 
-  // VkImage/VkDeviceMemory creation is deliberately delegated to the
-  // application-owned Vulkan backend because queue ownership, allocator,
-  // YCbCr conversion and command-pool policy must match that backend.
   out.backend = AndroidZeroCopyBackend::vulkan;
   out.image = frame.hardware_buffer;
   out.image_view = reinterpret_cast<void*>(static_cast<std::uintptr_t>(
@@ -260,8 +257,8 @@ DigitorResult AndroidNativeZeroCopyBindings::convert(
   else if (image.backend == AndroidZeroCopyBackend::opengl_es && i.gles_dispatch)
     result = i.gles_dispatch(image, out);
   if (result != DIGITOR_RESULT_OK || !out || !out->ready() ||
-      out->pixel_format() != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
-      out->timestamp_us() != image.timestamp_us) {
+      out->metadata().format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+      out->metadata().timestamp != image.timestamp_us) {
     std::scoped_lock lock(i.mutex);
     ++i.telemetry.failures;
     i.telemetry.diagnostic = "Android GPU conversion did not produce matching RGBA16F frame";
@@ -276,7 +273,7 @@ DigitorResult AndroidNativeZeroCopyBindings::convert(
 DigitorResult AndroidNativeZeroCopyBindings::submit_encoder(
     const ProcessedGpuFramePtr& frame) noexcept {
   if (!frame || !frame->ready() ||
-      frame->pixel_format() != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT)
+      frame->metadata().format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto result = impl_->encoder_submit(frame);
   std::scoped_lock lock(impl_->mutex);
