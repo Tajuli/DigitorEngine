@@ -24,6 +24,8 @@ public:
 
 private:
   struct Impl;
+  explicit WindowsD3D12YuvConverter(std::shared_ptr<Impl> initialized) noexcept
+      : impl_(std::move(initialized)) {}
   std::shared_ptr<Impl> impl_;
 };
 
