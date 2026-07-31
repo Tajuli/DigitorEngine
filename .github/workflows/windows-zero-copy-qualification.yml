@@ -1,0 +1,39 @@
+name: Windows Zero-Copy Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      media_root:
+        description: Absolute path on the self-hosted runner containing nv12.mp4 and p010.mp4
+        required: true
+        type: string
+
+jobs:
+  qualify:
+    runs-on: [self-hosted, Windows, X64, digitor-gpu-lab]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure qualification build
+        shell: pwsh
+        run: >-
+          cmake -S . -B build-zero-copy -A x64
+          -DDIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION=ON
+          -DDIGITOR_HAS_FFMPEG=ON
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-zero-copy --config Release --target digitor_zero_copy_qualify digitor_zero_copy_qualification_contract
+      - name: Contract tests
+        shell: pwsh
+        run: ctest --test-dir build-zero-copy -C Release --output-on-failure -R windows_zero_copy_qualification_contract
+      - name: Qualify NV12
+        shell: pwsh
+        run: build-zero-copy/Release/digitor_zero_copy_qualify.exe "${{ inputs.media_root }}/nv12.mp4" nv12-report.json
+      - name: Qualify P010
+        shell: pwsh
+        run: build-zero-copy/Release/digitor_zero_copy_qualify.exe "${{ inputs.media_root }}/p010.mp4" p010-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-zero-copy-qualification
+          path: '*-report.json'
