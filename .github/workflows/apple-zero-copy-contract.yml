@@ -1,0 +1,25 @@
+name: Apple Zero-Copy Contract
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S apple_zero_copy/contract -B build-apple-zero-copy
+      - name: Build
+        run: cmake --build build-apple-zero-copy --parallel 2
+      - name: Test
+        run: ctest --test-dir build-apple-zero-copy --output-on-failure
+
+  apple-device-lab:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, macOS, digitor-apple-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Apple zero-copy qualification
+        run: ./scripts/run_apple_zero_copy_qualification.sh
