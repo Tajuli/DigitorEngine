@@ -9,6 +9,8 @@
 #include "core/string_utils.hpp"
 #include "gpu/gpu_backend.hpp"
 #include "gpu/native_pipeline_cache.hpp"
+#include "digitor/native_node_mask_backend.hpp"
+#include "digitor/native_node_shader_contracts.hpp"
 
 namespace digitor {
 namespace {
@@ -68,6 +70,16 @@ struct MetalPreviewOwner {
       --metal_live.owners;
   }
 };
+struct MetalMatteOwner {
+  id<MTLTexture> texture;
+  std::vector<std::shared_ptr<void>> upstream;
+  bool tracked{};
+  ~MetalMatteOwner() {
+    if (texture) --metal_live.textures;
+    if (tracked) --metal_live.owners;
+  }
+};
+struct MetalUpstreamBundle { std::vector<std::shared_ptr<void>> values; };
 struct MetalConsumerOwner {
   id<MTLDevice> device;
   id<MTLTexture> texture;
@@ -115,7 +127,7 @@ void release_native(void *object) noexcept {
   }
 }
 
-class MetalBackend final : public IRenderBackend {
+class MetalBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   struct LocalCounts {
     std::int64_t textures{}, buffers{}, queues{}, commands{}, encoders{};
     ~LocalCounts() {
@@ -324,7 +336,241 @@ class MetalBackend final : public IRenderBackend {
     }
   }
 
+
+  struct MetalHslConstants {
+    float hue[4], saturation[4], luminance[4];
+    float clean_black, clean_white;
+    std::uint32_t invert, width, height, padding[3];
+  };
+  static_assert(sizeof(MetalHslConstants) == 80);
+  struct MetalWindowConstants {
+    float center_x, center_y, width_f, height_f;
+    float rotation, feather, opacity;
+    std::uint32_t shape, invert, width, height, padding;
+  };
+  static_assert(sizeof(MetalWindowConstants) == 48);
+  struct MetalSizeConstants { std::uint32_t width, height; };
+
+  id<MTLTexture> make_node_texture(MTLPixelFormat format,
+                                   std::uint32_t width,
+                                   std::uint32_t height,
+                                   LocalCounts& local) noexcept {
+    MTLTextureDescriptor* d = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:format width:width height:height
+                                  mipmapped:NO];
+    d.storageMode = MTLStorageModePrivate;
+    d.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+    return make_texture(GpuFailurePoint::OutputResourceCreation,
+                        "newTextureWithDescriptor(native node)", d, local);
+  }
+
+  DigitorResult dispatch_node_msl(NativeNodeKernel kernel,
+                                  std::uint32_t width,
+                                  std::uint32_t height,
+                                  std::span<id<MTLTexture> const> textures,
+                                  const void* constants,
+                                  std::size_t constant_bytes) noexcept {
+    const auto contract = native_node_pipeline_contract(DIGITOR_RENDERER_METAL, kernel);
+    if (!validate_native_node_pipeline_contract(contract) ||
+        !constants || constant_bytes != contract.constant_bytes)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    @autoreleasepool {
+      @try {
+        NSString* source = [[NSString alloc]
+            initWithBytes:contract.source.data()
+                   length:contract.source.size()
+                 encoding:NSUTF8StringEncoding];
+        NSString* entry = [[NSString alloc]
+            initWithBytes:contract.entry_point.data()
+                   length:contract.entry_point.size()
+                 encoding:NSUTF8StringEncoding];
+        NSError* error = nil;
+        id<MTLLibrary> library = [device_ newLibraryWithSource:source options:nil error:&error];
+        id<MTLFunction> function = library ? [library newFunctionWithName:entry] : nil;
+        id<MTLComputePipelineState> pipeline = function
+            ? [device_ newComputePipelineStateWithFunction:function error:&error]
+            : nil;
+        if (!pipeline) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        LocalCounts local;
+        id<MTLCommandQueue> queue = make_queue("newCommandQueue(native node)", local);
+        id<MTLCommandBuffer> command = queue
+            ? make_command(queue, "commandBuffer(native node)", local) : nil;
+        id<MTLComputeCommandEncoder> encoder = command
+            ? make_compute_encoder(command, local) : nil;
+        MetalEncoderGuard guard(encoder);
+        if (!queue || !command || !encoder)
+          return abort_encoder(guard, DIGITOR_RESULT_BACKEND_UNAVAILABLE);
+        [encoder setComputePipelineState:pipeline];
+        for (NSUInteger i = 0; i < textures.size(); ++i)
+          [encoder setTexture:textures[i] atIndex:i];
+        [encoder setBytes:constants length:constant_bytes atIndex:0];
+        [encoder dispatchThreads:MTLSizeMake(width, height, 1)
+            threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+        if (!end_encoder(guard, "native node endEncoding") ||
+            !commit_and_wait(command))
+          return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        return DIGITOR_RESULT_OK;
+      } @catch (...) {
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+    }
+  }
+
 public:
+  [[nodiscard]] NativeNodeMaskCapabilities
+  native_node_mask_capabilities() const noexcept override {
+    return {true, true, true, true};
+  }
+
+  DigitorResult generate_hsl_matte(
+      const GpuSourceResource& source, std::int64_t timestamp,
+      const HslQualifierParameters& parameters,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!source.usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto prior = std::static_pointer_cast<MetalPreviewOwner>(native_owner(*source.frame));
+    if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    LocalCounts local;
+    id<MTLTexture> texture = make_node_texture(MTLPixelFormatR32Float,
+                                                source.width, source.height, local);
+    if (!texture) return DIGITOR_RESULT_OUT_OF_MEMORY;
+    const auto& values = parameters.values();
+    MetalHslConstants c{};
+    const auto set_range = [](float (&target)[4], const QualifierRange& range) {
+      target[0] = range.low; target[1] = range.high;
+      target[2] = range.softness; target[3] = 0.0f;
+    };
+    set_range(c.hue, values.hue); set_range(c.saturation, values.saturation);
+    set_range(c.luminance, values.luminance);
+    c.clean_black = values.clean_black; c.clean_white = values.clean_white;
+    c.invert = values.invert ? 1u : 0u; c.width = source.width; c.height = source.height;
+    const id<MTLTexture> textures[]{prior->output, texture};
+    auto status = dispatch_node_msl(NativeNodeKernel::hsl_matte, source.width,
+                                    source.height, textures, &c, sizeof(c));
+    if (status != DIGITOR_RESULT_OK) return status;
+    auto owner = std::make_shared<MetalMatteOwner>();
+    owner->texture = texture; owner->upstream.push_back(prior); owner->tracked = true;
+    ++metal_live.owners; --local.textures;
+    static std::atomic_uint64_t ids{800000};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_METAL, backend_context_identity(),
+        GpuMatteMetadata{source.width, source.height, timestamp, GpuMatteFormat::r32_float},
+        ids++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult generate_power_window_matte(
+      std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+      const PowerWindowSettings& settings,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!width || !height) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    LocalCounts local;
+    id<MTLTexture> texture = make_node_texture(MTLPixelFormatR32Float, width, height, local);
+    if (!texture) return DIGITOR_RESULT_OUT_OF_MEMORY;
+    MetalWindowConstants c{settings.center_x, settings.center_y, settings.width,
+      settings.height, settings.rotation, settings.feather, settings.opacity,
+      static_cast<std::uint32_t>(settings.shape), settings.invert ? 1u : 0u,
+      width, height, 0u};
+    const id<MTLTexture> textures[]{texture};
+    auto status = dispatch_node_msl(NativeNodeKernel::power_window_matte,
+                                    width, height, textures, &c, sizeof(c));
+    if (status != DIGITOR_RESULT_OK) return status;
+    auto owner = std::make_shared<MetalMatteOwner>();
+    owner->texture = texture; owner->tracked = true; ++metal_live.owners; --local.textures;
+    static std::atomic_uint64_t ids{900000};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_METAL, backend_context_identity(),
+        GpuMatteMetadata{width, height, timestamp, GpuMatteFormat::r32_float},
+        ids++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult multiply_mattes(
+      std::span<const GpuMatteResourcePtr> inputs, std::int64_t timestamp,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (inputs.empty()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (inputs.size() == 1) { output = inputs.front(); return DIGITOR_RESULT_OK; }
+    GpuMatteResourcePtr current = inputs.front();
+    for (std::size_t i = 1; i < inputs.size(); ++i) {
+      const auto& rhs = inputs[i];
+      if (!current || !rhs ||
+          !current->usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()) ||
+          !rhs->usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()) ||
+          current->metadata().width != rhs->metadata().width ||
+          current->metadata().height != rhs->metadata().height)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      auto left = std::static_pointer_cast<MetalMatteOwner>(current->native_owner());
+      auto right = std::static_pointer_cast<MetalMatteOwner>(rhs->native_owner());
+      LocalCounts local;
+      id<MTLTexture> texture = make_node_texture(MTLPixelFormatR32Float,
+          current->metadata().width, current->metadata().height, local);
+      if (!texture) return DIGITOR_RESULT_OUT_OF_MEMORY;
+      MetalSizeConstants c{current->metadata().width, current->metadata().height};
+      const id<MTLTexture> textures[]{left->texture, right->texture, texture};
+      auto status = dispatch_node_msl(NativeNodeKernel::matte_multiply,
+          c.width, c.height, textures, &c, sizeof(c));
+      if (status != DIGITOR_RESULT_OK) return status;
+      auto owner = std::make_shared<MetalMatteOwner>();
+      owner->texture = texture; owner->upstream = {left, right}; owner->tracked = true;
+      ++metal_live.owners; --local.textures;
+      static std::atomic_uint64_t ids{1000000};
+      current = std::make_shared<GpuMatteResource>(
+          DIGITOR_RENDERER_METAL, backend_context_identity(),
+          GpuMatteMetadata{c.width, c.height, timestamp, GpuMatteFormat::r32_float},
+          ids++, std::static_pointer_cast<void>(owner),
+          std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    }
+    output = std::move(current);
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult composite_with_matte(
+      const GpuSourceResource& original, const GpuSourceResource& processed,
+      const GpuMatteResourcePtr& matte, std::int64_t timestamp,
+      ProcessedGpuFramePtr& output) noexcept override {
+    output.reset();
+    if (!original.usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()) ||
+        !processed.usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()) ||
+        !matte || !matte->usable_by(DIGITOR_RENDERER_METAL, backend_context_identity()) ||
+        original.width != processed.width || original.height != processed.height ||
+        original.width != matte->metadata().width || original.height != matte->metadata().height)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto a = std::static_pointer_cast<MetalPreviewOwner>(native_owner(*original.frame));
+    auto b = std::static_pointer_cast<MetalPreviewOwner>(native_owner(*processed.frame));
+    auto m = std::static_pointer_cast<MetalMatteOwner>(matte->native_owner());
+    LocalCounts local;
+    id<MTLTexture> result = make_node_texture(MTLPixelFormatRGBA32Float,
+                                               original.width, original.height, local);
+    if (!result) return DIGITOR_RESULT_OUT_OF_MEMORY;
+    MetalSizeConstants c{original.width, original.height};
+    const id<MTLTexture> textures[]{a->output, b->output, m->texture, result};
+    auto status = dispatch_node_msl(NativeNodeKernel::masked_composite,
+                                    c.width, c.height, textures, &c, sizeof(c));
+    if (status != DIGITOR_RESULT_OK) return status;
+    auto bundle = std::make_shared<MetalUpstreamBundle>();
+    bundle->values = {a, b, m};
+    auto owner = std::make_shared<MetalPreviewOwner>();
+    owner->output = result; owner->preview = nil; owner->queue = nil;
+    owner->upstream = bundle; owner->textures = 1; owner->tracked = true;
+    ++metal_live.owners; --local.textures;
+    static std::atomic_uint64_t ids{1100000};
+    output = std::make_shared<ProcessedGpuFrame>(
+        this, DIGITOR_RENDERER_METAL,
+        GpuFrameMetadata{original.width, original.height,
+                         DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight, timestamp,
+                         original.color_metadata_identity},
+        ids++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), true);
+    bind_frame_context_lifetime(output);
+    return DIGITOR_RESULT_OK;
+  }
+
   explicit MetalBackend(id<MTLDevice> device) : device_(device) {
     info_.backend = DIGITOR_RENDERER_METAL;
     copy_bounded(info_.backend_name, "Metal");
