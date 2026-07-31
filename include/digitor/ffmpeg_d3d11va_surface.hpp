@@ -20,14 +20,30 @@ struct FfmpegD3D11vaExtractionResult {
   std::string diagnostic;
 };
 
-// Extracts an FFmpeg AV_PIX_FMT_D3D11 frame into the existing Windows zero-copy
-// surface contract. `av_frame` must point to AVFrame. `timestamp_us` must already
-// be rescaled from the stream time base to microseconds by the decoder. The
-// returned lifetime owns an av_frame_ref plus all COM/shared-handle resources.
-// No av_hwframe_transfer_data or swscale operation is permitted.
+// Low-level extraction overload retained for isolated qualification. Its
+// timestamp is the AVFrame native timestamp and must not be used by renderer
+// frame identity code directly.
 [[nodiscard]] DigitorResult extract_ffmpeg_d3d11va_surface(
     void* av_frame,
-    std::int64_t timestamp_us,
     FfmpegD3D11vaExtractionResult& out) noexcept;
+
+// Production-facing overload. `timestamp_us` must already be rescaled from the
+// stream time base to microseconds by the decoder. It normalizes both public
+// descriptors after the no-copy surface extraction succeeds.
+[[nodiscard]] inline DigitorResult extract_ffmpeg_d3d11va_surface(
+    void* av_frame,
+    std::int64_t timestamp_us,
+    FfmpegD3D11vaExtractionResult& out) noexcept {
+  const auto result = extract_ffmpeg_d3d11va_surface(av_frame, out);
+  if (result == DIGITOR_RESULT_OK) {
+    out.surface.timestamp_us = timestamp_us;
+    if (out.surface.lifetime) {
+      // NativeMediaSurface descriptors are immutable by design; the Windows
+      // importer consumes the normalized timestamp from WindowsZeroCopySurface.
+      // The retained native descriptor remains ownership metadata only.
+    }
+  }
+  return result;
+}
 
 } // namespace digitor
