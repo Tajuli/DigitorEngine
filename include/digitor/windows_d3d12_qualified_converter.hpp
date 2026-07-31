@@ -6,9 +6,6 @@
 
 namespace digitor {
 
-// Qualification-only converter. It uses the production YUV constants contract,
-// writes RGBA16F on GPU, and attaches a guarded D3D12 readback callback to the
-// resulting ProcessedGpuFrame. It is never selected by default playback.
 class WindowsD3D12QualifiedConverter final {
 public:
   explicit WindowsD3D12QualifiedConverter(void* d3d12_device);
@@ -23,6 +20,8 @@ public:
                                       ProcessedGpuFramePtr&) noexcept;
 private:
   struct Impl;
+  explicit WindowsD3D12QualifiedConverter(std::shared_ptr<Impl> impl)
+      : impl_(std::move(impl)) {}
   std::shared_ptr<Impl> impl_;
 };
 
