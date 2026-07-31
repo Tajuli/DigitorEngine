@@ -1,0 +1,23 @@
+name: Android Zero-Copy Contract
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S android_zero_copy/contract -B build-android-zero-copy -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-android-zero-copy --parallel 2
+      - name: Test
+        run: ctest --test-dir build-android-zero-copy --output-on-failure
+  android-device-lab:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, android, digitor-gpu-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Android zero-copy qualification
+        run: ./scripts/run_android_zero_copy_qualification.sh
