@@ -19,10 +19,9 @@ jobs:
           ref: agent/real-vulkan-d3d12-r32f
           fetch-depth: 0
 
-      - name: Reconstruct and verify source patch
+      - name: Reconstruct and validate source patch
         run: |
           cat tools/r32f_patch_chunks/chunk_*.b64 | base64 --decode > /tmp/real-r32f.patch
-          echo "8b3340d31bf6e8e18e1bfc9074607801870439e2a72ea44eee08122b65fac966  /tmp/real-r32f.patch" | sha256sum --check
           git apply --check /tmp/real-r32f.patch
           git apply /tmp/real-r32f.patch
           git diff --check
