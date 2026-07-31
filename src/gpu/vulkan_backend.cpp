@@ -9,6 +9,9 @@
 #include "gpu/native_log_wheels.hpp"
 #include "gpu/native_hsl_qualifier.hpp"
 #include "gpu/native_rgb_curves.hpp"
+#include "digitor/native_node_mask_backend.hpp"
+#include "digitor/native_node_platform_factories.hpp"
+#include "digitor/native_node_shader_contracts.hpp"
 #include "primary_wheels_shader.hpp"
 #include "log_wheels_shader.hpp"
 #include "hsl_qualifier_shader.hpp"
@@ -323,6 +326,43 @@ struct VkPreviewOwner {
         tracked_vkFreeMemory(device, m, nullptr);
   }
 };
+
+struct VkMatteOwner {
+  VkDevice device{};
+  VkImage image{};
+  VkDeviceMemory memory{};
+  VkImageView view{};
+  VkImageLayout layout{VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+  std::vector<std::shared_ptr<void>> upstream;
+  std::weak_ptr<std::atomic_bool> device_live;
+  ~VkMatteOwner() {
+    auto live = device_live.lock();
+    if (device && live && live->load(std::memory_order_acquire)) {
+      if (view) tracked_vkDestroyImageView(device, view, nullptr);
+      if (image) tracked_vkDestroyImage(device, image, nullptr);
+      if (memory) tracked_vkFreeMemory(device, memory, nullptr);
+    } else if (device) {
+      vk_live.views -= view ? 1 : 0;
+      vk_live.images -= image ? 1 : 0;
+      vk_live.memory -= memory ? 1 : 0;
+    }
+  }
+};
+struct VkHslMatteConstants {
+  float hue[4], saturation[4], luminance[4];
+  float clean_black, clean_white;
+  std::uint32_t invert, width, height, padding[3];
+};
+static_assert(sizeof(VkHslMatteConstants) == 80);
+struct VkWindowConstants {
+  float center_x, center_y, width_f, height_f;
+  float rotation, feather, opacity;
+  std::uint32_t shape, invert, width, height, padding;
+};
+static_assert(sizeof(VkWindowConstants) == 48);
+struct VkSizeConstants { std::uint32_t width, height; };
+static_assert(sizeof(VkSizeConstants) == 8);
+
 struct VkConsumerOwner {
   VkDevice device{};
   VkImage image{};
@@ -369,7 +409,7 @@ struct VkPipelineOwner {
       tracked_vkDestroyDescriptorSetLayout(device, descriptors, nullptr);
   }
 };
-class VulkanBackend final : public IRenderBackend {
+class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   VkInstance in_{};
   VkPhysicalDevice ph_{};
   VkDevice d_{};
@@ -708,7 +748,450 @@ class VulkanBackend final : public IRenderBackend {
     }
   }
 
+
+  struct NodeTexture {
+    VkImage image{};
+    VkImageView view{};
+    VkImageLayout* layout{};
+    bool output{};
+  };
+
+  static void replace_all(std::string& value, std::string_view from,
+                          std::string_view to) {
+    std::size_t position = 0;
+    while ((position = value.find(from, position)) != std::string::npos) {
+      value.replace(position, from.size(), to);
+      position += to.size();
+    }
+  }
+
+  std::string vulkan_node_hlsl(NativeNodeKernel kernel) const {
+    auto source = std::string(native_node_pipeline_contract(
+        DIGITOR_RENDERER_D3D12, kernel).source);
+    switch (kernel) {
+      case NativeNodeKernel::hsl_matte:
+        replace_all(source, "Texture2D<float4> Source : register(t0);",
+                    "[[vk::binding(0,0)]] Texture2D<float4> Source;");
+        replace_all(source, "RWTexture2D<float> Matte : register(u0);",
+                    "[[vk::binding(1,0)]] RWTexture2D<float> Matte;");
+        break;
+      case NativeNodeKernel::power_window_matte:
+        replace_all(source, "RWTexture2D<float> Matte : register(u0);",
+                    "[[vk::binding(0,0)]] RWTexture2D<float> Matte;");
+        break;
+      case NativeNodeKernel::matte_multiply:
+        replace_all(source, "Texture2D<float> A : register(t0);",
+                    "[[vk::binding(0,0)]] Texture2D<float> A;");
+        replace_all(source, "Texture2D<float> B : register(t1);",
+                    "[[vk::binding(1,0)]] Texture2D<float> B;");
+        replace_all(source, "RWTexture2D<float> Output : register(u0);",
+                    "[[vk::binding(2,0)]] RWTexture2D<float> Output;");
+        break;
+      case NativeNodeKernel::masked_composite:
+        replace_all(source, "Texture2D<float4> Original : register(t0);",
+                    "[[vk::binding(0,0)]] Texture2D<float4> Original;");
+        replace_all(source, "Texture2D<float4> Processed : register(t1);",
+                    "[[vk::binding(1,0)]] Texture2D<float4> Processed;");
+        replace_all(source, "Texture2D<float> Matte : register(t2);",
+                    "[[vk::binding(2,0)]] Texture2D<float> Matte;");
+        replace_all(source, "RWTexture2D<float4> Output : register(u0);"(u0);",
+                    "[[vk::binding(3,0)]] RWTexture2D<float4> Output;");
+        break;
+      default:
+        break;
+    }
+    replace_all(source, "cbuffer Params : register(b0)",
+                "[[vk::push_constant]] cbuffer Params");
+    return source;
+  }
+
+  DigitorResult create_node_image(std::uint32_t width, std::uint32_t height,
+                                  VkFormat format, VkImage& image,
+                                  VkDeviceMemory& memory,
+                                  VkImageView& view) noexcept {
+    VkImageCreateInfo create_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    create_info.imageType = VK_IMAGE_TYPE_2D;
+    create_info.extent = {width, height, 1};
+    create_info.mipLevels = create_info.arrayLayers = 1;
+    create_info.format = format;
+    create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    create_info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (allocation_stage(GpuFailurePoint::OutputResourceCreation,
+                         "vkCreateImage(native node)") != VK_SUCCESS ||
+        tracked_vkCreateImage(d_, &create_info, nullptr, &image) != VK_SUCCESS)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(d_, image, &requirements);
+    const auto memory_type = mem(requirements.memoryTypeBits,
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memory_type;
+    if (memory_type == UINT32_MAX ||
+        allocation_stage(GpuFailurePoint::OutputMemoryAllocation,
+                         "vkAllocateMemory(native node)") != VK_SUCCESS ||
+        tracked_vkAllocateMemory(d_, &allocation, nullptr, &memory) !=
+            VK_SUCCESS ||
+        injected_vk_result(GpuFailurePoint::OutputMemoryBinding,
+                           "vkBindImageMemory(native node)") != VK_SUCCESS ||
+        vkBindImageMemory(d_, image, memory, 0) != VK_SUCCESS)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    if (create_image_view(&view_info, &view) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult dispatch_node_kernel(
+      NativeNodeKernel kernel, std::uint32_t width, std::uint32_t height,
+      std::span<const NodeTexture> textures, const void* constants,
+      std::size_t constant_bytes) noexcept {
+    const auto contract = native_node_pipeline_contract(
+        DIGITOR_RENDERER_VULKAN, kernel);
+    if (!validate_native_node_pipeline_contract(contract) || !constants ||
+        constant_bytes != contract.constant_bytes)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    ShaderCompileRequest request{
+        .source = vulkan_node_hlsl(kernel),
+        .entry_point = "main",
+        .source_name = "native_node_mask.hlsl",
+        .target_profile = "cs_6_0",
+        .stage = ShaderStage::compute,
+        .backend = ShaderBackend::vulkan,
+        .macros = {},
+        .include_roots = {},
+        .specialization_constants = {},
+        .optimization = ShaderOptimization::performance,
+        .debug_info = false};
+    const auto compiled_shader = vulkan_shader(request);
+    if (!compiled_shader) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    NativeNodeShaderBinary binary;
+    binary.format = NativeNodeBinaryFormat::spirv;
+    binary.bytes = compiled_shader.binary;
+    const auto prepared = prepare_native_node_pipeline(
+        DIGITOR_RENDERER_VULKAN, kernel, width, height);
+    binary.contract_hash = prepared.contract_hash;
+
+    NativeNodeBackendPipelineHandle pipeline{};
+    NativeNodePlatformFactoryContext pipeline_context{};
+    pipeline_context.device = reinterpret_cast<std::uintptr_t>(d_);
+    std::string diagnostic;
+    if (!create_vulkan_native_node_pipeline(pipeline_context, prepared, binary,
+                                             pipeline, diagnostic))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkDescriptorPool descriptor_pool{};
+    VkCommandBuffer command{};
+    auto cleanup = [&] {
+      if (command) tracked_vkFreeCommandBuffers(d_, pool_, 1, &command);
+      if (descriptor_pool)
+        tracked_vkDestroyDescriptorPool(d_, descriptor_pool, nullptr);
+      destroy_vulkan_native_node_pipeline(pipeline_context, pipeline);
+    };
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                   static_cast<std::uint32_t>(textures.size())};
+    VkDescriptorPoolCreateInfo pool_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.maxSets = 1;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    if (create_descriptor_pool(&pool_info, &descriptor_pool) != VK_SUCCESS) {
+      cleanup();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    VkCommandBufferAllocateInfo allocation{
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    allocation.commandPool = pool_;
+    allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocation.commandBufferCount = 1;
+    if (allocate_command_buffers(&allocation, &command) != VK_SUCCESS) {
+      cleanup();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    if (begin_command_buffer(command, &begin) != VK_SUCCESS) {
+      cleanup();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    auto transition = [&](NodeTexture texture, VkImageLayout next,
+                          VkAccessFlags destination_access) {
+      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+      barrier.oldLayout = texture.layout ? *texture.layout
+                                         : VK_IMAGE_LAYOUT_UNDEFINED;
+      barrier.newLayout = next;
+      barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      barrier.srcAccessMask = barrier.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                  ? 0
+                                  : VK_ACCESS_SHADER_READ_BIT |
+                                        VK_ACCESS_SHADER_WRITE_BIT;
+      barrier.dstAccessMask = destination_access;
+      barrier.image = texture.image;
+      barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+      vkCmdPipelineBarrier(command,
+                           barrier.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                               ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                               : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                           0, nullptr, 1, &barrier);
+      if (texture.layout) *texture.layout = next;
+    };
+    for (const auto& texture : textures)
+      transition(texture, VK_IMAGE_LAYOUT_GENERAL,
+                 texture.output ? VK_ACCESS_SHADER_WRITE_BIT
+                                : VK_ACCESS_SHADER_READ_BIT);
+
+    NativeNodeDispatchResources resources;
+    resources.kernel = kernel;
+    resources.constants.resize(constant_bytes);
+    std::memcpy(resources.constants.data(), constants, constant_bytes);
+    std::uint32_t texture_index = 0;
+    for (std::uint32_t i = 0; i < contract.binding_count; ++i) {
+      if (contract.bindings[i].kind == NativeNodeBindingKind::constants)
+        continue;
+      const auto& texture = textures[texture_index++];
+      resources.textures.push_back(
+          {contract.bindings[i].binding,
+           reinterpret_cast<std::uintptr_t>(texture.view), width, height});
+    }
+    NativeNodePlatformFactoryContext dispatch_context{};
+    dispatch_context.device = reinterpret_cast<std::uintptr_t>(d_);
+    dispatch_context.command_context =
+        reinterpret_cast<std::uintptr_t>(command);
+    dispatch_context.descriptor_context =
+        reinterpret_cast<std::uintptr_t>(descriptor_pool);
+    if (!record_vulkan_native_node_dispatch(
+            dispatch_context, pipeline, prepared.geometry, resources,
+            diagnostic)) {
+      cleanup();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    for (const auto& texture : textures)
+      transition(texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 VK_ACCESS_SHADER_READ_BIT);
+    if (end_command_buffer(command) != VK_SUCCESS) {
+      cleanup();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    auto result = queue_submit(&submit);
+    if (result == VK_SUCCESS) result = queue_wait_idle();
+    cleanup();
+    return result == VK_SUCCESS ? DIGITOR_RESULT_OK
+                                : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
 public:
+  [[nodiscard]] NativeNodeMaskCapabilities
+  native_node_mask_capabilities() const noexcept override {
+    return {true, true, true, true};
+  }
+
+  DigitorResult generate_hsl_matte(
+      const GpuSourceResource& source, std::int64_t timestamp,
+      const HslQualifierParameters& parameters,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!source.usable_by(DIGITOR_RENDERER_VULKAN,
+                          backend_context_identity()))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto prior = std::static_pointer_cast<VkPreviewOwner>(
+        native_owner(*source.frame));
+    if (!prior || !prior->output || !prior->output_view)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto owner = std::make_shared<VkMatteOwner>();
+    owner->device = d_;
+    owner->device_live = device_live_;
+    if (create_node_image(source.width, source.height, VK_FORMAT_R32_SFLOAT,
+                          owner->image, owner->memory, owner->view) !=
+        DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    owner->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    owner->upstream.push_back(prior);
+    const auto& values = parameters.values();
+    VkHslMatteConstants constants{};
+    const auto set_range = [](float (&target)[4], const QualifierRange& range) {
+      target[0] = range.low; target[1] = range.high;
+      target[2] = range.softness; target[3] = 0.0f;
+    };
+    set_range(constants.hue, values.hue);
+    set_range(constants.saturation, values.saturation);
+    set_range(constants.luminance, values.luminance);
+    constants.clean_black = values.clean_black;
+    constants.clean_white = values.clean_white;
+    constants.invert = values.invert ? 1u : 0u;
+    constants.width = source.width;
+    constants.height = source.height;
+    const NodeTexture textures[]{
+        {prior->output, prior->output_view, &prior->output_layout, false},
+        {owner->image, owner->view, &owner->layout, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::hsl_matte, source.width, source.height, textures,
+        &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    static std::atomic_uint64_t identities{400000};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_VULKAN, backend_context_identity(),
+        GpuMatteMetadata{source.width, source.height, timestamp,
+                         GpuMatteFormat::r32_float},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult generate_power_window_matte(
+      std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+      const PowerWindowSettings& settings,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!width || !height || !d_) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto owner = std::make_shared<VkMatteOwner>();
+    owner->device = d_;
+    owner->device_live = device_live_;
+    if (create_node_image(width, height, VK_FORMAT_R32_SFLOAT, owner->image,
+                          owner->memory, owner->view) != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    owner->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkWindowConstants constants{
+        settings.center_x, settings.center_y, settings.width, settings.height,
+        settings.rotation, settings.feather, settings.opacity,
+        static_cast<std::uint32_t>(settings.shape), settings.invert ? 1u : 0u,
+        width, height, 0u};
+    const NodeTexture textures[]{
+        {owner->image, owner->view, &owner->layout, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::power_window_matte, width, height, textures,
+        &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    static std::atomic_uint64_t identities{500000};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_VULKAN, backend_context_identity(),
+        GpuMatteMetadata{width, height, timestamp, GpuMatteFormat::r32_float},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult multiply_mattes(
+      std::span<const GpuMatteResourcePtr> inputs, std::int64_t timestamp,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (inputs.empty()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (inputs.size() == 1) { output = inputs.front(); return DIGITOR_RESULT_OK; }
+    GpuMatteResourcePtr current = inputs.front();
+    for (std::size_t index = 1; index < inputs.size(); ++index) {
+      const auto& rhs = inputs[index];
+      if (!current || !rhs ||
+          !current->usable_by(DIGITOR_RENDERER_VULKAN,
+                              backend_context_identity()) ||
+          !rhs->usable_by(DIGITOR_RENDERER_VULKAN,
+                          backend_context_identity()) ||
+          current->metadata().width != rhs->metadata().width ||
+          current->metadata().height != rhs->metadata().height)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      auto left = std::static_pointer_cast<VkMatteOwner>(
+          current->native_owner());
+      auto right = std::static_pointer_cast<VkMatteOwner>(rhs->native_owner());
+      auto owner = std::make_shared<VkMatteOwner>();
+      owner->device = d_;
+      owner->device_live = device_live_;
+      if (create_node_image(current->metadata().width,
+                            current->metadata().height, VK_FORMAT_R32_SFLOAT,
+                            owner->image, owner->memory, owner->view) !=
+          DIGITOR_RESULT_OK)
+        return DIGITOR_RESULT_OUT_OF_MEMORY;
+      owner->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+      owner->upstream = {left, right};
+      VkSizeConstants constants{current->metadata().width,
+                                current->metadata().height};
+      const NodeTexture textures[]{
+          {left->image, left->view, &left->layout, false},
+          {right->image, right->view, &right->layout, false},
+          {owner->image, owner->view, &owner->layout, true}};
+      const auto status = dispatch_node_kernel(
+          NativeNodeKernel::matte_multiply, constants.width, constants.height,
+          textures, &constants, sizeof(constants));
+      if (status != DIGITOR_RESULT_OK) return status;
+      static std::atomic_uint64_t identities{600000};
+      current = std::make_shared<GpuMatteResource>(
+          DIGITOR_RENDERER_VULKAN, backend_context_identity(),
+          GpuMatteMetadata{constants.width, constants.height, timestamp,
+                           GpuMatteFormat::r32_float},
+          identities++, std::static_pointer_cast<void>(owner),
+          std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    }
+    output = std::move(current);
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult composite_with_matte(
+      const GpuSourceResource& original, const GpuSourceResource& processed,
+      const GpuMatteResourcePtr& matte, std::int64_t timestamp,
+      ProcessedGpuFramePtr& output) noexcept override {
+    output.reset();
+    if (!original.usable_by(DIGITOR_RENDERER_VULKAN,
+                            backend_context_identity()) ||
+        !processed.usable_by(DIGITOR_RENDERER_VULKAN,
+                             backend_context_identity()) ||
+        !matte || !matte->usable_by(DIGITOR_RENDERER_VULKAN,
+                                    backend_context_identity()) ||
+        original.width != processed.width || original.height != processed.height ||
+        original.width != matte->metadata().width ||
+        original.height != matte->metadata().height)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto original_owner = std::static_pointer_cast<VkPreviewOwner>(
+        native_owner(*original.frame));
+    auto processed_owner = std::static_pointer_cast<VkPreviewOwner>(
+        native_owner(*processed.frame));
+    auto matte_owner = std::static_pointer_cast<VkMatteOwner>(
+        matte->native_owner());
+    auto owner = std::make_shared<VkPreviewOwner>();
+    owner->device = d_;
+    owner->device_live = device_live_;
+    if (create_node_image(original.width, original.height,
+                          VK_FORMAT_R32G32B32A32_SFLOAT, owner->output,
+                          owner->output_memory, owner->output_view) !=
+        DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    owner->output_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    owner->upstream = std::make_shared<std::vector<std::shared_ptr<void>>>(
+        std::initializer_list<std::shared_ptr<void>>{original_owner,
+                                                     processed_owner,
+                                                     matte_owner});
+    VkSizeConstants constants{original.width, original.height};
+    const NodeTexture textures[]{
+        {original_owner->output, original_owner->output_view,
+         &original_owner->output_layout, false},
+        {processed_owner->output, processed_owner->output_view,
+         &processed_owner->output_layout, false},
+        {matte_owner->image, matte_owner->view, &matte_owner->layout, false},
+        {owner->output, owner->output_view, &owner->output_layout, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::masked_composite, original.width, original.height,
+        textures, &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    static std::atomic_uint64_t identities{700000};
+    output = std::make_shared<ProcessedGpuFrame>(
+        this, DIGITOR_RENDERER_VULKAN,
+        GpuFrameMetadata{original.width, original.height,
+                         DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight, timestamp,
+                         original.color_metadata_identity},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), true);
+    output->bind_context_lifetime(backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
   VulkanBackend(VkInstance in, VkPhysicalDevice ph, VkDevice d, uint32_t family)
       : in_(in), ph_(ph), d_(d), family_(family) {
     vkGetPhysicalDeviceMemoryProperties(ph_, &mp_);
