@@ -25,6 +25,8 @@
 #include "gpu/native_log_wheels.hpp"
 #include "gpu/native_hsl_qualifier.hpp"
 #include "gpu/native_rgb_curves.hpp"
+#include "digitor/native_node_mask_backend.hpp"
+#include "digitor/native_node_shader_contracts.hpp"
 #include "primary_wheels_shader.hpp"
 #include "log_wheels_shader.hpp"
 #include "hsl_qualifier_shader.hpp"
@@ -105,6 +107,36 @@ struct D3DPreviewOwner {
       --d3d_live.owners;
   }
 };
+
+struct D3DMatteOwner {
+  ComPtr<ID3D12Resource> texture;
+  D3D12_RESOURCE_STATES state{D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+  std::vector<std::shared_ptr<void>> upstream;
+  std::int64_t tracked_resources{};
+  ~D3DMatteOwner() { d3d_live.resources -= tracked_resources; }
+};
+struct D3DNodePipeline {
+  ComPtr<ID3DBlob> shader;
+  ComPtr<ID3D12RootSignature> root;
+  ComPtr<ID3D12PipelineState> pipeline;
+  bool tracked{};
+  ~D3DNodePipeline() { if (tracked) d3d_live.pipelines -= 2; }
+};
+struct D3DHslMatteConstants {
+  float hue[4], saturation[4], luminance[4];
+  float clean_black, clean_white;
+  std::uint32_t invert, width, height, padding[3];
+};
+static_assert(sizeof(D3DHslMatteConstants) == 80);
+struct D3DWindowConstants {
+  float center_x, center_y, width_f, height_f;
+  float rotation, feather, opacity;
+  std::uint32_t shape, invert, width, height, padding;
+};
+static_assert(sizeof(D3DWindowConstants) == 48);
+struct D3DSizeConstants { std::uint32_t width, height; };
+static_assert(sizeof(D3DSizeConstants) == 8);
+
 struct D3DConsumerOwner {
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12Resource> destination;
@@ -215,7 +247,7 @@ void copy_tight_rgba_row(DXGI_FORMAT source_format, const std::uint8_t *source,
   }
 }
 
-class D3DBackend final : public IRenderBackend {
+class D3DBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   struct LocalCounts {
     std::int64_t resources{}, heaps{}, views{};
     ~LocalCounts() {
@@ -391,7 +423,393 @@ class D3DBackend final : public IRenderBackend {
     return S_OK;
   }
 
+
+  struct NodeTexture {
+    ID3D12Resource* resource{};
+    DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
+    bool output{};
+  };
+
+  std::shared_ptr<D3DNodePipeline> create_node_pipeline(
+      NativeNodeKernel kernel) noexcept {
+    const auto contract = native_node_pipeline_contract(
+        DIGITOR_RENDERER_D3D12, kernel);
+    if (!validate_native_node_pipeline_contract(contract)) return {};
+    auto result = std::make_shared<D3DNodePipeline>();
+    ComPtr<ID3DBlob> errors;
+    if (FAILED(D3DCompile(contract.source.data(), contract.source.size(),
+                          "native_node.hlsl", nullptr, nullptr,
+                          contract.entry_point.data(), "cs_5_1",
+                          D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                          result->shader.ReleaseAndGetAddressOf(),
+                          errors.ReleaseAndGetAddressOf())))
+      return {};
+
+    D3D12_ROOT_PARAMETER parameters[5]{};
+    D3D12_DESCRIPTOR_RANGE ranges[4]{};
+    std::uint32_t range_count = 0;
+    std::uint32_t srv_register = 0;
+    std::uint32_t uav_register = 0;
+    for (std::uint32_t i = 0; i < contract.binding_count; ++i) {
+      const auto& binding = contract.bindings[i];
+      auto& parameter = parameters[i];
+      parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+      if (binding.kind == NativeNodeBindingKind::constants) {
+        parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        parameter.Constants.ShaderRegister = 0;
+        parameter.Constants.Num32BitValues = contract.constant_bytes / 4u;
+        continue;
+      }
+      auto& range = ranges[range_count++];
+      const bool output = binding.kind == NativeNodeBindingKind::storage_output;
+      range.RangeType = output ? D3D12_DESCRIPTOR_RANGE_TYPE_UAV
+                               : D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+      range.NumDescriptors = 1;
+      range.BaseShaderRegister = output ? uav_register++ : srv_register++;
+      parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+      parameter.DescriptorTable.NumDescriptorRanges = 1;
+      parameter.DescriptorTable.pDescriptorRanges = &range;
+    }
+    D3D12_ROOT_SIGNATURE_DESC description{};
+    description.NumParameters = contract.binding_count;
+    description.pParameters = parameters;
+    ComPtr<ID3DBlob> serialized;
+    if (FAILED(D3D12SerializeRootSignature(
+            &description, D3D_ROOT_SIGNATURE_VERSION_1,
+            serialized.ReleaseAndGetAddressOf(),
+            errors.ReleaseAndGetAddressOf())))
+      return {};
+    if (FAILED(device_->CreateRootSignature(
+            0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+            IID_PPV_ARGS(&result->root))))
+      return {};
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline_description{};
+    pipeline_description.pRootSignature = result->root.Get();
+    pipeline_description.CS = {result->shader->GetBufferPointer(),
+                               result->shader->GetBufferSize()};
+    if (FAILED(device_->CreateComputePipelineState(
+            &pipeline_description, IID_PPV_ARGS(&result->pipeline))))
+      return {};
+    d3d_live.pipelines += 2;
+    result->tracked = true;
+    return result;
+  }
+
+  DigitorResult dispatch_node_kernel(
+      NativeNodeKernel kernel, std::uint32_t width, std::uint32_t height,
+      std::span<const NodeTexture> textures, const void* constants,
+      std::size_t constant_bytes) noexcept {
+    const auto contract = native_node_pipeline_contract(
+        DIGITOR_RENDERER_D3D12, kernel);
+    if (!validate_native_node_pipeline_contract(contract) ||
+        constant_bytes != contract.constant_bytes || !constants)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto pipeline = create_node_pipeline(kernel);
+    if (!pipeline) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    std::uint32_t descriptor_count = 0;
+    for (std::uint32_t i = 0; i < contract.binding_count; ++i)
+      if (contract.bindings[i].kind != NativeNodeBindingKind::constants)
+        ++descriptor_count;
+    if (textures.size() != descriptor_count)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+    LocalCounts local;
+    D3D12_DESCRIPTOR_HEAP_DESC heap_description{
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, descriptor_count,
+        D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};
+    ComPtr<ID3D12DescriptorHeap> heap;
+    if (FAILED(create_heap(&heap_description, heap, local)))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
+    const auto stride = device_->GetDescriptorHandleIncrementSize(
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    for (const auto& texture : textures) {
+      if (!texture.resource || texture.format == DXGI_FORMAT_UNKNOWN)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      if (texture.output) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC view{};
+        view.Format = texture.format;
+        view.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        if (!create_uav(texture.resource, &view, cpu, local))
+          return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      } else {
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format = texture.format;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MipLevels = 1;
+        if (!create_srv(GpuFailurePoint::GpuSourceShaderResourceViewCreation,
+                        texture.resource, &view, cpu,
+                        "CreateShaderResourceView(native node)", local))
+          return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+      cpu.ptr += stride;
+    }
+
+    if (!prepare_commands(pipeline->pipeline.Get()))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    ID3D12DescriptorHeap* heaps[]{heap.Get()};
+    list_->SetDescriptorHeaps(1, heaps);
+    list_->SetComputeRootSignature(pipeline->root.Get());
+    list_->SetPipelineState(pipeline->pipeline.Get());
+    auto gpu = heap->GetGPUDescriptorHandleForHeapStart();
+    std::uint32_t texture_index = 0;
+    for (std::uint32_t root_index = 0; root_index < contract.binding_count;
+         ++root_index) {
+      if (contract.bindings[root_index].kind ==
+          NativeNodeBindingKind::constants) {
+        list_->SetComputeRoot32BitConstants(
+            root_index, static_cast<UINT>(constant_bytes / 4u), constants, 0);
+      } else {
+        D3D12_GPU_DESCRIPTOR_HANDLE handle = gpu;
+        handle.ptr += static_cast<UINT64>(texture_index++) * stride;
+        list_->SetComputeRootDescriptorTable(root_index, handle);
+      }
+    }
+    list_->Dispatch((width + 7u) / 8u, (height + 7u) / 8u, 1);
+    for (const auto& texture : textures) {
+      if (!texture.output) continue;
+      D3D12_RESOURCE_BARRIER barrier{};
+      barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      barrier.Transition = {texture.resource, 0,
+                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+      list_->ResourceBarrier(1, &barrier);
+    }
+    if (FAILED(close_commands()) || FAILED(execute_commands()))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    return signal_and_wait();
+  }
+
+  DigitorResult create_node_texture(std::uint32_t width, std::uint32_t height,
+                                    DXGI_FORMAT format,
+                                    ComPtr<ID3D12Resource>& texture,
+                                    LocalCounts& local) noexcept {
+    D3D12_HEAP_PROPERTIES heap{};
+    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC description{};
+    description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    description.Width = width;
+    description.Height = height;
+    description.DepthOrArraySize = 1;
+    description.MipLevels = 1;
+    description.Format = format;
+    description.SampleDesc.Count = 1;
+    description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    description.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    const auto hr = create_resource(
+        GpuFailurePoint::OutputResourceCreation,
+        "CreateCommittedResource(native node texture)", &heap,
+        D3D12_HEAP_FLAG_NONE, &description,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, texture, local);
+    return result(hr);
+  }
+
 public:
+  [[nodiscard]] NativeNodeMaskCapabilities
+  native_node_mask_capabilities() const noexcept override {
+    return {true, true, true, true};
+  }
+
+  DigitorResult generate_hsl_matte(
+      const GpuSourceResource& source, std::int64_t timestamp,
+      const HslQualifierParameters& parameters,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!source.usable_by(DIGITOR_RENDERER_D3D12,
+                          backend_context_identity()))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto prior = std::static_pointer_cast<D3DPreviewOwner>(
+        native_owner(*source.frame));
+    if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    LocalCounts local;
+    auto owner = std::make_shared<D3DMatteOwner>();
+    if (create_node_texture(source.width, source.height, DXGI_FORMAT_R32_FLOAT,
+                            owner->texture, local) != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    --local.resources;
+    ++owner->tracked_resources;
+    owner->upstream.push_back(prior);
+    const auto& values = parameters.values();
+    D3DHslMatteConstants constants{};
+    const auto set_range = [](float (&target)[4], const QualifierRange& range) {
+      target[0] = range.low; target[1] = range.high;
+      target[2] = range.softness; target[3] = 0.0f;
+    };
+    set_range(constants.hue, values.hue);
+    set_range(constants.saturation, values.saturation);
+    set_range(constants.luminance, values.luminance);
+    constants.clean_black = values.clean_black;
+    constants.clean_white = values.clean_white;
+    constants.invert = values.invert ? 1u : 0u;
+    constants.width = source.width;
+    constants.height = source.height;
+    const NodeTexture textures[]{
+        {prior->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, false},
+        {owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::hsl_matte, source.width, source.height, textures,
+        &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    owner->state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    static std::atomic_uint64_t identities{1};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_D3D12, backend_context_identity(),
+        GpuMatteMetadata{source.width, source.height, timestamp,
+                         GpuMatteFormat::r32_float},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult generate_power_window_matte(
+      std::uint32_t width, std::uint32_t height, std::int64_t timestamp,
+      const PowerWindowSettings& settings,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (!width || !height) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    LocalCounts local;
+    auto owner = std::make_shared<D3DMatteOwner>();
+    if (create_node_texture(width, height, DXGI_FORMAT_R32_FLOAT,
+                            owner->texture, local) != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    --local.resources;
+    ++owner->tracked_resources;
+    D3DWindowConstants constants{
+        settings.center_x, settings.center_y, settings.width, settings.height,
+        settings.rotation, settings.feather, settings.opacity,
+        static_cast<std::uint32_t>(settings.shape), settings.invert ? 1u : 0u,
+        width, height, 0u};
+    const NodeTexture textures[]{
+        {owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::power_window_matte, width, height, textures,
+        &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    owner->state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    static std::atomic_uint64_t identities{100000};
+    output = std::make_shared<GpuMatteResource>(
+        DIGITOR_RENDERER_D3D12, backend_context_identity(),
+        GpuMatteMetadata{width, height, timestamp, GpuMatteFormat::r32_float},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult multiply_mattes(
+      std::span<const GpuMatteResourcePtr> inputs, std::int64_t timestamp,
+      GpuMatteResourcePtr& output) noexcept override {
+    output.reset();
+    if (inputs.empty()) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (inputs.size() == 1) { output = inputs.front(); return DIGITOR_RESULT_OK; }
+    GpuMatteResourcePtr current = inputs.front();
+    for (std::size_t index = 1; index < inputs.size(); ++index) {
+      const auto& rhs = inputs[index];
+      if (!current || !rhs ||
+          !current->usable_by(DIGITOR_RENDERER_D3D12,
+                              backend_context_identity()) ||
+          !rhs->usable_by(DIGITOR_RENDERER_D3D12,
+                          backend_context_identity()) ||
+          current->metadata().width != rhs->metadata().width ||
+          current->metadata().height != rhs->metadata().height)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      auto left_owner = std::static_pointer_cast<D3DMatteOwner>(
+          current->native_owner());
+      auto right_owner = std::static_pointer_cast<D3DMatteOwner>(
+          rhs->native_owner());
+      LocalCounts local;
+      auto result_owner = std::make_shared<D3DMatteOwner>();
+      if (create_node_texture(current->metadata().width,
+                              current->metadata().height,
+                              DXGI_FORMAT_R32_FLOAT, result_owner->texture,
+                              local) != DIGITOR_RESULT_OK)
+        return DIGITOR_RESULT_OUT_OF_MEMORY;
+      --local.resources;
+      ++result_owner->tracked_resources;
+      result_owner->upstream = {left_owner, right_owner};
+      D3DSizeConstants constants{current->metadata().width,
+                                 current->metadata().height};
+      const NodeTexture textures[]{
+          {left_owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, false},
+          {right_owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, false},
+          {result_owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, true}};
+      const auto status = dispatch_node_kernel(
+          NativeNodeKernel::matte_multiply, constants.width, constants.height,
+          textures, &constants, sizeof(constants));
+      if (status != DIGITOR_RESULT_OK) return status;
+      result_owner->state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+      static std::atomic_uint64_t identities{200000};
+      current = std::make_shared<GpuMatteResource>(
+          DIGITOR_RENDERER_D3D12, backend_context_identity(),
+          GpuMatteMetadata{constants.width, constants.height, timestamp,
+                           GpuMatteFormat::r32_float},
+          identities++, std::static_pointer_cast<void>(result_owner),
+          std::make_shared<std::atomic_bool>(true), backend_context_lifetime());
+    }
+    output = std::move(current);
+    return DIGITOR_RESULT_OK;
+  }
+
+  DigitorResult composite_with_matte(
+      const GpuSourceResource& original, const GpuSourceResource& processed,
+      const GpuMatteResourcePtr& matte, std::int64_t timestamp,
+      ProcessedGpuFramePtr& output) noexcept override {
+    output.reset();
+    if (!original.usable_by(DIGITOR_RENDERER_D3D12,
+                            backend_context_identity()) ||
+        !processed.usable_by(DIGITOR_RENDERER_D3D12,
+                             backend_context_identity()) ||
+        !matte || !matte->usable_by(DIGITOR_RENDERER_D3D12,
+                                    backend_context_identity()) ||
+        original.width != processed.width || original.height != processed.height ||
+        original.width != matte->metadata().width ||
+        original.height != matte->metadata().height)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    auto original_owner = std::static_pointer_cast<D3DPreviewOwner>(
+        native_owner(*original.frame));
+    auto processed_owner = std::static_pointer_cast<D3DPreviewOwner>(
+        native_owner(*processed.frame));
+    auto matte_owner = std::static_pointer_cast<D3DMatteOwner>(
+        matte->native_owner());
+    if (!original_owner || !processed_owner || !matte_owner)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    LocalCounts local;
+    auto owner = std::make_shared<D3DPreviewOwner>();
+    owner->tracked_owner = true;
+    ++d3d_live.owners;
+    if (create_node_texture(original.width, original.height,
+                            DXGI_FORMAT_R32G32B32A32_FLOAT,
+                            owner->output, local) != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    local.transfer_resource(*owner);
+    owner->upstream = std::make_shared<std::vector<std::shared_ptr<void>>>(
+        std::initializer_list<std::shared_ptr<void>>{original_owner,
+                                                     processed_owner,
+                                                     matte_owner});
+    D3DSizeConstants constants{original.width, original.height};
+    const NodeTexture textures[]{
+        {original_owner->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, false},
+        {processed_owner->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, false},
+        {matte_owner->texture.Get(), DXGI_FORMAT_R32_FLOAT, false},
+        {owner->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, true}};
+    const auto status = dispatch_node_kernel(
+        NativeNodeKernel::masked_composite, original.width, original.height,
+        textures, &constants, sizeof(constants));
+    if (status != DIGITOR_RESULT_OK) return status;
+    owner->output_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    static std::atomic_uint64_t identities{300000};
+    output = std::make_shared<ProcessedGpuFrame>(
+        this, DIGITOR_RENDERER_D3D12,
+        GpuFrameMetadata{original.width, original.height,
+                         DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight, timestamp,
+                         original.color_metadata_identity},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), true);
+    bind_frame_context_lifetime(output);
+    return DIGITOR_RESULT_OK;
+  }
+
   explicit D3DBackend(ComPtr<ID3D12Device> device)
       : device_(std::move(device)) {
     info_.backend = DIGITOR_RENDERER_D3D12;

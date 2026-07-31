@@ -106,6 +106,11 @@ protected:
   void retire_context_resources() noexcept {
     if (context_lifetime_) context_lifetime_->retire();
   }
+  [[nodiscard]] std::uint64_t backend_context_identity() const noexcept { return context_identity_; }
+  [[nodiscard]] const std::shared_ptr<GpuContextLifetime>& backend_context_lifetime() const noexcept { return context_lifetime_; }
+  void bind_frame_context_lifetime(const ProcessedGpuFramePtr& frame) noexcept {
+    if (frame) frame->bind_context_lifetime(context_lifetime_);
+  }
   virtual DigitorResult execute_curves_rgba32f(std::span<const Color> source,
                                                 std::span<Color> destination,
                                                 const CompiledRgbCurves&) noexcept;
