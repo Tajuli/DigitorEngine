@@ -1,0 +1,1 @@
+Temporary applicator payload. This file is removed automatically after the scoped source commit is created.
