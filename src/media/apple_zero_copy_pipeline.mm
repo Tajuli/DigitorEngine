@@ -106,7 +106,7 @@ static DigitorResult process_frame(ImplT& i, std::int64_t timestamp_us,
           std::chrono::steady_clock::now() - start).count() > i.config.frame_timeout_ms) {
     ++i.telemetry.failures; i.telemetry.quarantined = true;
     i.telemetry.diagnostic = "Apple zero-copy frame deadline exceeded";
-    return DIGITOR_RESULT_TIMEOUT;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   i.telemetry.diagnostic = "Apple zero-copy frame completed";
   return DIGITOR_RESULT_OK;
