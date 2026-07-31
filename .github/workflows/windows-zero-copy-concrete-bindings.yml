@@ -1,0 +1,23 @@
+name: Windows Zero-Copy Concrete Bindings
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_zero_copy_concrete_bindings.hpp'
+      - 'src/media/windows_zero_copy_concrete_bindings.cpp'
+      - 'cmake/WindowsZeroCopyConcreteBindings.cmake'
+      - 'concrete_bindings/windows/**'
+      - 'tests/windows_zero_copy_concrete_bindings_tests.cpp'
+      - '.github/workflows/windows-zero-copy-concrete-bindings.yml'
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S concrete_bindings/windows -B build-concrete -A x64
+      - name: Build
+        run: cmake --build build-concrete --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-concrete -C Release --output-on-failure
