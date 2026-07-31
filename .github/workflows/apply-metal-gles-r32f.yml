@@ -1,0 +1,25 @@
+name: Apply Metal GLES R32F implementation
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.head_ref == 'agent/real-metal-gles-r32f'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/real-metal-gles-r32f
+          fetch-depth: 0
+      - name: Apply scoped backend changes
+        run: |
+          python3 .agent/apply_metal_gles_masks.py
+          rm .agent/apply_metal_gles_masks.py .github/workflows/apply-metal-gles-r32f.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/gpu/metal_backend.mm src/gpu/gles_backend.cpp .agent/apply_metal_gles_masks.py .github/workflows/apply-metal-gles-r32f.yml
+          git commit -m "Implement real Metal and GLES R32F node masks"
+          git push origin HEAD:agent/real-metal-gles-r32f
