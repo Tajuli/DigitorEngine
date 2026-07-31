@@ -5,6 +5,7 @@
 #include "digitor/primary_wheels.hpp"
 #include "digitor/log_wheels.hpp"
 #include "digitor/render_policy.hpp"
+#include "digitor/production_node_graph.hpp"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -32,6 +33,8 @@ public:
   void set_primary_wheels(std::shared_ptr<const PrimaryWheelsParameters> p){primary_wheels_=std::move(p);}
   void set_log_wheels(std::shared_ptr<const LogWheelsParameters> p){log_wheels_=std::move(p);}
   void set_color_operation_order(ColorOperationOrder o){operation_order_=o;}
+  void set_production_node_graph(std::shared_ptr<const ProductionNodeGraph> graph){production_node_graph_=std::move(graph);}
+  [[nodiscard]] const std::shared_ptr<const ProductionNodeGraph>& production_node_graph()const noexcept{return production_node_graph_;}
   void set_media_sources(std::vector<MediaSourceDescriptor> s){media_sources_=std::move(s);}
   void set_preview_source_configuration(PreviewSourceConfiguration c){preview_source_=std::move(c);}
   [[nodiscard]] ColorRenderPlan color_render_plan(RenderPurpose)const;
@@ -45,10 +48,12 @@ private:
   struct GpuRenderResult { ProcessedGpuFramePtr frame; std::string final_operation; };
   VideoFrame render_source(const RenderRequest&);
   GpuRenderResult render_color_gpu(const RenderRequest&, const VideoFrame&);
+  GpuRenderResult render_production_node_graph_gpu(const RenderRequest&,const VideoFrame&);
   RenderGraphBuilder builder_; RenderGraph graph_; CommandQueue queue_;
   std::shared_ptr<const CompiledRgbCurves> curves_;
   std::shared_ptr<const PrimaryWheelsParameters> primary_wheels_;
   std::shared_ptr<const LogWheelsParameters> log_wheels_;
+  std::shared_ptr<const ProductionNodeGraph> production_node_graph_;
   ColorOperationOrder operation_order_{ColorOperationOrder::PrimaryWheelsThenLogWheelsThenRgbCurves};
   std::vector<MediaSourceDescriptor> media_sources_; PreviewSourceConfiguration preview_source_; OriginalPixelSampler original_pixel_sampler_; std::uint64_t generation_{};
 };

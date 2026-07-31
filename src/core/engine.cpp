@@ -25,5 +25,6 @@ DigitorResult Engine::validation_readback_primary_wheels(const ProcessedGpuFrame
 DigitorResult Engine::validation_readback_log_wheels(const ProcessedGpuFramePtr&f,std::span<Color>o){std::lock_guard lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->validation_readback_log_wheels(f,o);}
 DigitorResult Engine::validation_readback_final_frame(const ProcessedGpuFramePtr&f,std::span<Color>o){std::lock_guard lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->validation_readback_final_frame(f,o);}
 DigitorResult Engine::present_gpu_frame(const ProcessedGpuFramePtr&f){std::scoped_lock lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;return backend_->present_gpu_frame(f);}
+NativeNodeGraphResult Engine::execute_native_node_graph(const ProductionNodeGraph& graph,std::span<const Color> source,std::uint32_t width,std::uint32_t height,std::int64_t timestamp){std::scoped_lock lock(mutex_);if(!initialized_||!backend_)return {NativeNodeGraphStatus::backend_failure,DIGITOR_RESULT_NOT_INITIALIZED,{},{},NodeOperationKind::primary_wheels,"engine is not initialized"};return digitor::execute_native_node_graph(*backend_,graph,source,width,height,timestamp);}
 
 } // namespace digitor

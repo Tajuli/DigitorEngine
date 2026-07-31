@@ -33,6 +33,7 @@ void validate(const MediaSourceDescriptor& source) {
 } // namespace
 
 std::vector<std::string> ColorGraphConfiguration::operation_sequence() const {
+  if (production_node_graph_enabled) return {"production-node-graph-v1"};
   std::vector<std::string> result;
   const auto primary = [&] { if (primary_wheels_enabled) result.emplace_back("primary-wheels-v1"); };
   const auto log = [&] { if (log_wheels_enabled) result.emplace_back("log-wheels-v1"); };
@@ -56,6 +57,8 @@ std::string ColorGraphConfiguration::identity() const {
     throw std::invalid_argument("missing Log Wheels serialization");
   if (rgb_curves_enabled && rgb_curves_serialization.empty())
     throw std::invalid_argument("missing RGB Curves serialization");
+  if (production_node_graph_enabled && production_node_graph_identity.empty())
+    throw std::invalid_argument("missing Production Node Graph identity");
   std::string result{"digitor-color-graph:"};
   number(result, schema_version);
   number(result, static_cast<std::uint32_t>(operation_order));
@@ -64,6 +67,7 @@ std::string ColorGraphConfiguration::identity() const {
   number(result, primary_wheels_enabled); field(result, primary_wheels_serialization);
   number(result, log_wheels_enabled); field(result, log_wheels_serialization);
   number(result, rgb_curves_enabled); field(result, rgb_curves_serialization);
+  number(result, production_node_graph_enabled); field(result, production_node_graph_identity);
   for (const auto& operation : operation_sequence()) field(result, operation);
   return result;
 }

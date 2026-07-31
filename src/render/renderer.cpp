@@ -34,6 +34,8 @@ ColorRenderPlan SharedRenderer::color_render_plan(RenderPurpose purpose) const {
   graph.primary_wheels_enabled=static_cast<bool>(primary_wheels_);
   graph.log_wheels_enabled=static_cast<bool>(log_wheels_);
   graph.rgb_curves_enabled=static_cast<bool>(curves_);
+  graph.production_node_graph_enabled=static_cast<bool>(production_node_graph_);
+  if(production_node_graph_) graph.production_node_graph_identity=production_node_graph_->recipe_identity();
   if(primary_wheels_)graph.primary_wheels_serialization=primary_wheels_->serialize();
   if(log_wheels_)graph.log_wheels_serialization=log_wheels_->serialize();
   if(curves_)graph.rgb_curves_serialization=curves_->serialize();
@@ -49,6 +51,14 @@ VideoFrame SharedRenderer::render_source(const RenderRequest&r) {
   graph_=RenderGraph{}; VideoFrame out; out.number=r.frame; out.pts=r.frame; out.width=r.width; out.height=r.height;
   if(builder_)builder_(graph_,r,out);else{auto target=graph_.create_transient(std::uint64_t(r.width)*r.height*sizeof(Color));graph_.add_pass({"composite",{},{{target,ResourceState::shader_write}},[&](auto&e){e.dispatch([&]{out.pixels.resize(std::size_t(r.width)*r.height);});}});}
   graph_.compile(); graph_.execute(queue_); return out;
+}
+
+SharedRenderer::GpuRenderResult SharedRenderer::render_production_node_graph_gpu(const RenderRequest&r,const VideoFrame&source){
+  if(!production_node_graph_) throw std::logic_error("production node graph is not configured");
+  const auto result=Engine::instance().execute_native_node_graph(*production_node_graph_,source.pixels,r.width,r.height,source.pts);
+  if(result.status!=NativeNodeGraphStatus::ok||result.backend_result!=DIGITOR_RESULT_OK||!result.frame)
+    throw std::runtime_error(result.message.empty()?"native production node graph execution failed":result.message);
+  return {result.frame,production_node_graph_->recipe_identity()};
 }
 
 SharedRenderer::GpuRenderResult SharedRenderer::render_color_gpu(const RenderRequest&r,const VideoFrame&source){
@@ -74,23 +84,28 @@ SharedRenderer::GpuRenderResult SharedRenderer::render_color_gpu(const RenderReq
 
 ProcessedGpuFramePtr SharedRenderer::render_gpu_preview(const RenderRequest&r){
   if(has_media_source_policy())(void)color_render_plan(RenderPurpose::Preview);
-  auto source=render_source(r); auto rendered=render_color_gpu(r,source);
-  if(Engine::instance().present_gpu_frame(rendered.frame)!=DIGITOR_RESULT_OK) throw std::runtime_error("native GPU color-operation preview handoff failed");
+  auto source=render_source(r);
+  auto rendered=production_node_graph_?render_production_node_graph_gpu(r,source):render_color_gpu(r,source);
+  if(Engine::instance().present_gpu_frame(rendered.frame)!=DIGITOR_RESULT_OK) throw std::runtime_error("native GPU preview handoff failed");
   ++generation_; return rendered.frame;
 }
 
 VideoFrame SharedRenderer::render(const RenderRequest&r){
   auto out=render_source(r);
   const bool color = bool(curves_)||bool(primary_wheels_)||bool(log_wheels_);
-  if(Engine::instance().is_initialized()&&Engine::instance().renderer_info().is_gpu&&color){
+  const bool native_graph = static_cast<bool>(production_node_graph_);
+  if(Engine::instance().is_initialized()&&Engine::instance().renderer_info().is_gpu&&(native_graph||color)){
     if(has_media_source_policy())(void)color_render_plan(RenderPurpose::Export);
-    auto rendered=render_color_gpu(r,out);
+    auto rendered=native_graph?render_production_node_graph_gpu(r,out):render_color_gpu(r,out);
     out.pixels.resize(std::size_t(r.width)*r.height);
     // Export consumes the final RGBA32F GPU resource through one operation-
     // independent contract. Adding or reordering operations cannot silently
     // select the wrong readback implementation. Preview still performs none.
     const auto result = Engine::instance().validation_readback_final_frame(rendered.frame,out.pixels);
     if(result!=DIGITOR_RESULT_OK) throw std::runtime_error("native GPU export readback failed");
+  }else if(native_graph){
+    const auto rendered=production_node_graph_->render(out.pixels,r.width,r.height,out.pts);
+    out.pixels=rendered;
   }else if(Engine::instance().is_initialized()&&Engine::instance().renderer_info().is_gpu){
     std::vector<uint8_t> bytes;bytes.reserve(out.pixels.size()*4);for(const auto&p:out.pixels){const auto c=[](float v){return static_cast<uint8_t>(std::clamp(v,0.f,1.f)*255.f+.5f);};bytes.insert(bytes.end(),{c(p.r),c(p.g),c(p.b),c(p.a)});}std::vector<uint8_t> rgba;if(Engine::instance().render_preview_rgba8(r.width,r.height,bytes,rgba)!=DIGITOR_RESULT_OK)throw std::runtime_error("native preview readback failed");out.pixels.resize(std::size_t(r.width)*r.height);for(std::size_t n=0;n<out.pixels.size();++n)out.pixels[n]={rgba[n*4]/255.f,rgba[n*4+1]/255.f,rgba[n*4+2]/255.f,rgba[n*4+3]/255.f};
   }

@@ -7,6 +7,7 @@
 #include "core/render_context.hpp"
 #include "digitor/digitor.h"
 #include "gpu/gpu_backend.hpp"
+#include "digitor/native_node_executor.hpp"
 
 namespace digitor {
 class Engine final {
@@ -31,6 +32,7 @@ public:
   DigitorResult validation_readback_log_wheels(const ProcessedGpuFramePtr&,std::span<Color>);
   DigitorResult validation_readback_final_frame(const ProcessedGpuFramePtr&,std::span<Color>);
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&);
+  NativeNodeGraphResult execute_native_node_graph(const ProductionNodeGraph&,std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t);
 private:
   Engine() = default;
   mutable std::mutex mutex_;
