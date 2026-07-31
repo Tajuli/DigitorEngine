@@ -1,0 +1,10 @@
+
+struct Range{float low;float high;float softness;float padding;};
+Texture2D<float4> Source:register(t0);RWTexture2D<float> Matte:register(u0);
+cbuffer Params:register(b0){Range hue_range;Range saturation_range;Range luminance_range;float clean_black;float clean_white;float denoise;float blur;uint invert;uint width;uint height;uint padding;};
+float lw(float v,Range r){if(v>=r.low&&v<=r.high)return 1;if(r.softness>0&&v<r.low&&v>r.low-r.softness)return(v-r.low+r.softness)/r.softness;if(r.softness>0&&v>r.high&&v<r.high+r.softness)return(r.high+r.softness-v)/r.softness;return 0;}
+float hw(float h,Range r){if(r.low<=r.high)return lw(h,r);Range a=r;a.high=1;Range b=r;b.low=0;return max(lw(h,a),lw(h,b));}
+float3 hsl(float3 c){float hi=max(c.r,max(c.g,c.b)),lo=min(c.r,min(c.g,c.b)),d=hi-lo,L=(hi+lo)*.5,S=d==0?0:d/max(1e-8,1-abs(2*L-1)),H=0;if(d!=0){if(hi==c.r)H=fmod((c.g-c.b)/d,6);else if(hi==c.g)H=(c.b-c.r)/d+2;else H=(c.r-c.g)/d+4;H/=6;if(H<0)H+=1;}return float3(H,S,L);}
+float base_at(int2 q){q=clamp(q,int2(0,0),int2(int(width)-1,int(height)-1));float3 rgb=Source.Load(int3(q,0)).rgb;float m=0;if(all(isfinite(rgb))){float3 v=hsl(rgb);m=hw(v.x,hue_range)*lw(v.y,saturation_range)*lw(v.z,luminance_range);if(m<=clean_black)m=0;if(m>=1-clean_white)m=1;if(invert)m=1-m;}return saturate(m);}
+float dn(int2 q){float v[9];int k=0;[unroll]for(int y=-1;y<=1;y++)[unroll]for(int x=-1;x<=1;x++)v[k++]=base_at(q+int2(x,y));[unroll]for(int i=1;i<9;i++){float a=v[i];int j=i-1;while(j>=0&&v[j]>a){v[j+1]=v[j];j--;}v[j+1]=a;}float b=base_at(q);return b+saturate(denoise)*(v[4]-b);}
+[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){if(id.x>=width||id.y>=height)return;int2 q=int2(id.xy);int r=int(ceil(max(blur,0)));float sum=0;uint count=0;if(r==0){sum=dn(q);count=1;}else for(int y=-r;y<=r;y++)for(int x=-r;x<=r;x++){sum+=dn(q+int2(x,y));count++;}Matte[id.xy]=saturate(sum/count);}
