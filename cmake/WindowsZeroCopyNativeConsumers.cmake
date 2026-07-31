@@ -5,7 +5,15 @@ if(DIGITOR_BUILD_WINDOWS_ZERO_COPY_NATIVE_CONSUMERS)
     message(FATAL_ERROR "Windows zero-copy native consumers require Windows")
   endif()
 
+  # Native consumers depend on the evidence-gated runtime. Ensure the runtime
+  # target is materialized before linking instead of leaving an unresolved
+  # library name for multi-config generators such as Visual Studio.
+  set(DIGITOR_BUILD_WINDOWS_ZERO_COPY_RUNTIME ON CACHE BOOL
+      "Build evidence-gated Windows zero-copy production runtime" FORCE)
   include(${CMAKE_CURRENT_LIST_DIR}/WindowsZeroCopyRuntime.cmake)
+  if(NOT TARGET digitor_windows_zero_copy_runtime)
+    message(FATAL_ERROR "Windows zero-copy runtime target was not created")
+  endif()
 
   add_library(digitor_windows_zero_copy_native_consumers STATIC
     ${CMAKE_CURRENT_LIST_DIR}/../src/media/windows_zero_copy_native_consumers.cpp)
