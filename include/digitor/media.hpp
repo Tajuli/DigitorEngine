@@ -52,9 +52,9 @@ struct DecoderOptions {
 struct DecoderInfo {
     HardwareDecode selected{HardwareDecode::cpu};
     bool hardware_accelerated{};
+    std::string implementation;
     bool native_surface_output{};
     NativeMediaHandleType native_handle_type{NativeMediaHandleType::none};
-    std::string implementation;
 };
 
 template<class T> class FrameCache {
