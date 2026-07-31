@@ -1,0 +1,24 @@
+name: Windows Zero-Copy Native Consumers
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_zero_copy_native_consumers.hpp'
+      - 'src/media/windows_zero_copy_native_consumers.cpp'
+      - 'tests/windows_zero_copy_native_consumers_tests.cpp'
+      - 'cmake/WindowsZeroCopyNativeConsumers.cmake'
+      - 'native_consumers/windows/**'
+      - '.github/workflows/windows-zero-copy-native-consumers.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S native_consumers/windows -B build-native-consumers -A x64
+      - name: Build
+        run: cmake --build build-native-consumers --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-native-consumers -C Release --output-on-failure
