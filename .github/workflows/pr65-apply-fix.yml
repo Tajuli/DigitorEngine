@@ -1,15 +1,13 @@
 name: PR65 apply compile fix
 on:
-  push:
-    branches:
-      - agent/real-vulkan-d3d12-r32f
-    paths:
-      - .github/workflows/pr65-apply-fix.yml
-      - .pr65-fix.patch
+  pull_request:
+    types: [reopened]
+    branches: [main]
 permissions:
   contents: write
 jobs:
   apply:
+    if: github.event.pull_request.number == 65
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
