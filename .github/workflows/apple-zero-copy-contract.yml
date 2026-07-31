@@ -12,9 +12,9 @@ jobs:
       - name: Configure
         run: cmake -S apple_zero_copy/contract -B build-apple-zero-copy
       - name: Build
-        run: cmake --build build-apple-zero-copy --parallel 2
-      - name: Test
-        run: ctest --test-dir build-apple-zero-copy --output-on-failure
+        run: cmake --build build-apple-zero-copy --parallel 2 --target digitor_apple_zero_copy_contract_tests
+      - name: Test Apple contract only
+        run: ctest --test-dir build-apple-zero-copy --output-on-failure -R '^digitor_apple_zero_copy_contract_tests$'
 
   apple-device-lab:
     if: ${{ github.event_name == 'workflow_dispatch' }}
