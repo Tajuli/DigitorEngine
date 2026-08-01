@@ -32,13 +32,18 @@ foreach(test_name IN ITEMS
     production_timeline_automation_tests
     audio_mixer_tests
     audio_time_transform_tests
-    audio_dynamics_tests
-    timeline_audio_session_tests)
+    audio_dynamics_tests)
     add_executable(digitor_${test_name} ../../tests/${test_name}.cpp)
     target_link_libraries(digitor_${test_name} PRIVATE digitor_production_timeline)
     target_compile_features(digitor_${test_name} PRIVATE cxx_std_20)
     add_test(NAME digitor_${test_name} COMMAND digitor_${test_name})
 endforeach()
+
+add_executable(digitor_timeline_audio_session_tests
+    ../../tests/timeline_audio_session_c_api_tests.cpp)
+target_link_libraries(digitor_timeline_audio_session_tests PRIVATE digitor_production_timeline)
+target_compile_features(digitor_timeline_audio_session_tests PRIVATE cxx_std_20)
+add_test(NAME digitor_timeline_audio_session_tests COMMAND digitor_timeline_audio_session_tests)
 
 set_tests_properties(digitor_production_timeline_tests PROPERTIES
     LABELS "production-timeline;v5.1.0;contract")
