@@ -5,10 +5,22 @@ import 'package:test/test.dart';
 
 void main() {
   test('native structs have stable non-zero layouts', () {
-    expect(sizeOf<DigitorTimelineSessionConfigNative>(), greaterThanOrEqualTo(16));
-    expect(sizeOf<DigitorTimelinePublicationNative>(), greaterThanOrEqualTo(24));
-    expect(sizeOf<DigitorAudioSessionControlsNative>(), greaterThanOrEqualTo(18));
-    expect(sizeOf<DigitorTimelineSessionStatusNative>(), greaterThanOrEqualTo(64));
+    expect(
+      sizeOf<DigitorTimelineSessionConfigNative>(),
+      greaterThanOrEqualTo(16),
+    );
+    expect(
+      sizeOf<DigitorTimelinePublicationNative>(),
+      greaterThanOrEqualTo(24),
+    );
+    expect(
+      sizeOf<DigitorAudioSessionControlsNative>(),
+      greaterThanOrEqualTo(18),
+    );
+    expect(
+      sizeOf<DigitorTimelineSessionStatusNative>(),
+      greaterThanOrEqualTo(64),
+    );
     expect(sizeOf<DigitorTimelineSessionTelemetryNative>(), equals(56));
   });
 
