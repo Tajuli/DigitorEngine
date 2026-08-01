@@ -41,8 +41,7 @@ class HardwareAwareExportRuntime final {
 
   [[nodiscard]] RuntimeEncoderInventory probe() const;
   [[nodiscard]] HardwareExportResult execute(
-      const FfmpegExportRequest& request,
-      const ExportProfile& profile,
+      const TranscodeRequest& request,
       const std::vector<EncoderCapability>& extra_capabilities = {}) const;
 
  private:
