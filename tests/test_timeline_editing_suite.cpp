@@ -19,9 +19,10 @@ int main() {
   TimelineProjectModel project; project.fps=30;
   TimelineTrackModel video; video.id="v1"; video.name="Video 1"; video.type=TimelineTrackType::video;
   video.clips={clip("a",TimelineClipType::video,0,3000000),clip("b",TimelineClipType::video,3000000,3000000,3000000),clip("c",TimelineClipType::video,6000000,3000000,6000000)};
+  TimelineTrackModel overlay; overlay.id="v2"; overlay.name="Video 2"; overlay.type=TimelineTrackType::video;
   TimelineTrackModel audio; audio.id="a1"; audio.name="Audio 1"; audio.type=TimelineTrackType::audio;
   auto music=clip("music",TimelineClipType::audio,0,9000000); audio.clips.push_back(music);
-  project.tracks={video,audio};
+  project.tracks={video,overlay,audio};
 
   ProfessionalTimelineEditor editor(project);
   require(editor.validate(),"initial project invalid");
@@ -61,10 +62,10 @@ int main() {
   require(deleted.success,"ripple delete failed");
   require(find(editor.project(),"insert")==nullptr,"ripple delete retained clip");
 
-  const auto compound=editor.make_compound({"a","overwrite"},"compound","v1");
+  const auto compound=editor.make_compound({"a","overwrite"},"compound","v2");
   require(compound.has_value(),"compound creation failed");
   require(find(editor.project(),"compound")!=nullptr,"compound clip missing");
-  require(editor.break_apart_compound(*compound,"compound","v1"),"compound break apart failed");
+  require(editor.break_apart_compound(*compound,"compound","v2"),"compound break apart failed");
   require(find(editor.project(),"a")!=nullptr,"compound child not restored");
 
   TimelineProjectModel gap_project; gap_project.fps=30;
