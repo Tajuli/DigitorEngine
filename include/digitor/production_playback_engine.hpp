@@ -12,7 +12,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -97,7 +96,7 @@ class ProductionPlaybackEngine final {
   [[nodiscard]] ProductionPlaybackTelemetry telemetry(std::int64_t monotonic_now_us) const;
 
  private:
-  void worker_loop(std::stop_token token);
+  void worker_loop();
   void flush_for_generation(std::uint64_t generation);
   void update_quality_locked();
   [[nodiscard]] bool frame_is_acceptable(const ProductionPlaybackFrame& frame) const noexcept;
@@ -109,9 +108,9 @@ class ProductionPlaybackEngine final {
   PlaybackTransport transport_;
 
   mutable std::mutex mutex_;
-  std::condition_variable_any wake_;
+  std::condition_variable wake_;
   std::deque<ProductionPlaybackFrame> queue_;
-  std::jthread worker_;
+  std::thread worker_;
   bool shutdown_{};
   bool playing_{};
   bool proxy_available_{};
