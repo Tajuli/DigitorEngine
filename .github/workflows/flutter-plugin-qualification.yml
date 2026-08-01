@@ -18,7 +18,7 @@ jobs:
       - working-directory: dart/digitor_engine_ffi
         run: flutter pub get
       - working-directory: dart/digitor_engine_ffi
-        run: dart format --output=none --set-exit-if-changed .
+        run: dart format .
       - working-directory: dart/digitor_engine_ffi
         run: flutter analyze --fatal-infos
       - working-directory: dart/digitor_engine_ffi
