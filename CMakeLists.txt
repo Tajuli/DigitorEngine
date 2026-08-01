@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.26.0
+    VERSION 5.27.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -22,6 +22,7 @@ target_sources(digitor_engine PRIVATE
     src/editor/professional_timeline_suite.cpp
     src/render/production_export.cpp
     src/ffi/production_export_c_api.cpp
+    src/render/ffmpeg_export_runtime.cpp
 )
 
 if(WIN32)
@@ -39,7 +40,8 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_multitrack_timeline_test tests/test_multitrack_timeline.cpp)
     add_executable(digitor_professional_timeline_suite_test tests/test_professional_timeline_suite.cpp)
     add_executable(digitor_production_export_test tests/test_production_export.cpp)
-    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_production_export_test)
+    add_executable(digitor_ffmpeg_export_runtime_test tests/test_ffmpeg_export_runtime.cpp)
+    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_production_export_test digitor_ffmpeg_export_runtime_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
     endforeach()
@@ -50,6 +52,7 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_multitrack_timeline COMMAND digitor_multitrack_timeline_test)
     add_test(NAME digitor_professional_timeline_suite COMMAND digitor_professional_timeline_suite_test)
     add_test(NAME digitor_production_export COMMAND digitor_production_export_test)
+    add_test(NAME digitor_ffmpeg_export_runtime COMMAND digitor_ffmpeg_export_runtime_test)
 endif()
 
 if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
@@ -69,10 +72,10 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.26.0 SOVERSION 5)
+set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.27.0 SOVERSION 5)
 install(TARGETS digitor_engine EXPORT DigitorEngineTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/digitor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 configure_package_config_file(cmake/DigitorEngineConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.26.0 COMPATIBILITY SameMajorVersion)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.27.0 COMPATIBILITY SameMajorVersion)
 install(EXPORT DigitorEngineTargets FILE DigitorEngineTargets.cmake NAMESPACE Digitor:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")

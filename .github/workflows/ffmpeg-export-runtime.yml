@@ -1,0 +1,38 @@
+name: FFmpeg Export Runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+      - name: Configure
+        run: cmake -S . -B build -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=ON -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF -DDIGITOR_WARNINGS_AS_ERRORS=OFF
+      - name: Build
+        run: cmake --build build --target digitor_ffmpeg_export_runtime_test -j2
+      - name: Run runtime contract test
+        run: ctest --test-dir build -R '^digitor_ffmpeg_export_runtime$' --output-on-failure
+      - name: Generate and transcode real media
+        run: |
+          mkdir -p build/real-runtime
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc=size=320x180:rate=30:duration=1 \
+            -f lavfi -i sine=frequency=880:sample_rate=48000:duration=1 \
+            -c:v mpeg4 -c:a aac -shortest build/real-runtime/source.mp4
+          ffmpeg -hide_banner -loglevel error -y \
+            -i build/real-runtime/source.mp4 \
+            -map 0:v:0 -map '0:a?' -c:v libx264 -b:v 600000 \
+            -vf scale=w=160:h=90:force_original_aspect_ratio=decrease \
+            -r 30/1 -c:a aac -ar 48000 -ac 2 -map_metadata -1 \
+            -movflags +faststart build/real-runtime/proxy.mp4
+          test -s build/real-runtime/proxy.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
+            -of csv=s=x:p=0 build/real-runtime/proxy.mp4 | grep '^160x90$'
