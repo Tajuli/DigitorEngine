@@ -8,6 +8,7 @@ add_library(digitor_production_timeline STATIC
     ../../src/editor/production_timeline.cpp
     ../../src/editor/production_timeline_runtime.cpp
     ../../src/editor/production_timeline_playback.cpp
+    ../../src/editor/production_timeline_automation.cpp
     ../../src/editor/timeline.cpp)
 target_include_directories(digitor_production_timeline PUBLIC ../../include)
 target_compile_features(digitor_production_timeline PUBLIC cxx_std_20)
@@ -22,7 +23,8 @@ endif()
 foreach(test_name IN ITEMS
     production_timeline_tests
     production_timeline_runtime_tests
-    production_timeline_playback_tests)
+    production_timeline_playback_tests
+    production_timeline_automation_tests)
     add_executable(digitor_${test_name} ../../tests/${test_name}.cpp)
     target_link_libraries(digitor_${test_name} PRIVATE digitor_production_timeline)
     target_compile_features(digitor_${test_name} PRIVATE cxx_std_20)
@@ -35,3 +37,5 @@ set_tests_properties(digitor_production_timeline_runtime_tests PROPERTIES
     LABELS "production-timeline;v5.1.0;runtime;integration")
 set_tests_properties(digitor_production_timeline_playback_tests PROPERTIES
     LABELS "production-timeline;v5.1.0;playback;seek;revision;parity")
+set_tests_properties(digitor_production_timeline_automation_tests PROPERTIES
+    LABELS "production-timeline;v5.1.0;keyframe;transition;parity")
