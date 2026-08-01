@@ -3,16 +3,19 @@ name: Production Timeline Qualification
 on:
   pull_request:
     paths:
-      - 'include/digitor/production_timeline.hpp'
-      - 'src/editor/production_timeline.cpp'
-      - 'tests/production_timeline_tests.cpp'
+      - 'include/digitor/production_timeline*.hpp'
+      - 'include/digitor/timeline.hpp'
+      - 'src/editor/production_timeline*.cpp'
+      - 'src/editor/timeline.cpp'
+      - 'tests/production_timeline*_tests.cpp'
       - 'production_timeline/**'
+      - 'docs/production_timeline_v5_1.md'
       - '.github/workflows/production-timeline-qualification.yml'
   workflow_dispatch:
 
 jobs:
-  contract:
-    name: Contract (${{ matrix.os }})
+  contract-and-runtime:
+    name: Contract and runtime (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -32,10 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Enforce draft qualification boundary
+      - name: Enforce integration scope and merge gates
         shell: bash
         run: |
-          test -f docs/production_timeline_v5_1.md
-          grep -q 'NOT production-qualified' docs/production_timeline_v5_1.md
-          grep -q 'Preview/export timeline parity' docs/production_timeline_v5_1.md
-          grep -q 'Rapid seek and stale-work rejection' docs/production_timeline_v5_1.md
+          test -f include/digitor/production_timeline_runtime.hpp
+          test -f src/editor/production_timeline_runtime.cpp
+          test -f tests/production_timeline_runtime_tests.cpp
+          grep -q 'Legacy Timeline snapshot compiler' docs/production_timeline_v5_1.md
+          grep -q 'Monotonic revision publication' docs/production_timeline_v5_1.md
+          grep -q 'Decode/render execution plan' docs/production_timeline_v5_1.md
+          grep -q 'Audio mix-block plan' docs/production_timeline_v5_1.md
