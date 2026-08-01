@@ -1,6 +1,6 @@
 name: digitor_engine_ffi
-description: Flutter FFI plugin and safe session adapter for DigitorEngine.
-version: 5.7.0
+description: Flutter FFI plugin, session adapter, and isolate-safe callbacks for DigitorEngine.
+version: 5.8.0
 publish_to: none
 environment:
   sdk: '>=3.3.0 <4.0.0'
