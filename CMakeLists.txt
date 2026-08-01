@@ -1,9 +1,12 @@
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineBase.cmake")
+cmake_minimum_required(VERSION 3.21)
 
-set(PROJECT_VERSION 5.17.0)
-set(PROJECT_VERSION_MAJOR 5)
-set(PROJECT_VERSION_MINOR 17)
-set(PROJECT_VERSION_PATCH 0)
+project(DigitorEngine
+    VERSION 5.17.0
+    DESCRIPTION "GPU-first cross-platform rendering engine foundation"
+    LANGUAGES C CXX
+)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineBase.cmake")
 
 target_sources(digitor_engine PRIVATE
     src/runtime/async_operation.cpp
