@@ -9,11 +9,12 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <jthread>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <string>
+#include <thread>
 
 namespace digitor {
 
