@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.19.0
+    VERSION 5.20.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -12,7 +12,26 @@ target_sources(digitor_engine PRIVATE
     src/runtime/async_operation.cpp
     src/runtime/sdk_media_worker.cpp
     src/ffi/sdk_worker_c_api.cpp
+    src/audio/audio_latency_probe.cpp
 )
+
+if(WIN32)
+    target_link_libraries(digitor_engine PRIVATE ole32)
+elseif(APPLE)
+    find_library(DIGITOR_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
+    target_link_libraries(digitor_engine PRIVATE ${DIGITOR_COREAUDIO_FRAMEWORK})
+endif()
+
+if(DIGITOR_BUILD_TESTS)
+    add_executable(digitor_audio_latency_probe_test tests/test_audio_latency_probe.cpp)
+    set_target_properties(digitor_audio_latency_probe_test PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+    )
+    target_link_libraries(digitor_audio_latency_probe_test PRIVATE Digitor::Engine)
+    add_test(NAME digitor_audio_latency_probe COMMAND digitor_audio_latency_probe_test)
+endif()
 
 if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
     add_executable(digitor_ffmpeg_real_media_test tests/test_ffmpeg_real_media.cpp)
@@ -49,7 +68,7 @@ include(CMakePackageConfigHelpers)
 
 set_target_properties(digitor_engine PROPERTIES
     EXPORT_NAME Engine
-    VERSION 5.19.0
+    VERSION 5.20.0
     SOVERSION 5
 )
 
@@ -69,7 +88,7 @@ configure_package_config_file(
 )
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake"
-    VERSION 5.19.0
+    VERSION 5.20.0
     COMPATIBILITY SameMajorVersion
 )
 install(EXPORT DigitorEngineTargets

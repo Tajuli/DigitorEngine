@@ -1,0 +1,37 @@
+name: Platform Audio Latency Probes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  native-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            warnings_as_errors: ON
+          - os: windows-latest
+            warnings_as_errors: ON
+          - os: macos-latest
+            warnings_as_errors: OFF
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: >-
+          cmake -S . -B build/audio-latency
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+          -DDIGITOR_WARNINGS_AS_ERRORS=${{ matrix.warnings_as_errors }}
+      - name: Build
+        run: cmake --build build/audio-latency --config Release --target digitor_audio_latency_probe_test
+      - name: Run probe contract
+        run: ctest --test-dir build/audio-latency -C Release --output-on-failure -R digitor_audio_latency_probe
