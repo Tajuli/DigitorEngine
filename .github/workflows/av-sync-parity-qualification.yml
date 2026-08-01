@@ -1,0 +1,30 @@
+name: A/V Sync and Parity Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/av_sync.hpp'
+      - 'src/media/av_sync.cpp'
+      - 'tests/av_sync_parity_tests.cpp'
+      - '.github/workflows/av-sync-parity-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run qualification (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude src/media/av_sync.cpp tests/av_sync_parity_tests.cpp -o av_sync_tests
+          ./av_sync_tests
+      - name: Build and run qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /std:c++20 /W4 /WX /EHsc /Iinclude src\media\av_sync.cpp tests\av_sync_parity_tests.cpp /Fe:av_sync_tests.exe
+          av_sync_tests.exe
