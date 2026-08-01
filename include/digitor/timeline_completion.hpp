@@ -85,8 +85,10 @@ class TimelineCompletionEngine {
 
   [[nodiscard]] const TimelineCompletionProject& project() const noexcept;
   [[nodiscard]] bool validate() const noexcept;
+  [[nodiscard]] bool track_enabled(const std::string& track_id) const noexcept;
   [[nodiscard]] TimelineCompletionSample sample(std::int64_t timeline_us) const;
 
+  bool set_track_enabled(const std::string& track_id, bool enabled);
   bool remove_track(const std::string& track_id,
                     TrackRemovalPolicy policy = TrackRemovalPolicy::reject_if_not_empty);
   bool set_track_group(TimelineTrackGroup group);
