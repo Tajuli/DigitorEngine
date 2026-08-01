@@ -1,5 +1,6 @@
 #include "digitor/audio_time_transform.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
