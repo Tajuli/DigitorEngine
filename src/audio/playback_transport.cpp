@@ -36,7 +36,8 @@ std::int64_t PlaybackTransport::position_us(std::int64_t now_us) const noexcept 
 
 void PlaybackTransport::play(std::int64_t now_us) noexcept {
   if (state_ == PlaybackState::playing) return;
-  if (state_ == PlaybackState::completed) anchor_position_us_ = 0;
+  if (state_ == PlaybackState::completed)
+    anchor_position_us_ = rate_ < 0.0 ? duration_us_ : 0;
   anchor_time_us_ = now_us;
   state_ = PlaybackState::playing;
 }
@@ -60,14 +61,18 @@ void PlaybackTransport::seek(std::int64_t position, std::int64_t now_us) noexcep
   correction_us_ = 0;
   drift_us_ = 0;
   ++seek_generation_;
-  state_ = anchor_position_us_ >= duration_us_ ? PlaybackState::completed : PlaybackState::seeking;
+  const bool at_forward_end = rate_ >= 0.0 && anchor_position_us_ >= duration_us_;
+  const bool at_reverse_end = rate_ < 0.0 && anchor_position_us_ <= 0;
+  state_ = (at_forward_end || at_reverse_end) ? PlaybackState::completed : PlaybackState::seeking;
 }
 
 bool PlaybackTransport::set_rate(double rate, std::int64_t now_us) noexcept {
-  if (!std::isfinite(rate) || rate < 0.25 || rate > 4.0) return false;
+  const auto magnitude = std::fabs(rate);
+  if (!std::isfinite(rate) || magnitude < 0.25 || magnitude > 4.0) return false;
   anchor_position_us_ = position_us(now_us);
   anchor_time_us_ = now_us;
   rate_ = rate;
+  correction_us_ = 0;
   return true;
 }
 
