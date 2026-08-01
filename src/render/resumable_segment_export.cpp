@@ -6,6 +6,7 @@
 #include <charconv>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 namespace digitor {
@@ -121,7 +122,13 @@ SegmentExportManifest ResumableSegmentExport::plan(
 }
 
 bool ResumableSegmentExport::run() {
-  cancel_requested_ = false;
+  if (cancel_requested_) {
+    snapshot_.state = ExportState::cancelled;
+    snapshot_.diagnostic = "cancelled before start";
+    ++snapshot_.generation;
+    (void)persist();
+    return false;
+  }
   snapshot_.state = ExportState::running;
   snapshot_.diagnostic = "rendering segments";
   ++snapshot_.generation;
@@ -131,7 +138,7 @@ bool ResumableSegmentExport::run() {
     if (cancel_requested_) {
       snapshot_.state = ExportState::cancelled;
       snapshot_.diagnostic = "cancelled between segments";
-      persist();
+      (void)persist();
       return false;
     }
     if (segment.completed && std::filesystem::exists(segment.output_path)) continue;
@@ -143,7 +150,7 @@ bool ResumableSegmentExport::run() {
         snapshot_.state = ExportState::failed;
         snapshot_.diagnostic = "segment render failed";
       }
-      persist();
+      (void)persist();
       return false;
     }
     segment.completed = true;
@@ -155,12 +162,12 @@ bool ResumableSegmentExport::run() {
                                    static_cast<double>(manifest_.duration_us)
                              : 1.0;
     ++snapshot_.generation;
-    persist();
+    (void)persist();
   }
   if (!concatenate_segments()) {
-    snapshot_.state = ExportState::failed;
-    snapshot_.diagnostic = "segment concatenation failed";
-    persist();
+    snapshot_.state = cancel_requested_ ? ExportState::cancelled : ExportState::failed;
+    snapshot_.diagnostic = cancel_requested_ ? "cancelled" : "segment concatenation failed";
+    (void)persist();
     return false;
   }
   snapshot_.state = ExportState::completed;
@@ -168,7 +175,7 @@ bool ResumableSegmentExport::run() {
   snapshot_.progress = 1.0;
   snapshot_.diagnostic = "completed";
   ++snapshot_.generation;
-  persist();
+  (void)persist();
   return true;
 }
 
@@ -185,7 +192,7 @@ bool ResumableSegmentExport::render_segment(ExportSegment& segment) {
       "-c:a", "aac", "-progress", "pipe:1", "-nostats", temporary};
   FfmpegProgressParser parser;
   const auto exit_code = executor_(args, [&](const std::string& line) {
-    parser.consume_line(line);
+    (void)parser.consume_line(line);
     update_progress(segment.index, parser.snapshot());
     return !cancel_requested_;
   });
@@ -231,7 +238,9 @@ void ResumableSegmentExport::request_cancel() noexcept {
 
 bool ResumableSegmentExport::persist() const {
   std::error_code ec;
-  std::filesystem::create_directories(manifest_path_.parent_path(), ec);
+  if (!manifest_path_.parent_path().empty()) {
+    std::filesystem::create_directories(manifest_path_.parent_path(), ec);
+  }
   const auto temporary = manifest_path_.string() + ".tmp";
   std::ofstream out(temporary, std::ios::trunc);
   if (!out) return false;
@@ -246,7 +255,7 @@ bool ResumableSegmentExport::persist() const {
   out << manifest_.segments.size() << '\n';
   for (const auto& segment : manifest_.segments) {
     out << segment.index << ' ' << segment.start_us << ' ' << segment.duration_us << ' '
-        << (segment.completed ? 1 : 0) << ' ' << segment.output_path.string() << '\n';
+        << (segment.completed ? 1 : 0) << ' ' << std::quoted(segment.output_path.string()) << '\n';
   }
   out.close();
   if (!out) return false;
@@ -257,36 +266,59 @@ bool ResumableSegmentExport::persist() const {
 
 std::optional<SegmentExportManifest> ResumableSegmentExport::load(
     const std::filesystem::path& manifest_path) {
-  std::ifstream in(manifest_path);
-  std::string magic;
-  if (!std::getline(in, magic) || magic != "DIGITOR_SEGMENT_EXPORT_V1") return std::nullopt;
-  SegmentExportManifest manifest;
-  if (!std::getline(in, manifest.project_id)) return std::nullopt;
-  std::string value;
-  if (!std::getline(in, value)) return std::nullopt;
-  manifest.input_path = value;
-  if (!std::getline(in, value)) return std::nullopt;
-  manifest.output_path = value;
-  if (!std::getline(in, value)) return std::nullopt;
-  manifest.working_directory = value;
-  if (!(in >> manifest.duration_us >> manifest.segment_duration_us >> manifest.timeline_revision >> manifest.render_revision)) return std::nullopt;
-  int codec = 0;
-  if (!(in >> codec >> manifest.profile.width >> manifest.profile.height >> manifest.profile.fps_num >> manifest.profile.fps_den >> manifest.profile.video_bitrate)) return std::nullopt;
-  manifest.profile.codec = static_cast<ExportCodec>(codec);
-  std::size_t count = 0;
-  if (!(in >> count)) return std::nullopt;
-  manifest.segments.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    ExportSegment segment;
-    int completed = 0;
-    if (!(in >> segment.index >> segment.start_us >> segment.duration_us >> completed)) return std::nullopt;
-    in >> std::ws;
+  try {
+    std::ifstream in(manifest_path);
+    std::string magic;
+    if (!std::getline(in, magic) || magic != "DIGITOR_SEGMENT_EXPORT_V1") return std::nullopt;
+    SegmentExportManifest manifest;
+    if (!std::getline(in, manifest.project_id)) return std::nullopt;
+    std::string value;
     if (!std::getline(in, value)) return std::nullopt;
-    segment.output_path = value;
-    segment.completed = completed != 0;
-    manifest.segments.push_back(std::move(segment));
+    manifest.input_path = value;
+    if (!std::getline(in, value)) return std::nullopt;
+    manifest.output_path = value;
+    if (!std::getline(in, value)) return std::nullopt;
+    manifest.working_directory = value;
+    if (!(in >> manifest.duration_us >> manifest.segment_duration_us >> manifest.timeline_revision >> manifest.render_revision)) return std::nullopt;
+    int codec = 0;
+    if (!(in >> codec >> manifest.profile.width >> manifest.profile.height >> manifest.profile.fps_num >> manifest.profile.fps_den >> manifest.profile.video_bitrate)) return std::nullopt;
+    if (codec < static_cast<int>(ExportCodec::h264) || codec > static_cast<int>(ExportCodec::prores) ||
+        manifest.duration_us < 0 || manifest.segment_duration_us < 250'000 ||
+        manifest.profile.width <= 0 || manifest.profile.height <= 0 ||
+        manifest.profile.fps_num <= 0 || manifest.profile.fps_den <= 0) return std::nullopt;
+    manifest.profile.codec = static_cast<ExportCodec>(codec);
+    std::size_t count = 0;
+    if (!(in >> count)) return std::nullopt;
+    const auto theoretical_max = manifest.duration_us == 0
+                                     ? std::size_t{0}
+                                     : static_cast<std::size_t>((manifest.duration_us + manifest.segment_duration_us - 1) /
+                                                                 manifest.segment_duration_us);
+    constexpr std::size_t hard_max_segments = 1'000'000;
+    if (count != theoretical_max || count > hard_max_segments || count > manifest.segments.max_size()) {
+      return std::nullopt;
+    }
+    manifest.segments.reserve(count);
+    std::int64_t expected_start = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+      ExportSegment segment;
+      int completed = 0;
+      std::string path;
+      if (!(in >> segment.index >> segment.start_us >> segment.duration_us >> completed >> std::quoted(path))) {
+        return std::nullopt;
+      }
+      if (segment.index != i || segment.start_us != expected_start || segment.duration_us <= 0 ||
+          segment.duration_us > manifest.segment_duration_us || (completed != 0 && completed != 1) ||
+          path.empty()) return std::nullopt;
+      segment.output_path = std::move(path);
+      segment.completed = completed != 0;
+      expected_start += segment.duration_us;
+      manifest.segments.push_back(std::move(segment));
+    }
+    if (expected_start != manifest.duration_us) return std::nullopt;
+    return manifest;
+  } catch (...) {
+    return std::nullopt;
   }
-  return manifest;
 }
 
 void ResumableSegmentExport::update_progress(std::size_t active_index,
