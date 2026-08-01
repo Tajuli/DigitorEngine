@@ -85,7 +85,7 @@ class ResumableSegmentExport final {
 
   [[nodiscard]] bool run();
   void request_cancel() noexcept;
-  [[nodiscard]] bool persist() const;
+  bool persist() const;
   [[nodiscard]] SegmentExportSnapshot snapshot() const;
   [[nodiscard]] const SegmentExportManifest& manifest() const noexcept;
 
