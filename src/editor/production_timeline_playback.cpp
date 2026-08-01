@@ -144,9 +144,14 @@ TimelinePlaybackTelemetry ProductionTimelinePlayback::telemetry() const noexcept
 TimelineExecutionPlan ProductionTimelinePlayback::build_preview_plan(
     std::int64_t timestamp_us, std::int64_t audio_window_duration_us) const noexcept {
     const auto snapshot = publisher_->acquire();
-    return snapshot ? build_plan(*snapshot, timestamp_us, audio_window_duration_us)
-                    : TimelineExecutionPlan{TimelineEvaluationStatus::invalid_timeline,
-                                            "no published timeline snapshot"};
+    if (snapshot) {
+        return build_plan(*snapshot, timestamp_us, audio_window_duration_us);
+    }
+
+    TimelineExecutionPlan plan;
+    plan.status = TimelineEvaluationStatus::invalid_timeline;
+    plan.diagnostic = "no published timeline snapshot";
+    return plan;
 }
 
 TimelineExecutionPlan ProductionTimelinePlayback::build_export_plan(
