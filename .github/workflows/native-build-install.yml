@@ -1,0 +1,32 @@
+name: Native Build and Install Qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Configure engine
+        run: cmake -S . -B build -DDIGITOR_BUILD_TESTS=OFF -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF -DDIGITOR_WARNINGS_AS_ERRORS=ON -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/stage
+      - name: Build and install
+        run: cmake --build build --config Release --target install
+      - name: Configure consumer
+        run: cmake -S tests/install_consumer -B consumer-build -DCMAKE_PREFIX_PATH=${{ github.workspace }}/stage
+      - name: Build consumer
+        run: cmake --build consumer-build --config Release
+      - name: Run consumer (Unix)
+        if: runner.os != 'Windows'
+        run: ./consumer-build/digitor_engine_consumer
+      - name: Run consumer (Windows)
+        if: runner.os == 'Windows'
+        run: ./consumer-build/Release/digitor_engine_consumer.exe
