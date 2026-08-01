@@ -1,21 +1,25 @@
-name: Production Timeline Qualification
+name: Production Timeline and Audio Qualification
 
 on:
   pull_request:
     paths:
       - 'include/digitor/production_timeline*.hpp'
       - 'include/digitor/timeline.hpp'
+      - 'include/digitor/audio_mixer.hpp'
       - 'src/editor/production_timeline*.cpp'
       - 'src/editor/timeline.cpp'
+      - 'src/audio/**'
       - 'tests/production_timeline*_tests.cpp'
+      - 'tests/audio_mixer_tests.cpp'
       - 'production_timeline/**'
       - 'docs/production_timeline_v5_1.md'
+      - 'docs/production_audio_v5_2.md'
       - '.github/workflows/production-timeline-qualification.yml'
   workflow_dispatch:
 
 jobs:
-  contract-runtime-playback:
-    name: Contract runtime playback (${{ matrix.os }})
+  contract-runtime-playback-audio:
+    name: Contract runtime playback audio (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -27,13 +31,13 @@ jobs:
         run: cmake -S production_timeline/contract -B build-production-timeline
       - name: Build
         run: cmake --build build-production-timeline --config Release --parallel 2
-      - name: Test all timeline contracts
+      - name: Test all timeline and audio contracts
         run: ctest --test-dir build-production-timeline -C Release --output-on-failure
-      - name: Stress repeat playback contract
+      - name: Stress repeat playback and audio contracts
         shell: bash
         run: |
           for i in $(seq 1 20); do
-            ctest --test-dir build-production-timeline -C Release -R playback --output-on-failure
+            ctest --test-dir build-production-timeline -C Release -R 'playback|audio_mixer' --output-on-failure
           done
 
   qualification-policy:
@@ -41,13 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Enforce playback integration scope
+      - name: Enforce production audio scope
         shell: bash
         run: |
-          test -f include/digitor/production_timeline_playback.hpp
-          test -f src/editor/production_timeline_playback.cpp
-          test -f tests/production_timeline_playback_tests.cpp
-          grep -q 'latest-request-wins' docs/production_timeline_v5_1.md
-          grep -q 'seek epoch' docs/production_timeline_v5_1.md
-          grep -q 'preview/export plan identity' docs/production_timeline_v5_1.md
-          grep -q 'revision-aware plan cache' docs/production_timeline_v5_1.md
+          test -f include/digitor/audio_mixer.hpp
+          test -f src/audio/audio_mixer.cpp
+          test -f tests/audio_mixer_tests.cpp
+          test -f docs/production_audio_v5_2.md
+          grep -q 'sample-accurate mixing' docs/production_audio_v5_2.md
+          grep -q 'preview/export parity' docs/production_audio_v5_2.md
+          grep -q 'soft limiter' docs/production_audio_v5_2.md
+          grep -q 'peak and RMS meters' docs/production_audio_v5_2.md
