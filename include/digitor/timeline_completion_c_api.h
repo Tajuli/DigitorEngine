@@ -19,6 +19,12 @@ extern "C" {
 
 typedef struct DigitorTimelineCompletionHandle DigitorTimelineCompletionHandle;
 
+typedef enum DigitorTimelineTrackRemovalPolicy {
+  DIGITOR_TIMELINE_TRACK_REJECT_IF_NOT_EMPTY = 0,
+  DIGITOR_TIMELINE_TRACK_REMOVE_CLIPS = 1,
+  DIGITOR_TIMELINE_TRACK_REMOVE_CLIPS_AND_LINKED = 2
+} DigitorTimelineTrackRemovalPolicy;
+
 typedef struct DigitorTimelineCompletionSnapshot {
   uint32_t struct_size;
   uint64_t revision;
@@ -37,6 +43,10 @@ DIGITOR_TIMELINE_API int digitor_timeline_completion_load(
     DigitorTimelineCompletionHandle* handle,
     const char* serialized_project,
     size_t serialized_size);
+DIGITOR_TIMELINE_API int digitor_timeline_completion_remove_track(
+    DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    DigitorTimelineTrackRemovalPolicy policy);
 DIGITOR_TIMELINE_API int digitor_timeline_completion_validate(
     const DigitorTimelineCompletionHandle* handle);
 DIGITOR_TIMELINE_API int digitor_timeline_completion_sample(
