@@ -1,0 +1,38 @@
+name: FFmpeg Real-Media Qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  decode-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+      - name: Generate deterministic A/V fixture
+        run: |
+          mkdir -p build/fixtures
+          ffmpeg -hide_banner -loglevel error \
+            -f lavfi -i "testsrc2=size=320x180:rate=30:duration=2" \
+            -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=2" \
+            -c:v mpeg4 -q:v 3 -pix_fmt yuv420p -c:a aac -b:a 128k -shortest \
+            build/fixtures/real_media.mp4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/native
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+          -DDIGITOR_ENABLE_FFMPEG=ON
+          -DDIGITOR_REQUIRE_FFMPEG=ON
+          -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+          -DDIGITOR_WARNINGS_AS_ERRORS=ON
+          -DDIGITOR_REAL_MEDIA_FIXTURE=${{ github.workspace }}/build/fixtures/real_media.mp4
+      - name: Build
+        run: cmake --build build/native --config Release --target digitor_ffmpeg_real_media_test
+      - name: Run real-media qualification
+        run: ctest --test-dir build/native -C Release --output-on-failure -R digitor_ffmpeg_real_media
