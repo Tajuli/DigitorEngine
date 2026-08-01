@@ -1,0 +1,43 @@
+name: Long Timeline Sanitizer Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/av_sync.hpp'
+      - 'src/media/av_sync.cpp'
+      - 'tests/long_timeline_stress_tests.cpp'
+      - '.github/workflows/long-timeline-sanitizer-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  address-undefined:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with ASan and UBSan
+        run: |
+          c++ -std=c++20 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Wpedantic -Werror -Iinclude src/media/av_sync.cpp tests/long_timeline_stress_tests.cpp -o long_timeline_stress
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./long_timeline_stress
+
+  thread:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with TSan
+        run: |
+          c++ -std=c++20 -O1 -g -fno-omit-frame-pointer -fsanitize=thread -Wall -Wextra -Wpedantic -Werror -Iinclude src/media/av_sync.cpp tests/long_timeline_stress_tests.cpp -o long_timeline_tsan
+          TSAN_OPTIONS=halt_on_error=1 ./long_timeline_tsan
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build and run Windows stress qualification
+        shell: cmd
+        run: |
+          cl /nologo /std:c++20 /O2 /W4 /WX /EHsc /Iinclude src\media\av_sync.cpp tests\long_timeline_stress_tests.cpp /Fe:long_timeline_stress.exe
+          long_timeline_stress.exe
