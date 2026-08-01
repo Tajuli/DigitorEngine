@@ -1,55 +1,55 @@
 # Production Timeline Engine v5.1.0
 
-## Runtime integration status
+## Playback integration status
 
-This milestone now includes the production timeline contract plus the first cohesive runtime-integration layer. Merge remains gated by GitHub Actions and review; no hardware qualification is fabricated.
+The production timeline contract, runtime compiler and revision publication layer are now connected to a dedicated asynchronous playback orchestration contract. Merge remains gated by GitHub Actions and review; no hardware qualification is fabricated.
 
 ## Implemented
 
-- Immutable revisioned timeline snapshot contract.
-- Strict timing, source-range, transition, identifier and sample-rate validation.
-- Deterministic half-open clip activation and video compositing order.
-- Trim, retime and reverse timeline-to-source mapping.
-- Transition progress metadata.
-- Sample-domain audio scheduling.
-- **Legacy Timeline snapshot compiler** converting frame-based edit state into immutable microsecond snapshots.
-- Nested timeline flattening with recursion/cycle guard.
-- **Monotonic revision publication** through a thread-safe immutable snapshot publisher.
-- **Decode/render execution plan** containing exact source timestamps, ordered render layers and transition-derived opacity.
-- **Audio mix-block plan** containing source windows and destination sample ranges.
-- Linux, Windows and macOS warning-as-error contract/runtime CI.
-- Focused compiler, nested sequence, revision publication, video plan and audio plan tests.
+- Immutable revisioned timeline snapshots and strict validation.
+- Legacy frame-based Timeline snapshot compiler.
+- Nested sequence flattening with recursion/cycle guard.
+- Monotonic thread-safe revision publication.
+- Deterministic decode, render-layer and audio mix-block execution plans.
+- Asynchronous **latest-request-wins** timeline playback worker.
+- Revision and **seek epoch** binding with stale completion rejection.
+- Bounded **revision-aware plan cache** keyed by revision, timestamp and audio window.
+- Automatic cache/work invalidation when a newer timeline revision is published.
+- Pause, resume, stop, explicit seek and full invalidation controls.
+- Telemetry for requests, completions, stale rejection, cache hits/misses and invalidations.
+- Shared builder proving **preview/export plan identity** for the same revision and timestamp.
+- Linux, Windows and macOS warning-as-error qualification.
+- Repeated playback contract stress execution in CI.
 
 ## Runtime model
 
-`Timeline edit state -> compile immutable snapshot -> validate -> publish increasing revision -> evaluate timestamp -> build decode/render/audio plan`
+`edit Timeline -> immutable snapshot -> monotonic publication -> playback request -> revision/epoch capture -> execution plan cache/build -> stale-work gate -> preview/export consumer`
 
-Consumers acquire a shared immutable snapshot. A stale or duplicate revision is rejected. Preview and export can therefore bind one revision and use the same source timestamp plan without observing partially-mutated edit state.
+Every queued request carries sequence, seek epoch and timeline revision. A result is deliverable only when all three still match the active session state. Seeking, publishing a new revision or invalidating the session clears queued work and cached plans.
 
 ## Safety contracts
 
-- Invalid snapshots fail closed.
-- Revision publication is monotonic.
-- Snapshot acquisition is immutable and lifetime-safe.
-- Nested timeline recursion is guarded.
-- Clip and track ordering is deterministic.
-- Timeline timestamps use microseconds; audio destinations use integer samples.
-- No renderer, decoder or audio engine silently substitutes a different timeline revision.
+- Invalid or missing snapshots fail closed.
+- Stale and duplicate revisions are rejected at publication.
+- Older requests cannot complete after a newer request, seek or revision update.
+- Cached plans never cross revision boundaries.
+- Preview and export use the same execution-plan builder.
+- Timeline timestamps remain microseconds; audio destinations remain integer sample ranges.
+- No decoder, renderer, GPU or audio fallback is introduced.
 
 ## Review and merge gates
 
-1. Contract/runtime CI passes on Linux, Windows and macOS.
-2. Legacy frame-to-microsecond conversion tests pass at supported rational rates.
-3. Nested sequence flattening remains deterministic and cycle-safe.
-4. Revision publication rejects stale/duplicate snapshots.
-5. Decode/render plans preserve exact revision and source timestamps.
-6. Audio mix plans preserve exact destination sample ranges.
-7. Existing engine tests remain unaffected because this change is additive.
+1. Contract, runtime and playback tests pass on Linux, Windows and macOS.
+2. Repeated playback stress contract passes without hangs or stale delivery.
+3. Preview/export plan identity tests preserve revision, source timestamps and layer/audio counts.
+4. Seek invalidation rejects prior queued work.
+5. Revision synchronization clears old plans and publishes only the new revision.
+6. Bounded cache produces deterministic hits and misses.
+7. Thread startup, pause/resume and shutdown complete cleanly.
 
-## Follow-up scope after this PR
+## Next stage after this PR
 
-- PlaybackScheduler binding and seek-epoch propagation.
 - Keyframe automation and transition renderer execution.
 - Dedicated audio mixer/DSP engine.
 - Flutter/C ABI timeline session controls.
-- Real-media preview/export parity, long-timeline stress and sanitizer qualification.
+- Real-media preview/export pixel parity and long-timeline sanitizer qualification.

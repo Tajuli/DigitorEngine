@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  contract-and-runtime:
-    name: Contract and runtime (${{ matrix.os }})
+  contract-runtime-playback:
+    name: Contract runtime playback (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -27,21 +27,27 @@ jobs:
         run: cmake -S production_timeline/contract -B build-production-timeline
       - name: Build
         run: cmake --build build-production-timeline --config Release --parallel 2
-      - name: Test
+      - name: Test all timeline contracts
         run: ctest --test-dir build-production-timeline -C Release --output-on-failure
+      - name: Stress repeat playback contract
+        shell: bash
+        run: |
+          for i in $(seq 1 20); do
+            ctest --test-dir build-production-timeline -C Release -R playback --output-on-failure
+          done
 
   qualification-policy:
     name: Qualification policy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Enforce integration scope and merge gates
+      - name: Enforce playback integration scope
         shell: bash
         run: |
-          test -f include/digitor/production_timeline_runtime.hpp
-          test -f src/editor/production_timeline_runtime.cpp
-          test -f tests/production_timeline_runtime_tests.cpp
-          grep -q 'Legacy Timeline snapshot compiler' docs/production_timeline_v5_1.md
-          grep -q 'Monotonic revision publication' docs/production_timeline_v5_1.md
-          grep -q 'Decode/render execution plan' docs/production_timeline_v5_1.md
-          grep -q 'Audio mix-block plan' docs/production_timeline_v5_1.md
+          test -f include/digitor/production_timeline_playback.hpp
+          test -f src/editor/production_timeline_playback.cpp
+          test -f tests/production_timeline_playback_tests.cpp
+          grep -q 'latest-request-wins' docs/production_timeline_v5_1.md
+          grep -q 'seek epoch' docs/production_timeline_v5_1.md
+          grep -q 'preview/export plan identity' docs/production_timeline_v5_1.md
+          grep -q 'revision-aware plan cache' docs/production_timeline_v5_1.md
