@@ -21,7 +21,7 @@ const ProductionTimelineClip* find_clip(
 bool active_clip_in_plan(const TimelineExecutionPlan& plan,
                          std::uint64_t clip_id) noexcept {
     return std::any_of(plan.render_layers.begin(), plan.render_layers.end(),
-        [clip_id](const RenderLayerPlan& layer) { return layer.clip_id == clip_id; });
+        [clip_id](const TimelineRenderLayer& layer) { return layer.clip_id == clip_id; });
 }
 
 double interpolate_value(const AutomationCurve& curve,
