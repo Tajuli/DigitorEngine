@@ -1,0 +1,33 @@
+name: Timestamp Normalization Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/timestamp_normalization.hpp'
+      - 'src/media/timestamp_normalization.cpp'
+      - 'tests/timestamp_normalization_tests.cpp'
+      - '.github/workflows/timestamp-normalization-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build and run qualification (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -Iinclude src/media/timestamp_normalization.cpp tests/timestamp_normalization_tests.cpp -o timestamp_normalization_tests
+          ./timestamp_normalization_tests
+      - name: Build and run qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /std:c++20 /W4 /WX /EHsc /Iinclude src\media\timestamp_normalization.cpp tests\timestamp_normalization_tests.cpp /Fe:timestamp_normalization_tests.exe
+          timestamp_normalization_tests.exe
