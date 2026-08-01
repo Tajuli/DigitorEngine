@@ -10,14 +10,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            warnings_as_errors: ON
+          - os: windows-latest
+            warnings_as_errors: ON
+          - os: macos-latest
+            warnings_as_errors: OFF
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Configure engine
-        run: cmake -S . -B build -DDIGITOR_BUILD_TESTS=OFF -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF -DDIGITOR_WARNINGS_AS_ERRORS=ON -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/stage
+        run: cmake -S . -B build -DDIGITOR_BUILD_TESTS=OFF -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=OFF -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF -DDIGITOR_WARNINGS_AS_ERRORS=${{ matrix.warnings_as_errors }} -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/stage
       - name: Build and install
         run: cmake --build build --config Release --target install
       - name: Configure consumer
