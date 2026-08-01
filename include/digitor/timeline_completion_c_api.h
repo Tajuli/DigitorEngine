@@ -43,6 +43,14 @@ DIGITOR_TIMELINE_API int digitor_timeline_completion_load(
     DigitorTimelineCompletionHandle* handle,
     const char* serialized_project,
     size_t serialized_size);
+DIGITOR_TIMELINE_API int digitor_timeline_completion_set_track_enabled(
+    DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    int enabled);
+DIGITOR_TIMELINE_API int digitor_timeline_completion_track_enabled(
+    const DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    int* out_enabled);
 DIGITOR_TIMELINE_API int digitor_timeline_completion_remove_track(
     DigitorTimelineCompletionHandle* handle,
     const char* track_id,

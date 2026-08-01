@@ -58,6 +58,7 @@ class MultitrackTimeline {
   [[nodiscard]] const TimelineProjectModel& project() const noexcept;
   [[nodiscard]] std::int64_t duration_us() const noexcept;
   [[nodiscard]] bool validate() const noexcept;
+  [[nodiscard]] bool track_enabled(const std::string& track_id) const noexcept;
   [[nodiscard]] std::int64_t snap(std::int64_t value_us,
                                   std::int64_t threshold_us,
                                   const std::string& excluding_clip_id = {}) const noexcept;
@@ -65,6 +66,7 @@ class MultitrackTimeline {
   bool add_track(TimelineTrackModel track);
   bool remove_track(const std::string& track_id,
                     TrackRemovalPolicy policy = TrackRemovalPolicy::reject_if_not_empty);
+  bool set_track_enabled(const std::string& track_id, bool enabled);
   bool add_clip(const std::string& track_id, TimelineClipModel clip);
   bool remove_clip(const std::string& clip_id, bool remove_linked = true);
   bool link_clips(const std::string& first_clip_id, const std::string& second_clip_id,

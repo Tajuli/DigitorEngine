@@ -43,6 +43,35 @@ int digitor_timeline_completion_load(DigitorTimelineCompletionHandle* handle,
   }
 }
 
+int digitor_timeline_completion_set_track_enabled(
+    DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    int enabled) {
+  if (handle == nullptr || track_id == nullptr || track_id[0] == '\0') return 0;
+  try {
+    return handle->engine.set_track_enabled(track_id, enabled != 0) ? 1 : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+int digitor_timeline_completion_track_enabled(
+    const DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    int* out_enabled) {
+  if (handle == nullptr || track_id == nullptr || track_id[0] == '\0' || out_enabled == nullptr) return 0;
+  try {
+    const auto& tracks = handle->engine.project().timeline.tracks;
+    const auto it = std::find_if(tracks.begin(), tracks.end(),
+                                 [&](const auto& track) { return track.id == track_id; });
+    if (it == tracks.end()) return 0;
+    *out_enabled = handle->engine.track_enabled(track_id) ? 1 : 0;
+    return 1;
+  } catch (...) {
+    return 0;
+  }
+}
+
 int digitor_timeline_completion_remove_track(
     DigitorTimelineCompletionHandle* handle,
     const char* track_id,
