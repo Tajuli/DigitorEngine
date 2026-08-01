@@ -33,7 +33,7 @@ ProductionPlaybackEngine::ProductionPlaybackEngine(ProductionPlaybackConfig conf
     throw std::invalid_argument("playback queue limits are invalid");
   if (config_.gpu_memory_budget_bytes == 0 || config_.late_frame_threshold_us < 0)
     throw std::invalid_argument("playback memory or lateness policy is invalid");
-  worker_ = std::jthread([this](std::stop_token token) { worker_loop(token); });
+  worker_ = std::thread([this] { worker_loop(); });
 }
 
 ProductionPlaybackEngine::~ProductionPlaybackEngine() {
@@ -41,8 +41,8 @@ ProductionPlaybackEngine::~ProductionPlaybackEngine() {
     std::lock_guard lock(mutex_);
     shutdown_ = true;
   }
-  worker_.request_stop();
   wake_.notify_all();
+  if (worker_.joinable()) worker_.join();
 }
 
 std::int64_t ProductionPlaybackEngine::frame_interval_us() const noexcept {
@@ -197,19 +197,19 @@ void ProductionPlaybackEngine::update_quality_locked() {
     quality_ = PlaybackQuality::full;
 }
 
-void ProductionPlaybackEngine::worker_loop(std::stop_token token) {
-  while (!token.stop_requested()) {
+void ProductionPlaybackEngine::worker_loop() {
+  for (;;) {
     PlaybackQuality quality;
     std::uint64_t generation;
     std::int64_t decode_pts;
     double rate;
     {
       std::unique_lock lock(mutex_);
-      wake_.wait(lock, token, [this] {
+      wake_.wait(lock, [this] {
         return shutdown_ || (playing_ && queue_.size() < config_.prefetch_frames &&
                              queued_bytes_ < config_.gpu_memory_budget_bytes);
       });
-      if (shutdown_ || token.stop_requested()) return;
+      if (shutdown_) return;
       quality = quality_;
       generation = generation_;
       rate = rate_;
