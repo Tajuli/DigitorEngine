@@ -1,0 +1,25 @@
+name: Dart FFI Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'dart/digitor_engine_ffi/**'
+      - 'include/digitor/timeline_audio_session.h'
+      - '.github/workflows/dart-ffi-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  analyze-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dart/digitor_engine_ffi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart format .
+      - run: dart analyze --fatal-infos
+      - run: dart test
