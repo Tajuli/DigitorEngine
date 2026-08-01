@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.21)
+project(digitor_engine_ffi_windows LANGUAGES C CXX)
+
+set(DIGITOR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(DIGITOR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(DIGITOR_ENABLE_FFMPEG OFF CACHE BOOL "" FORCE)
+set(DIGITOR_WARNINGS_AS_ERRORS ON CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../.. ${CMAKE_CURRENT_BINARY_DIR}/digitor_engine)
+
+set_target_properties(digitor_engine PROPERTIES
+  OUTPUT_NAME digitor_engine
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED YES)
