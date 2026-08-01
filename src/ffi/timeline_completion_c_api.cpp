@@ -43,6 +43,25 @@ int digitor_timeline_completion_load(DigitorTimelineCompletionHandle* handle,
   }
 }
 
+int digitor_timeline_completion_remove_track(
+    DigitorTimelineCompletionHandle* handle,
+    const char* track_id,
+    DigitorTimelineTrackRemovalPolicy policy) {
+  if (handle == nullptr || track_id == nullptr || track_id[0] == '\0') return 0;
+  if (policy < DIGITOR_TIMELINE_TRACK_REJECT_IF_NOT_EMPTY ||
+      policy > DIGITOR_TIMELINE_TRACK_REMOVE_CLIPS_AND_LINKED) {
+    return 0;
+  }
+  try {
+    return handle->engine.remove_track(
+               track_id, static_cast<digitor::TrackRemovalPolicy>(policy))
+               ? 1
+               : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
 int digitor_timeline_completion_validate(const DigitorTimelineCompletionHandle* handle) {
   if (handle == nullptr) return 0;
   try {
