@@ -130,8 +130,14 @@ typedef _CreateNative = Pointer<Void> Function(Pointer<_NativeConfig>);
 typedef _CreateDart = Pointer<Void> Function(Pointer<_NativeConfig>);
 typedef _ActionNative = Int32 Function(Pointer<Void>);
 typedef _ActionDart = int Function(Pointer<Void>);
-typedef _SnapshotNative = Int32 Function(Pointer<Void>, Pointer<_NativeSnapshot>);
-typedef _SnapshotDart = int Function(Pointer<Void>, Pointer<_NativeSnapshot>);
+typedef _SnapshotNative = Int32 Function(
+  Pointer<Void>,
+  Pointer<_NativeSnapshot>,
+);
+typedef _SnapshotDart = int Function(
+  Pointer<Void>,
+  Pointer<_NativeSnapshot>,
+);
 typedef _DestroyNative = Void Function(Pointer<Void>);
 typedef _DestroyDart = void Function(Pointer<Void>);
 
@@ -140,7 +146,8 @@ final class DigitorExportJob {
     DigitorExportJobConfig config, {
     DynamicLibrary? library,
     String? libraryPath,
-  }) : _library = library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
+  }) : _library =
+           library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
     _bind();
     final native = calloc<_NativeConfig>();
     final strings = <Pointer<Utf8>>[
@@ -168,7 +175,9 @@ final class DigitorExportJob {
         ..durationUs = config.durationUs;
       _handle = _create(native);
       if (_handle == nullptr) {
-        throw StateError('DigitorEngine rejected the export job configuration.');
+        throw StateError(
+          'DigitorEngine rejected the export job configuration.',
+        );
       }
     } finally {
       calloc.free(native);
@@ -190,14 +199,30 @@ final class DigitorExportJob {
   Pointer<Void> _handle = nullptr;
 
   void _bind() {
-    _create = _library.lookupFunction<_CreateNative, _CreateDart>('digitor_export_job_create');
-    _start = _library.lookupFunction<_ActionNative, _ActionDart>('digitor_export_job_start');
-    _pause = _library.lookupFunction<_ActionNative, _ActionDart>('digitor_export_job_pause');
-    _resume = _library.lookupFunction<_ActionNative, _ActionDart>('digitor_export_job_resume');
-    _cancel = _library.lookupFunction<_ActionNative, _ActionDart>('digitor_export_job_cancel');
-    _wait = _library.lookupFunction<_ActionNative, _ActionDart>('digitor_export_job_wait');
-    _snapshot = _library.lookupFunction<_SnapshotNative, _SnapshotDart>('digitor_export_job_snapshot');
-    _destroy = _library.lookupFunction<_DestroyNative, _DestroyDart>('digitor_export_job_destroy');
+    _create = _library.lookupFunction<_CreateNative, _CreateDart>(
+      'digitor_export_job_create',
+    );
+    _start = _library.lookupFunction<_ActionNative, _ActionDart>(
+      'digitor_export_job_start',
+    );
+    _pause = _library.lookupFunction<_ActionNative, _ActionDart>(
+      'digitor_export_job_pause',
+    );
+    _resume = _library.lookupFunction<_ActionNative, _ActionDart>(
+      'digitor_export_job_resume',
+    );
+    _cancel = _library.lookupFunction<_ActionNative, _ActionDart>(
+      'digitor_export_job_cancel',
+    );
+    _wait = _library.lookupFunction<_ActionNative, _ActionDart>(
+      'digitor_export_job_wait',
+    );
+    _snapshot = _library.lookupFunction<_SnapshotNative, _SnapshotDart>(
+      'digitor_export_job_snapshot',
+    );
+    _destroy = _library.lookupFunction<_DestroyNative, _DestroyDart>(
+      'digitor_export_job_destroy',
+    );
   }
 
   bool start() => _invoke(_start);
@@ -218,7 +243,9 @@ final class DigitorExportJob {
       if (_snapshot(_handle, native) == 0) {
         throw StateError('Failed to read the export job snapshot.');
       }
-      final stateIndex = native.ref.state.clamp(0, DigitorExportJobState.values.length - 1);
+      final stateIndex = native.ref.state
+          .clamp(0, DigitorExportJobState.values.length - 1)
+          .toInt();
       final bytes = <int>[];
       for (var i = 0; i < 256; i++) {
         final value = native.ref.diagnostic[i];
@@ -260,6 +287,8 @@ final class DigitorExportJob {
   }
 
   void _ensureOpen() {
-    if (_handle == nullptr) throw StateError('Export job has been disposed.');
+    if (_handle == nullptr) {
+      throw StateError('Export job has been disposed.');
+    }
   }
 }
