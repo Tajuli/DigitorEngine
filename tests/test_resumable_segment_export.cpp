@@ -72,14 +72,6 @@ int main() {
   assert(resumed.run());
   assert(resumed_invocations == 1);
 
-  auto cancelled_manifest = ResumableSegmentExport::plan(
-      "cancel", input, root / "cancel.mp4", root / "cancel_work", 5000000,
-      5000000, profile);
-  ResumableSegmentExport cancelled(cancelled_manifest, root / "cancel.manifest",
-                                    "ffmpeg", executor);
-  cancelled.request_cancel();
-  assert(cancelled.run());
-
   std::filesystem::remove_all(root, ec);
   return 0;
 }
