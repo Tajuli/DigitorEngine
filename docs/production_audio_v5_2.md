@@ -6,7 +6,7 @@ This milestone adds a deterministic float-PCM audio mixer for timeline preview a
 
 ## Implemented
 
-- Sample-accurate mixing in the destination sample domain.
+- sample-accurate mixing in the destination sample domain.
 - Overlapping clip summation.
 - Clip gain in decibels.
 - Constant-power stereo pan.
@@ -16,7 +16,7 @@ This milestone adds a deterministic float-PCM audio mixer for timeline preview a
 - Optional soft limiter.
 - Per-channel peak and RMS meters.
 - Explicit clipped-sample telemetry.
-- Preview/export parity through one shared mixer implementation.
+- preview/export parity through one shared mixer implementation.
 - Validation for sample rate, channel count, timing, PCM layout and control values.
 
 ## Runtime model
