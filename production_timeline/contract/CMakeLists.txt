@@ -11,7 +11,8 @@ add_library(digitor_production_timeline STATIC
     ../../src/editor/production_timeline_automation.cpp
     ../../src/editor/timeline.cpp
     ../../src/audio/audio_mixer.cpp
-    ../../src/audio/audio_time_transform.cpp)
+    ../../src/audio/audio_time_transform.cpp
+    ../../src/audio/audio_dynamics.cpp)
 target_include_directories(digitor_production_timeline PUBLIC ../../include)
 target_compile_features(digitor_production_timeline PUBLIC cxx_std_20)
 target_link_libraries(digitor_production_timeline PUBLIC Threads::Threads)
@@ -28,7 +29,8 @@ foreach(test_name IN ITEMS
     production_timeline_playback_tests
     production_timeline_automation_tests
     audio_mixer_tests
-    audio_time_transform_tests)
+    audio_time_transform_tests
+    audio_dynamics_tests)
     add_executable(digitor_${test_name} ../../tests/${test_name}.cpp)
     target_link_libraries(digitor_${test_name} PRIVATE digitor_production_timeline)
     target_compile_features(digitor_${test_name} PRIVATE cxx_std_20)
@@ -47,3 +49,5 @@ set_tests_properties(digitor_audio_mixer_tests PROPERTIES
     LABELS "production-audio;v5.2.0;mixer;dsp;parity")
 set_tests_properties(digitor_audio_time_transform_tests PROPERTIES
     LABELS "production-audio;v5.3.0;resampler;time-stretch;pitch;parity")
+set_tests_properties(digitor_audio_dynamics_tests PROPERTIES
+    LABELS "production-audio;v5.4.0;eq;compressor;limiter;loudness;parity")
