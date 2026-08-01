@@ -57,6 +57,7 @@ struct ProductionPlaybackTelemetry {
   std::uint64_t cpu_frame_rejections{};
   std::uint64_t seek_requests{};
   std::uint64_t coalesced_seeks{};
+  std::uint64_t loop_count{};
   double average_decode_ms{};
   double average_present_ms{};
   std::int64_t last_presented_pts_us{-1};
@@ -81,6 +82,9 @@ class ProductionPlaybackEngine final {
   void pause(std::int64_t monotonic_now_us);
   void stop();
   void seek(std::int64_t position_us, std::int64_t monotonic_now_us);
+  void scrub(std::int64_t position_us, std::int64_t monotonic_now_us);
+  void step_frames(std::int64_t frame_count, std::int64_t monotonic_now_us);
+  void set_loop_range(std::int64_t in_us, std::int64_t out_us, bool enabled);
   [[nodiscard]] bool set_rate(double rate, std::int64_t monotonic_now_us);
   [[nodiscard]] DigitorResult tick(std::int64_t monotonic_now_us);
   [[nodiscard]] std::int64_t update_audio_clock(std::int64_t raw_audio_clock_us,
@@ -111,6 +115,10 @@ class ProductionPlaybackEngine final {
   bool shutdown_{};
   bool playing_{};
   bool proxy_available_{};
+  bool loop_enabled_{};
+  std::int64_t loop_in_us_{};
+  std::int64_t loop_out_us_{};
+  double rate_{1.0};
   PlaybackQuality quality_{PlaybackQuality::full};
   PlaybackPressure memory_pressure_{PlaybackPressure::normal};
   PlaybackPressure thermal_pressure_{PlaybackPressure::normal};
