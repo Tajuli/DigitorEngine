@@ -1,0 +1,41 @@
+name: Production Timeline Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_timeline.hpp'
+      - 'src/editor/production_timeline.cpp'
+      - 'tests/production_timeline_tests.cpp'
+      - 'production_timeline/**'
+      - '.github/workflows/production-timeline-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    name: Contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S production_timeline/contract -B build-production-timeline
+      - name: Build
+        run: cmake --build build-production-timeline --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build-production-timeline -C Release --output-on-failure
+
+  qualification-policy:
+    name: Qualification policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce draft qualification boundary
+        shell: bash
+        run: |
+          test -f docs/production_timeline_v5_1.md
+          grep -q 'NOT production-qualified' docs/production_timeline_v5_1.md
+          grep -q 'Preview/export timeline parity' docs/production_timeline_v5_1.md
+          grep -q 'Rapid seek and stale-work rejection' docs/production_timeline_v5_1.md
