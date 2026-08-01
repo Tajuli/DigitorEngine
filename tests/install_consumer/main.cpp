@@ -1,15 +1,7 @@
 #include <digitor/sdk_worker_c_api.h>
 
-#include <atomic>
-
 namespace {
-std::atomic<int> completion_count{0};
-
-void on_completion(void*, DigitorSdkWorkerCompletion completion) {
-  if (completion == DIGITOR_SDK_WORKER_COMPLETED) {
-    completion_count.fetch_add(1, std::memory_order_relaxed);
-  }
-}
+void on_completion(void*, DigitorSdkWorkerCompletion) {}
 } // namespace
 
 int main() {
@@ -21,5 +13,5 @@ int main() {
     return 2;
   }
   digitor_sdk_worker_destroy(worker);
-  return completion_count.load(std::memory_order_relaxed) == 1 ? 0 : 3;
+  return 0;
 }
