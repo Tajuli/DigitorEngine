@@ -22,13 +22,12 @@ if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
         CXX_EXTENSIONS OFF
     )
     target_link_libraries(digitor_ffmpeg_real_media_test PRIVATE Digitor::Engine)
-    add_test(
-        NAME digitor_ffmpeg_real_media
-        COMMAND digitor_ffmpeg_real_media_test "${DIGITOR_REAL_MEDIA_FIXTURE}"
-    )
-    set_tests_properties(digitor_ffmpeg_real_media PROPERTIES
-        DISABLED "$<NOT:$<BOOL:${DIGITOR_REAL_MEDIA_FIXTURE}>>"
-    )
+    if(DIGITOR_REAL_MEDIA_FIXTURE)
+        add_test(
+            NAME digitor_ffmpeg_real_media
+            COMMAND digitor_ffmpeg_real_media_test "${DIGITOR_REAL_MEDIA_FIXTURE}"
+        )
+    endif()
 endif()
 
 include(GNUInstallDirs)
