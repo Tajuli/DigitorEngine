@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.21)
+project(DigitorEngineConsumer LANGUAGES C CXX)
+find_package(DigitorEngine 5.17 REQUIRED CONFIG)
+add_executable(digitor_engine_consumer main.cpp)
+target_link_libraries(digitor_engine_consumer PRIVATE Digitor::Engine)
+target_compile_features(digitor_engine_consumer PRIVATE cxx_std_20)
