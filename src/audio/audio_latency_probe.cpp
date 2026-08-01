@@ -17,58 +17,71 @@
 namespace digitor {
 namespace {
 
+#if defined(_WIN32) || defined(__ANDROID__) || defined(__APPLE__)
 std::int64_t frames_to_us(std::uint64_t frames, std::uint32_t sample_rate) noexcept {
   if (sample_rate == 0) return 0;
   constexpr std::uint64_t million = 1000000ULL;
   if (frames > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / million) return 0;
   return static_cast<std::int64_t>((frames * million) / sample_rate);
 }
+#endif
 
 #if defined(_WIN32)
 AudioLatencyProbeResult probe_wasapi() noexcept {
   AudioLatencyProbeResult result;
   result.backend = AudioLatencyBackend::wasapi;
+
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-  const bool uninitialize = SUCCEEDED(initialized);
+  const bool owns_com_initialization = SUCCEEDED(initialized);
   if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) {
     result.diagnostic = "CoInitializeEx failed";
     return result;
   }
 
-  Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
-  Microsoft::WRL::ComPtr<IMMDevice> device;
-  Microsoft::WRL::ComPtr<IAudioClient> client;
-  WAVEFORMATEX* format = nullptr;
-  REFERENCE_TIME default_period = 0;
-  REFERENCE_TIME minimum_period = 0;
-  UINT32 buffer_frames = 0;
+  {
+    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
+    Microsoft::WRL::ComPtr<IMMDevice> device;
+    Microsoft::WRL::ComPtr<IAudioClient> client;
+    WAVEFORMATEX* format = nullptr;
+    REFERENCE_TIME default_period = 0;
+    REFERENCE_TIME minimum_period = 0;
+    UINT32 buffer_frames = 0;
 
-  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&enumerator));
-  if (SUCCEEDED(hr)) hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-  if (SUCCEEDED(hr)) hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                           reinterpret_cast<void**>(client.GetAddressOf()));
-  if (SUCCEEDED(hr)) hr = client->GetMixFormat(&format);
-  if (SUCCEEDED(hr)) hr = client->GetDevicePeriod(&default_period, &minimum_period);
-  if (SUCCEEDED(hr)) {
-    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, default_period, 0, format, nullptr);
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                  IID_PPV_ARGS(&enumerator));
+    if (SUCCEEDED(hr) && enumerator) {
+      hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    }
+    if (SUCCEEDED(hr) && device) {
+      hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                            reinterpret_cast<void**>(client.GetAddressOf()));
+    }
+    if (SUCCEEDED(hr) && client) hr = client->GetMixFormat(&format);
+    if (SUCCEEDED(hr) && client && format != nullptr) {
+      hr = client->GetDevicePeriod(&default_period, &minimum_period);
+    }
+    if (SUCCEEDED(hr) && client && format != nullptr) {
+      hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, default_period, 0, format, nullptr);
+    }
+    if (SUCCEEDED(hr) && client) hr = client->GetBufferSize(&buffer_frames);
+
+    if (SUCCEEDED(hr) && format != nullptr && format->nSamplesPerSec > 0) {
+      result.available = true;
+      result.sample_rate = format->nSamplesPerSec;
+      result.buffer_frames = buffer_frames;
+      result.device_latency_us = default_period / 10;
+      result.buffer_latency_us = frames_to_us(buffer_frames, result.sample_rate);
+      result.total_latency_us = result.device_latency_us + result.buffer_latency_us;
+      result.diagnostic = "WASAPI shared-mode default output";
+    } else {
+      result.diagnostic = "WASAPI default output unavailable";
+    }
+
+    if (format != nullptr) CoTaskMemFree(format);
   }
-  if (SUCCEEDED(hr)) hr = client->GetBufferSize(&buffer_frames);
 
-  if (SUCCEEDED(hr) && format != nullptr && format->nSamplesPerSec > 0) {
-    result.available = true;
-    result.sample_rate = format->nSamplesPerSec;
-    result.buffer_frames = buffer_frames;
-    result.device_latency_us = default_period / 10;
-    result.buffer_latency_us = frames_to_us(buffer_frames, result.sample_rate);
-    result.total_latency_us = result.device_latency_us + result.buffer_latency_us;
-    result.diagnostic = "WASAPI shared-mode default output";
-  } else {
-    result.diagnostic = "WASAPI default output unavailable";
-  }
-
-  if (format != nullptr) CoTaskMemFree(format);
-  if (uninitialize) CoUninitialize();
+  // COM interfaces must be released before balancing CoInitializeEx.
+  if (owns_com_initialization) CoUninitialize();
   return result;
 }
 #elif defined(__ANDROID__)
