@@ -1,0 +1,24 @@
+name: Hardware Export Runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build ffmpeg
+      - name: Configure
+        run: cmake -S . -B build-hw-export -G Ninja -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_WARNINGS_AS_ERRORS=ON
+      - name: Build hardware export qualification
+        run: cmake --build build-hw-export --target digitor_hardware_export_runtime_test
+      - name: Run hardware export qualification
+        run: ctest --test-dir build-hw-export -R '^digitor_hardware_export_runtime$' --output-on-failure
+      - name: Verify FFmpeg exposes a software H.264 encoder
+        run: ffmpeg -hide_banner -encoders 2>&1 | grep -E 'libx264|h264_.*(nvenc|qsv|videotoolbox|mediacodec)'
