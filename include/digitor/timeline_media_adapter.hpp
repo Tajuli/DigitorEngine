@@ -30,36 +30,31 @@ struct MediaDecodeRequest {
 };
 
 struct MediaAdapterCallbacks {
-  std::function<std::optional<RuntimeVideoFrame>(const MediaDecodeRequest&)> decode_video;
-  std::function<std::optional<RuntimeAudioBlock>(const MediaDecodeRequest&, std::size_t)> decode_audio;
-  std::function<bool(const RuntimeVideoFrame&, const TimelineExecutionPlan&)> deliver_preview;
-  std::function<bool(const RuntimeVideoFrame&, const TimelineExecutionPlan&)> deliver_export;
-};
-
-struct TimelineMediaAdapterResult {
-  bool success{};
-  bool used_proxy{};
-  bool delivered{};
-  TimelineRenderResult render;
-  std::string diagnostic;
+  std::function<std::optional<RenderVideoFrame>(const MediaDecodeRequest&)> decode_video;
+  std::function<std::optional<RenderAudioBlock>(const MediaDecodeRequest&, std::size_t)> decode_audio;
+  std::function<bool(const VideoExecutionLayer&, RenderVideoFrame&)> apply_effects;
+  std::function<bool(const VideoExecutionLayer&, const RenderVideoFrame&, RenderVideoFrame&)> composite;
+  std::function<bool(const RenderVideoFrame&, const TimelineExecutionPlan&)> deliver_preview;
+  std::function<bool(const RenderVideoFrame&, const TimelineExecutionPlan&)> deliver_export;
+  std::function<bool()> cancelled;
 };
 
 class TimelineMediaAdapter {
  public:
-  TimelineMediaAdapter(TimelineRenderRuntime& runtime,
-                       std::vector<TimelineMediaSource> sources,
-                       MediaAdapterCallbacks callbacks);
+  TimelineMediaAdapter(std::vector<TimelineMediaSource> sources, MediaAdapterCallbacks callbacks);
 
-  [[nodiscard]] TimelineMediaAdapterResult execute(const TimelineExecutionPlan& plan,
-                                                   std::size_t audio_frames,
-                                                   const std::function<bool()>& cancelled = {});
-
+  [[nodiscard]] TimelineRenderCallbacks make_render_callbacks(TimelineExecutionMode mode,
+                                                               std::uint32_t width,
+                                                               std::uint32_t height,
+                                                               bool allow_proxy) const;
+  [[nodiscard]] bool deliver(const TimelineRenderResult& result,
+                             const TimelineExecutionPlan& plan) const;
   [[nodiscard]] bool has_source(const std::string& clip_id) const noexcept;
   [[nodiscard]] std::optional<std::string> selected_path(const std::string& clip_id,
-                                                         TimelineExecutionMode mode) const;
+                                                         TimelineExecutionMode mode,
+                                                         bool allow_proxy = true) const;
 
  private:
-  TimelineRenderRuntime& runtime_;
   std::unordered_map<std::string, TimelineMediaSource> sources_;
   MediaAdapterCallbacks callbacks_;
 };
