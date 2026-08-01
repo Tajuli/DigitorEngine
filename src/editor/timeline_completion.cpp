@@ -35,15 +35,6 @@ bool has_clip(const TimelineProjectModel& project, const std::string& id) {
   return false;
 }
 
-TimelineClipModel* find_clip(TimelineProjectModel& project, const std::string& id) {
-  for (auto& track : project.tracks) {
-    const auto it = std::find_if(track.clips.begin(), track.clips.end(),
-                                 [&](const auto& clip) { return clip.id == id; });
-    if (it != track.clips.end()) return &*it;
-  }
-  return nullptr;
-}
-
 const TimelineAutomationLane* find_lane(
     const std::vector<TimelineAutomationLane>& lanes,
     const std::string& id) {
@@ -155,8 +146,9 @@ bool TimelineCompletionEngine::set_track_group(TimelineTrackGroup group) {
   for (const auto& id : group.track_ids) {
     if (!has_track(project_.timeline, id) || !unique.insert(id).second) return false;
   }
+  const std::string id = group.id;
   replace_by_id(project_.track_groups, std::move(group),
-                [&](const auto& value) { return value.id == group.id; });
+                [&](const auto& value) { return value.id == id; });
   bump_revision();
   return true;
 }
