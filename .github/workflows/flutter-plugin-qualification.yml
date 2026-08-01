@@ -1,0 +1,29 @@
+name: Flutter Plugin Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'dart/digitor_engine_ffi/**'
+      - '.github/workflows/flutter-plugin-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  package-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - working-directory: dart/digitor_engine_ffi
+        run: flutter pub get
+      - working-directory: dart/digitor_engine_ffi
+        run: dart format --output=none --set-exit-if-changed .
+      - working-directory: dart/digitor_engine_ffi
+        run: flutter analyze --fatal-infos
+      - working-directory: dart/digitor_engine_ffi
+        run: flutter test
+      - run: test -f dart/digitor_engine_ffi/android/CMakeLists.txt
+      - run: test -f dart/digitor_engine_ffi/windows/CMakeLists.txt
+      - run: test -f dart/digitor_engine_ffi/ios/digitor_engine_ffi.podspec
+      - run: test -f dart/digitor_engine_ffi/macos/digitor_engine_ffi.podspec
