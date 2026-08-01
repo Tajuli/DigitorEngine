@@ -20,7 +20,12 @@ jobs:
       - name: Build with ASan and UBSan
         run: |
           c++ -std=c++20 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Wpedantic -Werror -Iinclude src/media/av_sync.cpp tests/long_timeline_stress_tests.cpp -o long_timeline_stress
-          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./long_timeline_stress
+      - name: Run sanitizers with leak detection
+        if: runner.os == 'Linux'
+        run: ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./long_timeline_stress
+      - name: Run sanitizers on macOS
+        if: runner.os == 'macOS'
+        run: ASAN_OPTIONS=halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./long_timeline_stress
 
   thread:
     runs-on: ubuntu-latest
