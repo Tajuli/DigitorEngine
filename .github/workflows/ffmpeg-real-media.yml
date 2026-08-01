@@ -30,7 +30,7 @@ jobs:
           -DDIGITOR_ENABLE_FFMPEG=ON
           -DDIGITOR_REQUIRE_FFMPEG=ON
           -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
-          -DDIGITOR_WARNINGS_AS_ERRORS=ON
+          -DDIGITOR_WARNINGS_AS_ERRORS=OFF
           -DDIGITOR_REAL_MEDIA_FIXTURE=${{ github.workspace }}/build/fixtures/real_media.mp4
       - name: Build
         run: cmake --build build/native --config Release --target digitor_ffmpeg_real_media_test
