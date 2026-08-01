@@ -9,8 +9,7 @@
 #include <thread>
 
 struct DigitorExportJob {
-  digitor::FfmpegExportRequest request;
-  digitor::ExportProfile profile;
+  digitor::TranscodeRequest request;
   std::string ffmpeg{"ffmpeg"};
   std::thread worker;
   mutable std::mutex mutex;
@@ -37,16 +36,16 @@ extern "C" DigitorExportJob* digitor_export_job_create(const DigitorExportJobCon
     job->request.input_path = config->input_path;
     job->request.output_path = config->output_path;
     job->request.duration_us = std::max<int64_t>(config->duration_us, 0);
-    job->profile.codec = static_cast<digitor::ExportCodec>(config->codec);
-    job->profile.width = config->width;
-    job->profile.height = config->height;
-    job->profile.fps_num = config->fps_num;
-    job->profile.fps_den = config->fps_den;
-    job->profile.video_bitrate = config->video_bitrate;
-    job->profile.audio_sample_rate = config->audio_sample_rate;
-    job->profile.audio_channels = config->audio_channels;
-    job->profile.prefer_hardware = config->prefer_hardware != 0;
-    job->profile.allow_software_fallback = config->allow_software_fallback != 0;
+    job->request.profile.codec = static_cast<digitor::ExportCodec>(config->codec);
+    job->request.profile.width = config->width;
+    job->request.profile.height = config->height;
+    job->request.profile.fps_num = config->fps_num;
+    job->request.profile.fps_den = config->fps_den;
+    job->request.profile.video_bitrate = config->video_bitrate;
+    job->request.profile.audio_sample_rate = config->audio_sample_rate;
+    job->request.profile.audio_channels = config->audio_channels;
+    job->request.profile.prefer_hardware = config->prefer_hardware != 0;
+    job->request.profile.allow_software_fallback = config->allow_software_fallback != 0;
     job->snapshot.state = DIGITOR_EXPORT_JOB_IDLE;
     job->snapshot.duration_us = job->request.duration_us;
     copy_diag(job->snapshot.diagnostic, "idle");
@@ -71,7 +70,7 @@ extern "C" int32_t digitor_export_job_start(DigitorExportJob* job) {
         return;
       }
       digitor::HardwareAwareExportRuntime runtime(job->ffmpeg);
-      const auto result = runtime.execute(job->request, job->profile);
+      const auto result = runtime.execute(job->request);
       std::scoped_lock lock(job->mutex);
       job->snapshot.requested_backend = static_cast<int32_t>(result.requested_backend);
       job->snapshot.executed_backend = static_cast<int32_t>(result.executed_backend);
