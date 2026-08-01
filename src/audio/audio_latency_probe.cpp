@@ -10,6 +10,7 @@
 #include <wrl/client.h>
 #elif defined(__ANDROID__)
 #include <aaudio/AAudio.h>
+#include <dlfcn.h>
 #elif defined(__APPLE__)
 #include <CoreAudio/CoreAudio.h>
 #endif
@@ -85,24 +86,75 @@ AudioLatencyProbeResult probe_wasapi() noexcept {
   return result;
 }
 #elif defined(__ANDROID__)
+struct AAudioApi final {
+  void* library = nullptr;
+  aaudio_result_t (*create_stream_builder)(AAudioStreamBuilder**) = nullptr;
+  void (*set_direction)(AAudioStreamBuilder*, aaudio_direction_t) = nullptr;
+  void (*set_performance_mode)(AAudioStreamBuilder*, aaudio_performance_mode_t) = nullptr;
+  void (*set_sharing_mode)(AAudioStreamBuilder*, aaudio_sharing_mode_t) = nullptr;
+  aaudio_result_t (*open_stream)(AAudioStreamBuilder*, AAudioStream**) = nullptr;
+  aaudio_result_t (*delete_builder)(AAudioStreamBuilder*) = nullptr;
+  int32_t (*get_sample_rate)(AAudioStream*) = nullptr;
+  int32_t (*get_frames_per_burst)(AAudioStream*) = nullptr;
+  int32_t (*get_buffer_capacity)(AAudioStream*) = nullptr;
+  aaudio_result_t (*close_stream)(AAudioStream*) = nullptr;
+
+  bool load() noexcept {
+    library = dlopen("libaaudio.so", RTLD_NOW | RTLD_LOCAL);
+    if (library == nullptr) return false;
+
+#define DIGITOR_LOAD_AAUDIO(member, symbol) \
+    member = reinterpret_cast<decltype(member)>(dlsym(library, symbol)); \
+    if (member == nullptr) { unload(); return false; }
+
+    DIGITOR_LOAD_AAUDIO(create_stream_builder, "AAudio_createStreamBuilder")
+    DIGITOR_LOAD_AAUDIO(set_direction, "AAudioStreamBuilder_setDirection")
+    DIGITOR_LOAD_AAUDIO(set_performance_mode, "AAudioStreamBuilder_setPerformanceMode")
+    DIGITOR_LOAD_AAUDIO(set_sharing_mode, "AAudioStreamBuilder_setSharingMode")
+    DIGITOR_LOAD_AAUDIO(open_stream, "AAudioStreamBuilder_openStream")
+    DIGITOR_LOAD_AAUDIO(delete_builder, "AAudioStreamBuilder_delete")
+    DIGITOR_LOAD_AAUDIO(get_sample_rate, "AAudioStream_getSampleRate")
+    DIGITOR_LOAD_AAUDIO(get_frames_per_burst, "AAudioStream_getFramesPerBurst")
+    DIGITOR_LOAD_AAUDIO(get_buffer_capacity, "AAudioStream_getBufferCapacityInFrames")
+    DIGITOR_LOAD_AAUDIO(close_stream, "AAudioStream_close")
+
+#undef DIGITOR_LOAD_AAUDIO
+    return true;
+  }
+
+  void unload() noexcept {
+    if (library != nullptr) {
+      dlclose(library);
+      library = nullptr;
+    }
+  }
+};
+
 AudioLatencyProbeResult probe_aaudio() noexcept {
   AudioLatencyProbeResult result;
   result.backend = AudioLatencyBackend::aaudio;
+
+  AAudioApi api;
+  if (!api.load()) {
+    result.diagnostic = "AAudio unavailable on this Android version";
+    return result;
+  }
+
   AAudioStreamBuilder* builder = nullptr;
   AAudioStream* stream = nullptr;
-  aaudio_result_t status = AAudio_createStreamBuilder(&builder);
-  if (status == AAUDIO_OK) {
-    AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
-    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_SHARED);
-    status = AAudioStreamBuilder_openStream(builder, &stream);
+  aaudio_result_t status = api.create_stream_builder(&builder);
+  if (status == AAUDIO_OK && builder != nullptr) {
+    api.set_direction(builder, AAUDIO_DIRECTION_OUTPUT);
+    api.set_performance_mode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    api.set_sharing_mode(builder, AAUDIO_SHARING_MODE_SHARED);
+    status = api.open_stream(builder, &stream);
   }
-  if (builder != nullptr) AAudioStreamBuilder_delete(builder);
+  if (builder != nullptr) api.delete_builder(builder);
 
   if (status == AAUDIO_OK && stream != nullptr) {
-    const int32_t sample_rate = AAudioStream_getSampleRate(stream);
-    const int32_t burst = AAudioStream_getFramesPerBurst(stream);
-    const int32_t capacity = AAudioStream_getBufferCapacityInFrames(stream);
+    const int32_t sample_rate = api.get_sample_rate(stream);
+    const int32_t burst = api.get_frames_per_burst(stream);
+    const int32_t capacity = api.get_buffer_capacity(stream);
     if (sample_rate > 0 && capacity > 0) {
       result.available = true;
       result.sample_rate = static_cast<std::uint32_t>(sample_rate);
@@ -112,11 +164,15 @@ AudioLatencyProbeResult probe_aaudio() noexcept {
       result.buffer_latency_us = frames_to_us(result.buffer_frames, result.sample_rate);
       result.total_latency_us = result.device_latency_us + result.buffer_latency_us;
       result.diagnostic = "AAudio low-latency shared output";
+    } else {
+      result.diagnostic = "AAudio output properties unavailable";
     }
-    AAudioStream_close(stream);
+    api.close_stream(stream);
   } else {
     result.diagnostic = "AAudio default output unavailable";
   }
+
+  api.unload();
   return result;
 }
 #elif defined(__APPLE__)
