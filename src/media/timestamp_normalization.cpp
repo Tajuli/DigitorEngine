@@ -48,7 +48,11 @@ std::vector<NormalizedVideoTimestamp> normalize_vfr_timestamps(
     bool inferred = false;
     if (duration < config.minimum_duration_us) {
       if (i + 1 < ordered.size() && ordered[i + 1].pts_us > frame.pts_us) {
-        duration = ordered[i + 1].pts_us - frame.pts_us;
+        const auto candidate = ordered[i + 1].pts_us - frame.pts_us;
+        if (candidate >= config.minimum_duration_us &&
+            candidate <= config.discontinuity_threshold_us) {
+          duration = candidate;
+        }
       }
       if (duration < config.minimum_duration_us) duration = config.default_duration_us;
       inferred = true;
