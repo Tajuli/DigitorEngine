@@ -75,106 +75,116 @@ final class DigitorTimelineSessionTelemetryNative extends Struct {
   external int controlUpdates;
 }
 
-typedef _CreateNative = Int32 Function(
+typedef DigitorCreateNative = Int32 Function(
   Pointer<DigitorTimelineSessionConfigNative>,
   Pointer<Pointer<DigitorTimelineAudioSession>>,
 );
-typedef _CreateDart = int Function(
+typedef DigitorCreateDart = int Function(
   Pointer<DigitorTimelineSessionConfigNative>,
   Pointer<Pointer<DigitorTimelineAudioSession>>,
 );
-typedef _DestroyNative = Int32 Function(
+typedef DigitorDestroyNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
 );
-typedef _DestroyDart = int Function(Pointer<DigitorTimelineAudioSession>);
-typedef _PublishNative = Int32 Function(
+typedef DigitorDestroyDart = int Function(
   Pointer<DigitorTimelineAudioSession>,
-  Pointer<DigitorTimelinePublicationNative>,
 );
-typedef _PublishDart = int Function(
+typedef DigitorPublishNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorTimelinePublicationNative>,
 );
-typedef _CommandNative = Int32 Function(
+typedef DigitorPublishDart = int Function(
+  Pointer<DigitorTimelineAudioSession>,
+  Pointer<DigitorTimelinePublicationNative>,
+);
+typedef DigitorCommandNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
 );
-typedef _CommandDart = int Function(Pointer<DigitorTimelineAudioSession>);
-typedef _SeekNative = Int32 Function(
+typedef DigitorCommandDart = int Function(
+  Pointer<DigitorTimelineAudioSession>,
+);
+typedef DigitorSeekNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
   Int64,
 );
-typedef _SeekDart = int Function(
+typedef DigitorSeekDart = int Function(
   Pointer<DigitorTimelineAudioSession>,
   int,
 );
-typedef _ControlsNative = Int32 Function(
+typedef DigitorControlsNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorAudioSessionControlsNative>,
 );
-typedef _ControlsDart = int Function(
+typedef DigitorControlsDart = int Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorAudioSessionControlsNative>,
 );
-typedef _StatusNative = Int32 Function(
+typedef DigitorStatusNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorTimelineSessionStatusNative>,
 );
-typedef _StatusDart = int Function(
+typedef DigitorStatusDart = int Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorTimelineSessionStatusNative>,
 );
-typedef _TelemetryNative = Int32 Function(
+typedef DigitorTelemetryNative = Int32 Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorTimelineSessionTelemetryNative>,
 );
-typedef _TelemetryDart = int Function(
+typedef DigitorTelemetryDart = int Function(
   Pointer<DigitorTimelineAudioSession>,
   Pointer<DigitorTimelineSessionTelemetryNative>,
 );
 
 final class DigitorTimelineBindings {
   DigitorTimelineBindings(DynamicLibrary library)
-      : create = library.lookupFunction<_CreateNative, _CreateDart>(
+      : create = library.lookupFunction<DigitorCreateNative, DigitorCreateDart>(
           'digitor_timeline_session_create',
         ),
-        destroy = library.lookupFunction<_DestroyNative, _DestroyDart>(
+        destroy =
+            library.lookupFunction<DigitorDestroyNative, DigitorDestroyDart>(
           'digitor_timeline_session_destroy',
         ),
-        publish = library.lookupFunction<_PublishNative, _PublishDart>(
+        publish =
+            library.lookupFunction<DigitorPublishNative, DigitorPublishDart>(
           'digitor_timeline_session_publish',
         ),
-        play = library.lookupFunction<_CommandNative, _CommandDart>(
+        play =
+            library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_play',
         ),
-        pause = library.lookupFunction<_CommandNative, _CommandDart>(
+        pause =
+            library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_pause',
         ),
-        stop = library.lookupFunction<_CommandNative, _CommandDart>(
+        stop =
+            library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_stop',
         ),
-        seek = library.lookupFunction<_SeekNative, _SeekDart>(
+        seek = library.lookupFunction<DigitorSeekNative, DigitorSeekDart>(
           'digitor_timeline_session_seek',
         ),
-        setAudioControls = library.lookupFunction<
-          _ControlsNative,
-          _ControlsDart
-        >('digitor_timeline_session_set_audio_controls'),
-        getStatus = library.lookupFunction<_StatusNative, _StatusDart>(
+        setAudioControls =
+            library.lookupFunction<DigitorControlsNative, DigitorControlsDart>(
+          'digitor_timeline_session_set_audio_controls',
+        ),
+        getStatus =
+            library.lookupFunction<DigitorStatusNative, DigitorStatusDart>(
           'digitor_timeline_session_get_status',
         ),
-        getTelemetry = library.lookupFunction<
-          _TelemetryNative,
-          _TelemetryDart
-        >('digitor_timeline_session_get_telemetry');
+        getTelemetry = library
+            .lookupFunction<DigitorTelemetryNative, DigitorTelemetryDart>(
+          'digitor_timeline_session_get_telemetry',
+        );
 
-  final _CreateDart create;
-  final _DestroyDart destroy;
-  final _PublishDart publish;
-  final _CommandDart play;
-  final _CommandDart pause;
-  final _CommandDart stop;
-  final _SeekDart seek;
-  final _ControlsDart setAudioControls;
-  final _StatusDart getStatus;
-  final _TelemetryDart getTelemetry;
+  final DigitorCreateDart create;
+  final DigitorDestroyDart destroy;
+  final DigitorPublishDart publish;
+  final DigitorCommandDart play;
+  final DigitorCommandDart pause;
+  final DigitorCommandDart stop;
+  final DigitorSeekDart seek;
+  final DigitorControlsDart setAudioControls;
+  final DigitorStatusDart getStatus;
+  final DigitorTelemetryDart getTelemetry;
 }
