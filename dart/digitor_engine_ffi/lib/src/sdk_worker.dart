@@ -52,15 +52,20 @@ final class DigitorSdkWorker {
       throw ArgumentError.value(totalUnits, 'totalUnits');
     }
     final progressController = StreamController<DigitorWorkerProgress>.broadcast();
-    final completionController = StreamController<DigitorWorkerCompletion>.broadcast();
+    final completionController =
+        StreamController<DigitorWorkerCompletion>.broadcast();
     final progress = NativeCallable<_ProgressNative>.listener(
-      (_, completed, total) => progressController.add(
-        DigitorWorkerProgress(completed, total),
-      ),
+      (Pointer<Void> _, int completed, int total) {
+        progressController.add(DigitorWorkerProgress(completed, total));
+      },
     );
-    final completion = NativeCallable<_CompletionNative>.listener((_, result) {
-      completionController.add(DigitorWorkerCompletion.values[result]);
-    });
+    final completion = NativeCallable<_CompletionNative>.listener(
+      (Pointer<Void> _, int result) {
+        if (result >= 0 && result < DigitorWorkerCompletion.values.length) {
+          completionController.add(DigitorWorkerCompletion.values[result]);
+        }
+      },
+    );
     final create = library.lookupFunction<_CreateNative, _CreateDart>(
       'digitor_sdk_worker_create',
     );
@@ -78,9 +83,15 @@ final class DigitorSdkWorker {
     }
     return DigitorSdkWorker._(
       handle,
-      library.lookupFunction<_CommandNative, _CommandDart>('digitor_sdk_worker_start'),
-      library.lookupFunction<_CommandNative, _CommandDart>('digitor_sdk_worker_cancel'),
-      library.lookupFunction<_DestroyNative, _DestroyDart>('digitor_sdk_worker_destroy'),
+      library.lookupFunction<_CommandNative, _CommandDart>(
+        'digitor_sdk_worker_start',
+      ),
+      library.lookupFunction<_CommandNative, _CommandDart>(
+        'digitor_sdk_worker_cancel',
+      ),
+      library.lookupFunction<_DestroyNative, _DestroyDart>(
+        'digitor_sdk_worker_destroy',
+      ),
       progress,
       completion,
     )
@@ -99,7 +110,8 @@ final class DigitorSdkWorker {
   bool _disposed = false;
 
   Stream<DigitorWorkerProgress> get progress => _progressController.stream;
-  Stream<DigitorWorkerCompletion> get completion => _completionController.stream;
+  Stream<DigitorWorkerCompletion> get completion =>
+      _completionController.stream;
 
   bool start() {
     _ensureAlive();
