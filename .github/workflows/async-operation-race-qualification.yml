@@ -1,0 +1,41 @@
+name: Async Operation Race Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/async_operation.hpp'
+      - 'src/runtime/async_operation.cpp'
+      - 'tests/async_operation_race_tests.cpp'
+      - '.github/workflows/async-operation-race-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build and run qualification (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          c++ -std=c++20 -O1 -g -Wall -Wextra -Wpedantic -Werror -pthread -Iinclude src/runtime/async_operation.cpp tests/async_operation_race_tests.cpp -o async_operation_race_tests
+          ./async_operation_race_tests
+      - name: Build and run qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /std:c++20 /O2 /W4 /WX /EHsc /Iinclude src\runtime\async_operation.cpp tests\async_operation_race_tests.cpp /Fe:async_operation_race_tests.exe
+          async_operation_race_tests.exe
+
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run with TSan
+        run: |
+          c++ -std=c++20 -O1 -g -fno-omit-frame-pointer -fsanitize=thread -Wall -Wextra -Wpedantic -Werror -pthread -Iinclude src/runtime/async_operation.cpp tests/async_operation_race_tests.cpp -o async_operation_race_tsan
+          TSAN_OPTIONS=halt_on_error=1 ./async_operation_race_tsan
