@@ -1,0 +1,46 @@
+name: Media Decode Render Soak
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/async_operation.hpp'
+      - 'include/digitor/av_sync.hpp'
+      - 'include/digitor/timestamp_normalization.hpp'
+      - 'src/runtime/async_operation.cpp'
+      - 'src/media/av_sync.cpp'
+      - 'src/media/timestamp_normalization.cpp'
+      - 'tests/media_decode_render_soak_tests.cpp'
+      - '.github/workflows/media-decode-render-soak.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build and run soak (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          c++ -std=c++20 -O2 -pthread -Wall -Wextra -Wpedantic -Werror -Iinclude src/runtime/async_operation.cpp src/media/av_sync.cpp src/media/timestamp_normalization.cpp tests/media_decode_render_soak_tests.cpp -o media_soak
+          ./media_soak
+      - name: Build and run soak (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /std:c++20 /O2 /W4 /WX /EHsc /Iinclude src\runtime\async_operation.cpp src\media\av_sync.cpp src\media\timestamp_normalization.cpp tests\media_decode_render_soak_tests.cpp /Fe:media_soak.exe
+          media_soak.exe
+
+  sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ASan and UBSan soak
+        run: |
+          c++ -std=c++20 -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -Wpedantic -Werror -Iinclude src/runtime/async_operation.cpp src/media/av_sync.cpp src/media/timestamp_normalization.cpp tests/media_decode_render_soak_tests.cpp -o media_soak_sanitized
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./media_soak_sanitized
