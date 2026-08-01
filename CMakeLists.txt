@@ -17,8 +17,6 @@ target_sources(digitor_engine PRIVATE
 
 if(WIN32)
     target_link_libraries(digitor_engine PRIVATE ole32)
-elseif(ANDROID)
-    target_link_libraries(digitor_engine PRIVATE aaudio)
 elseif(APPLE)
     find_library(DIGITOR_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
     target_link_libraries(digitor_engine PRIVATE ${DIGITOR_COREAUDIO_FRAMEWORK})
