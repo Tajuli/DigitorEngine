@@ -9,6 +9,11 @@ namespace digitor {
 
 enum class TimelineTrackType { video, audio };
 enum class TimelineClipType { video, image, overlay, text, audio };
+enum class TrackRemovalPolicy {
+  reject_if_not_empty,
+  remove_clips,
+  remove_clips_and_linked
+};
 
 struct TimelineClipModel {
   std::string id;
@@ -58,6 +63,8 @@ class MultitrackTimeline {
                                   const std::string& excluding_clip_id = {}) const noexcept;
 
   bool add_track(TimelineTrackModel track);
+  bool remove_track(const std::string& track_id,
+                    TrackRemovalPolicy policy = TrackRemovalPolicy::reject_if_not_empty);
   bool add_clip(const std::string& track_id, TimelineClipModel clip);
   bool remove_clip(const std::string& clip_id, bool remove_linked = true);
   bool link_clips(const std::string& first_clip_id, const std::string& second_clip_id,
