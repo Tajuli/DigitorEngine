@@ -1,0 +1,37 @@
+name: Unified Zero-Copy Runtime
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S unified_zero_copy/contract -B build-unified-zero-copy
+      - name: Build focused target
+        run: cmake --build build-unified-zero-copy --target digitor_unified_zero_copy_runtime_tests --config Release --parallel 2
+      - name: Test focused contract
+        run: ctest --test-dir build-unified-zero-copy -C Release -R digitor_unified_zero_copy_runtime_tests --output-on-failure
+
+  production-hardware-matrix:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    strategy:
+      matrix:
+        include:
+          - runner: '["self-hosted","Windows","digitor-gpu-lab"]'
+            platform: windows
+          - runner: '["self-hosted","Linux","Android","digitor-android-device-lab"]'
+            platform: android
+          - runner: '["self-hosted","macOS","digitor-apple-gpu-lab"]'
+            platform: apple
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run platform qualification and emit evidence
+        run: ./scripts/run_unified_zero_copy_qualification.sh ${{ matrix.platform }}
