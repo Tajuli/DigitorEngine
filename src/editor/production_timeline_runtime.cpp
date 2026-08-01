@@ -72,7 +72,6 @@ TimelineCompileResult compile_timeline_snapshot(
         auto snapshot = std::make_shared<ProductionTimelineSnapshot>();
         snapshot->revision = revision;
         snapshot->audio_sample_rate = audio_sample_rate;
-        const auto rate = timeline.frame_rate();
         std::unordered_set<const Timeline*> recursion_guard;
 
         const auto compile_sequence = [&](const auto& self,
