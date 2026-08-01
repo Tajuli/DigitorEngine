@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.21.0
+    VERSION 5.22.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -15,6 +15,8 @@ target_sources(digitor_engine PRIVATE
     src/audio/audio_latency_probe.cpp
     src/audio/audio_sync_compensation.cpp
     src/ffi/audio_sync_c_api.cpp
+    src/audio/live_playback_sync.cpp
+    src/ffi/live_playback_sync_c_api.cpp
 )
 
 if(WIN32)
@@ -27,16 +29,14 @@ endif()
 if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_audio_latency_probe_test tests/test_audio_latency_probe.cpp)
     add_executable(digitor_audio_sync_compensation_test tests/test_audio_sync_compensation.cpp)
-    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test)
-        set_target_properties(${target} PROPERTIES
-            CXX_STANDARD 20
-            CXX_STANDARD_REQUIRED ON
-            CXX_EXTENSIONS OFF
-        )
+    add_executable(digitor_live_playback_sync_test tests/test_live_playback_sync.cpp)
+    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_live_playback_sync_test)
+        set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
     endforeach()
     add_test(NAME digitor_audio_latency_probe COMMAND digitor_audio_latency_probe_test)
     add_test(NAME digitor_audio_sync_compensation COMMAND digitor_audio_sync_compensation_test)
+    add_test(NAME digitor_live_playback_sync COMMAND digitor_live_playback_sync_test)
 endif()
 
 if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
@@ -46,7 +46,6 @@ if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
     if(DIGITOR_REAL_MEDIA_FIXTURE)
         add_test(NAME digitor_ffmpeg_real_media COMMAND digitor_ffmpeg_real_media_test "${DIGITOR_REAL_MEDIA_FIXTURE}")
     endif()
-
     add_executable(digitor_ffmpeg_vfr_parity_test tests/test_ffmpeg_vfr_parity.cpp)
     set_target_properties(digitor_ffmpeg_vfr_parity_test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
     target_link_libraries(digitor_ffmpeg_vfr_parity_test PRIVATE Digitor::Engine)
@@ -57,13 +56,10 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-
-set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.21.0 SOVERSION 5)
-
+set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.22.0 SOVERSION 5)
 install(TARGETS digitor_engine EXPORT DigitorEngineTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/digitor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-
 configure_package_config_file(cmake/DigitorEngineConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.21.0 COMPATIBILITY SameMajorVersion)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.22.0 COMPATIBILITY SameMajorVersion)
 install(EXPORT DigitorEngineTargets FILE DigitorEngineTargets.cmake NAMESPACE Digitor:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
