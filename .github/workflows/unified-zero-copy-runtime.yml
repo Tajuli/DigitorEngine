@@ -22,6 +22,7 @@ jobs:
   production-hardware-matrix:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: '["self-hosted","Windows","digitor-gpu-lab"]'
@@ -33,5 +34,9 @@ jobs:
     runs-on: ${{ fromJSON(matrix.runner) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Run platform qualification and emit evidence
-        run: ./scripts/run_unified_zero_copy_qualification.sh ${{ matrix.platform }}
+      - name: Validate platform qualification evidence
+        run: python scripts/run_unified_zero_copy_qualification.py ${{ matrix.platform }} --input qualification-${{ matrix.platform }}.json --output unified-zero-copy-${{ matrix.platform }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unified-zero-copy-${{ matrix.platform }}
+          path: unified-zero-copy-${{ matrix.platform }}.json
