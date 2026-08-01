@@ -8,6 +8,9 @@
 #include <string>
 
 struct DigitorTimelineCompletionHandle {
+  DigitorTimelineCompletionHandle()
+      : engine(digitor::TimelineCompletionProject{}) {}
+
   digitor::TimelineCompletionEngine engine;
 };
 
@@ -15,7 +18,7 @@ extern "C" {
 
 DigitorTimelineCompletionHandle* digitor_timeline_completion_create(void) {
   try {
-    return new DigitorTimelineCompletionHandle{};
+    return new DigitorTimelineCompletionHandle();
   } catch (...) {
     return nullptr;
   }
