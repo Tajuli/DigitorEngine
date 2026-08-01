@@ -4,7 +4,9 @@ project(DigitorProductionTimelineContract LANGUAGES CXX)
 enable_testing()
 
 add_library(digitor_production_timeline STATIC
-    ../../src/editor/production_timeline.cpp)
+    ../../src/editor/production_timeline.cpp
+    ../../src/editor/production_timeline_runtime.cpp
+    ../../src/editor/timeline.cpp)
 target_include_directories(digitor_production_timeline PUBLIC ../../include)
 target_compile_features(digitor_production_timeline PUBLIC cxx_std_20)
 
@@ -19,7 +21,17 @@ add_executable(digitor_production_timeline_tests
 target_link_libraries(digitor_production_timeline_tests PRIVATE digitor_production_timeline)
 target_compile_features(digitor_production_timeline_tests PRIVATE cxx_std_20)
 
+add_executable(digitor_production_timeline_runtime_tests
+    ../../tests/production_timeline_runtime_tests.cpp)
+target_link_libraries(digitor_production_timeline_runtime_tests PRIVATE digitor_production_timeline)
+target_compile_features(digitor_production_timeline_runtime_tests PRIVATE cxx_std_20)
+
 add_test(NAME digitor_production_timeline_tests
     COMMAND digitor_production_timeline_tests)
 set_tests_properties(digitor_production_timeline_tests PROPERTIES
     LABELS "production-timeline;v5.1.0;contract")
+
+add_test(NAME digitor_production_timeline_runtime_tests
+    COMMAND digitor_production_timeline_runtime_tests)
+set_tests_properties(digitor_production_timeline_runtime_tests PROPERTIES
+    LABELS "production-timeline;v5.1.0;runtime;integration")

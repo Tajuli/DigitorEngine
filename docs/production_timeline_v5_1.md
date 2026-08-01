@@ -1,54 +1,55 @@
 # Production Timeline Engine v5.1.0
 
-## Status
+## Runtime integration status
 
-This branch starts the production timeline milestone. It is **NOT production-qualified** and must remain unmerged until the qualification checklist below is complete.
+This milestone now includes the production timeline contract plus the first cohesive runtime-integration layer. Merge remains gated by GitHub Actions and review; no hardware qualification is fabricated.
 
-## Implemented in this slice
+## Implemented
 
 - Immutable revisioned timeline snapshot contract.
-- Strict validation for identifiers, timing ranges, playback rate, source coverage and transition ranges.
-- Half-open clip activation semantics: `[start, end)`.
-- Deterministic video compositing order independent of input vector order.
-- Timeline-to-source timestamp mapping for trimmed, retimed and reverse clips.
-- Transition-in and transition-out progress metadata.
-- Muted/disabled audio and disabled track/clip filtering.
-- Deterministic audio-window scheduling in the timeline sample-rate domain.
-- Standalone warning-clean C++20 contract project.
-- Linux, Windows and macOS hosted CI contract matrix.
+- Strict timing, source-range, transition, identifier and sample-rate validation.
+- Deterministic half-open clip activation and video compositing order.
+- Trim, retime and reverse timeline-to-source mapping.
+- Transition progress metadata.
+- Sample-domain audio scheduling.
+- **Legacy Timeline snapshot compiler** converting frame-based edit state into immutable microsecond snapshots.
+- Nested timeline flattening with recursion/cycle guard.
+- **Monotonic revision publication** through a thread-safe immutable snapshot publisher.
+- **Decode/render execution plan** containing exact source timestamps, ordered render layers and transition-derived opacity.
+- **Audio mix-block plan** containing source windows and destination sample ranges.
+- Linux, Windows and macOS warning-as-error contract/runtime CI.
+- Focused compiler, nested sequence, revision publication, video plan and audio plan tests.
 
-## Deliberately not claimed complete
+## Runtime model
 
-- Mutation/edit command layer integration with the legacy `Timeline` class.
-- Insert, overwrite, ripple, roll, slip and slide command qualification.
-- Nested sequence recursion and cycle rejection.
-- Keyframe evaluation.
-- Transition renderer execution.
-- Timeline-to-Render-Graph compilation.
-- Decoder request scheduling and cache invalidation integration.
-- Audio resampling/mixing execution.
-- Flutter C ABI exposure.
-- Preview/export timeline parity.
-- Real-media and device qualification.
+`Timeline edit state -> compile immutable snapshot -> validate -> publish increasing revision -> evaluate timestamp -> build decode/render/audio plan`
 
-## Merge gates
+Consumers acquire a shared immutable snapshot. A stale or duplicate revision is rejected. Preview and export can therefore bind one revision and use the same source timestamp plan without observing partially-mutated edit state.
 
-1. Contract CI passes on Linux, Windows and macOS.
-2. Existing full unit and install-consumer matrix remains green.
-3. Legacy Timeline edits compile into immutable production snapshots.
-4. Frame-boundary tests cover CFR, VFR timestamps and end-of-stream behavior.
-5. Nested sequences reject cycles and preserve deterministic identity.
-6. Rapid seek and stale-work rejection passes under the existing PlaybackScheduler.
-7. Preview/export timeline parity uses the same snapshot revision and source timestamp set.
-8. Audio scheduling is sample-accurate across 44.1 kHz, 48 kHz and 96 kHz.
-9. Long-timeline stress covers at least 10,000 clips without unbounded allocation or nondeterminism.
-10. Sanitizer/thread-safety runs report no race, leak or lifetime failure.
+## Safety contracts
 
-## Next implementation slices on this PR
+- Invalid snapshots fail closed.
+- Revision publication is monotonic.
+- Snapshot acquisition is immutable and lifetime-safe.
+- Nested timeline recursion is guarded.
+- Clip and track ordering is deterministic.
+- Timeline timestamps use microseconds; audio destinations use integer samples.
+- No renderer, decoder or audio engine silently substitutes a different timeline revision.
 
-- Snapshot compiler from the current editing Timeline model.
-- Deterministic edit-command transaction and revision publication.
-- Nested timeline evaluation with recursion limits and cycle detection.
-- Render/decode request plan generation.
-- Audio block plan and automation hooks.
-- Qualification fixtures, stress tests and preview/export integration.
+## Review and merge gates
+
+1. Contract/runtime CI passes on Linux, Windows and macOS.
+2. Legacy frame-to-microsecond conversion tests pass at supported rational rates.
+3. Nested sequence flattening remains deterministic and cycle-safe.
+4. Revision publication rejects stale/duplicate snapshots.
+5. Decode/render plans preserve exact revision and source timestamps.
+6. Audio mix plans preserve exact destination sample ranges.
+7. Existing engine tests remain unaffected because this change is additive.
+
+## Follow-up scope after this PR
+
+- PlaybackScheduler binding and seek-epoch propagation.
+- Keyframe automation and transition renderer execution.
+- Dedicated audio mixer/DSP engine.
+- Flutter/C ABI timeline session controls.
+- Real-media preview/export parity, long-timeline stress and sanitizer qualification.
