@@ -80,7 +80,16 @@ if(WIN32)
     target_link_libraries(digitor_engine PRIVATE ole32)
 elseif(APPLE)
     find_library(DIGITOR_COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
-    target_link_libraries(digitor_engine PRIVATE ${DIGITOR_COREAUDIO_FRAMEWORK})
+    find_library(DIGITOR_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+    find_library(DIGITOR_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+    find_library(DIGITOR_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+    target_link_libraries(digitor_engine
+        PRIVATE ${DIGITOR_COREAUDIO_FRAMEWORK}
+        PUBLIC
+            ${DIGITOR_COREMEDIA_FRAMEWORK}
+            ${DIGITOR_COREVIDEO_FRAMEWORK}
+            ${DIGITOR_VIDEOTOOLBOX_FRAMEWORK}
+    )
 endif()
 
 if(DIGITOR_BUILD_TESTS)
