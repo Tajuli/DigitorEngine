@@ -184,7 +184,7 @@ DigitorResult DisplayManager::build_plan(const DisplayTransformRequest& request,
   if (!display) {
     telemetry_.last_error = "no matching display is registered";
     set_diagnostic(diagnostic, telemetry_.last_error);
-    return DIGITOR_RESULT_INVALID_STATE;
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   if (request.require_icc_profile && display->icc_profile.empty()) {
     telemetry_.last_error = "the selected display has no ICC profile";
