@@ -49,5 +49,21 @@ int main() {
   r = import_native_media_surface(surface(), d3d);
   assert(r.failure == NativeSurfaceImportFailure::backend_unavailable);
   assert(!r.frame);
+
+  // This is explicitly a routing contract test, not hardware qualification.
+  NativeSurfaceImportTarget android{}; android.backend = DIGITOR_RENDERER_VULKAN;
+  android.android = [](const ZeroCopyImportRequest& request,
+                       ProcessedGpuFramePtr& frame) {
+    static int mock_context;
+    const auto& d=request.surface->descriptor();
+    GpuFrameMetadata metadata{d.width,d.height,DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,
+                              GpuFrameAlpha::straight,d.timestamp_us,"linear-rgba"};
+    frame=std::make_shared<ProcessedGpuFrame>(&mock_context,DIGITOR_RENDERER_VULKAN,
+        metadata,77,request.surface,std::make_shared<std::atomic_bool>(true),false);
+    return DIGITOR_RESULT_OK;
+  };
+  r=import_native_media_surface(surface(NativeMediaHandleType::ahardware_buffer,
+      NativeMediaPixelFormat::nv12,NativeMediaPlatform::android),android);
+  assert(r && r.frame->backend()==DIGITOR_RENDERER_VULKAN);
   return 0;
 }

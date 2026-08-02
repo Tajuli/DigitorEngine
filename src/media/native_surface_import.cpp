@@ -139,6 +139,21 @@ NativeSurfaceImportResult import_native_media_surface(
       result = target.metal->import_metal(in, imported);
       if (result == DIGITOR_RESULT_OK) result = target.metal->convert(imported, frame);
 #endif
+    } else if (target.backend == DIGITOR_RENDERER_VULKAN ||
+               target.backend == DIGITOR_RENDERER_OPENGL_ES) {
+      if (d.platform != NativeMediaPlatform::android ||
+          d.handle_type != NativeMediaHandleType::ahardware_buffer)
+        return fail(NativeSurfaceImportFailure::unsupported_handle,
+                    DIGITOR_RESULT_UNSUPPORTED,
+                    "Android GPU import requires a retained AHardwareBuffer");
+      if (!target.android)
+        return fail(NativeSurfaceImportFailure::backend_unavailable,
+                    DIGITOR_RESULT_NOT_INITIALIZED,
+                    "Android backend-owned native importer is not initialized");
+      ZeroCopyImportRequest request{surface, target.backend,
+                                    options.working_format,
+                                    options.working_color_space};
+      result = target.android(request, frame);
     }
     if (result != DIGITOR_RESULT_OK)
       return fail(NativeSurfaceImportFailure::backend_unavailable, result,

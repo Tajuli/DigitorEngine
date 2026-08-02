@@ -8,7 +8,8 @@ if(DIGITOR_BUILD_ANDROID_ZERO_COPY_CONCRETE_BINDINGS)
   endif()
 
   add_library(digitor_android_zero_copy_concrete_bindings STATIC
-    ${CMAKE_CURRENT_LIST_DIR}/../src/media/android_zero_copy_concrete_bindings.cpp)
+    ${CMAKE_CURRENT_LIST_DIR}/../src/media/android_zero_copy_concrete_bindings.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/media/android_mediacodec_decoder.cpp)
   target_include_directories(digitor_android_zero_copy_concrete_bindings PUBLIC
     ${CMAKE_CURRENT_LIST_DIR}/../include)
   target_compile_features(digitor_android_zero_copy_concrete_bindings PUBLIC cxx_std_20)
