@@ -3,6 +3,7 @@
 #include "export_m2_contract_cases.hpp"
 #include "export_m3_windows_contract_cases.hpp"
 #include "export_m5_apple_contract_cases.hpp"
+#include "production_platform_integration_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -176,5 +177,6 @@ int main() {
   run_export_m2_contract_cases();
   run_export_m3_windows_contract_cases();
   run_export_m5_apple_contract_cases();
+  run_production_platform_integration_cases();
   return 0;
 }
