@@ -1,8 +1,12 @@
 #include "digitor/timeline_render_runtime.hpp"
 
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace {
 void require(bool condition, const char* message) {
@@ -10,6 +14,32 @@ void require(bool condition, const char* message) {
     std::cerr << message << '\n';
     std::exit(1);
   }
+}
+
+digitor::RenderVideoFrame make_gpu_frame(std::uint64_t identity,
+                                         std::uint32_t width,
+                                         std::uint32_t height,
+                                         const char* provenance) {
+  using namespace digitor;
+  static int context;
+  GpuFrameMetadata metadata;
+  metadata.width = width;
+  metadata.height = height;
+  metadata.format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+  metadata.alpha = GpuFrameAlpha::premultiplied;
+  metadata.color_metadata = "scene-linear-rec2020";
+  auto native = std::shared_ptr<void>(new std::uint64_t(identity), [](void* value) {
+    delete static_cast<std::uint64_t*>(value);
+  });
+  auto ready = std::make_shared<std::atomic_bool>(true);
+  RenderVideoFrame frame;
+  frame.width = width;
+  frame.height = height;
+  frame.gpu = std::make_shared<ProcessedGpuFrame>(
+      &context, DIGITOR_RENDERER_CPU, metadata, identity, std::move(native),
+      std::move(ready), false);
+  frame.provenance = provenance;
+  return frame;
 }
 }
 
@@ -59,6 +89,7 @@ int main() {
   TimelineRenderRuntime runtime(executor, callbacks, 1024 * 1024);
   const auto preview = runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 4);
   require(preview.success, "preview render failed");
+  require(!preview.gpu_resident, "CPU fallback unexpectedly reported GPU residency");
   require(preview.decoded_video_layers == 2, "video layers were not decoded");
   require(preview.cache_misses == 2 && preview.cache_hits == 0, "initial cache accounting failed");
   require(preview.audio.interleaved_stereo.size() == 8, "audio mix was not produced");
@@ -75,5 +106,64 @@ int main() {
   const auto invalidated = runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 4);
   require(invalidated.success, "render after invalidation failed");
   require(invalidated.cache_hits == 1 && invalidated.cache_misses == 1, "clip invalidation failed");
+
+  int gpu_decode_calls = 0;
+  std::vector<std::uint64_t> composited_identities;
+  TimelineRenderCallbacks gpu_callbacks;
+  gpu_callbacks.create_gpu_target = [](std::uint32_t width, std::uint32_t height,
+                                       std::int64_t) {
+    return std::optional<RenderVideoFrame>{make_gpu_frame(900, width, height, "gpu-target")};
+  };
+  gpu_callbacks.decode_video = [&](const VideoExecutionLayer& layer, bool) {
+    ++gpu_decode_calls;
+    const auto identity = layer.clip_id == "base" ? 101U : 102U;
+    return std::optional<RenderVideoFrame>{
+        make_gpu_frame(identity, 2, 1, ("gpu:" + layer.clip_id).c_str())};
+  };
+  gpu_callbacks.apply_effects = [](const VideoExecutionLayer&, RenderVideoFrame& frame) {
+    return frame.gpu_resident() && frame.rgba.empty();
+  };
+  gpu_callbacks.composite = [&](const VideoExecutionLayer& layer,
+                                const RenderVideoFrame& input,
+                                RenderVideoFrame& output) {
+    require(input.gpu_resident(), "GPU compositor received a CPU frame");
+    require(output.gpu_resident(), "GPU compositor target is not resident");
+    require(input.rgba.empty() && output.rgba.empty(), "GPU path allocated CPU pixels");
+    require(layer.opacity >= 0.0 && layer.transition_weight >= 0.0,
+            "GPU compositor did not receive layer weights");
+    composited_identities.push_back(input.gpu->identity());
+    output.provenance += "+" + input.provenance;
+    return true;
+  };
+  gpu_callbacks.cancelled = [] { return false; };
+
+  TimelineRenderRuntime gpu_runtime(executor, gpu_callbacks, 1, 4);
+  const auto gpu_preview = gpu_runtime.render(
+      TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
+  require(gpu_preview.success && gpu_preview.gpu_resident,
+          "GPU preview did not remain resident");
+  require(gpu_preview.video.rgba.empty(), "GPU preview performed CPU readback");
+  require(gpu_preview.cache_misses == 2 && gpu_preview.cache_hits == 0,
+          "GPU initial cache accounting failed");
+
+  const auto gpu_export = gpu_runtime.render(
+      TimelineExecutionMode::export_render, 500'000, 2, 1, 1, 1, 0);
+  require(gpu_export.success && gpu_export.gpu_resident,
+          "GPU export did not remain resident");
+  require(gpu_export.video.rgba.empty(), "GPU export performed CPU readback");
+  require(gpu_export.cache_hits == 2 && gpu_export.cache_misses == 0,
+          "GPU cache reuse failed");
+  require(gpu_decode_calls == 2, "GPU export decoded cached frames again");
+  require(composited_identities.size() == 4 &&
+              composited_identities[0] == composited_identities[2] &&
+              composited_identities[1] == composited_identities[3],
+          "preview/export did not reuse identical GPU frame handles");
+
+  gpu_runtime.invalidate_clip("overlay");
+  const auto gpu_invalidated = gpu_runtime.render(
+      TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
+  require(gpu_invalidated.success, "GPU render after invalidation failed");
+  require(gpu_invalidated.cache_hits == 1 && gpu_invalidated.cache_misses == 1,
+          "GPU clip invalidation failed");
   return 0;
 }
