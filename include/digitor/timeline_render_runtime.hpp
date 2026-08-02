@@ -20,8 +20,11 @@ struct RenderVideoFrame {
   std::uint32_t width{};
   std::uint32_t height{};
   std::vector<float> rgba;
-  ProcessedGpuFramePtr gpu;
+  // Keep provenance as the fourth aggregate field for source compatibility
+  // with existing CPU frame producers. GPU storage is appended so legacy
+  // {width, height, rgba, provenance} initializers remain valid.
   std::string provenance;
+  ProcessedGpuFramePtr gpu;
 
   [[nodiscard]] RenderFrameStorage storage() const noexcept {
     return gpu ? RenderFrameStorage::gpu_resident : RenderFrameStorage::cpu_linear_rgba;
