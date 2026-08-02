@@ -25,6 +25,7 @@ bool finite(Color value) {
          std::isfinite(value.b) && std::isfinite(value.a);
 }
 
+#ifdef DIGITOR_HAS_OCIO
 std::string request_key(const OcioTransformRequest& request,
                         const OcioDynamicProperties& dynamic) {
   std::ostringstream key;
@@ -44,7 +45,6 @@ std::string request_key(const OcioTransformRequest& request,
   return key.str();
 }
 
-#ifdef DIGITOR_HAS_OCIO
 OCIO::TransformDirection direction(bool inverse) {
   return inverse ? OCIO::TRANSFORM_DIR_INVERSE : OCIO::TRANSFORM_DIR_FORWARD;
 }
@@ -352,6 +352,9 @@ DigitorResult OcioColorPipeline::transform_image(
     const OcioTransformRequest& request, std::span<const Color> source,
     std::span<Color> destination, const OcioDynamicProperties& dynamic,
     std::string* diagnostic) {
+#ifndef DIGITOR_HAS_OCIO
+  (void)dynamic;
+#endif
   if (source.size() != destination.size() || source.empty()) {
     set_diagnostic(diagnostic, "source and destination spans must be non-empty and equal");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
