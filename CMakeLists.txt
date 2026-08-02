@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.44.0
+    VERSION 5.45.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -9,6 +9,25 @@ project(DigitorEngine
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineBase.cmake")
 find_package(Threads REQUIRED)
 target_link_libraries(digitor_engine PRIVATE Threads::Threads)
+
+option(DIGITOR_ENABLE_OCIO "Enable OpenColorIO 2.x integration when available" ON)
+option(DIGITOR_REQUIRE_OCIO "Fail configuration when OpenColorIO 2.x is unavailable" OFF)
+set(DIGITOR_BUILT_WITH_OCIO OFF)
+if(DIGITOR_ENABLE_OCIO)
+    find_package(OpenColorIO 2 QUIET CONFIG)
+    if(OpenColorIO_FOUND)
+        set(DIGITOR_BUILT_WITH_OCIO ON)
+        target_compile_definitions(digitor_engine PRIVATE DIGITOR_HAS_OCIO=1)
+        target_link_libraries(digitor_engine PUBLIC OpenColorIO::OpenColorIO)
+        message(STATUS "DigitorEngine OpenColorIO: ${OpenColorIO_VERSION}")
+    elseif(DIGITOR_REQUIRE_OCIO)
+        message(FATAL_ERROR "DIGITOR_REQUIRE_OCIO=ON but OpenColorIO 2.x was not found")
+    else()
+        message(STATUS "DigitorEngine OpenColorIO: unavailable (runtime reports explicit unavailability)")
+    endif()
+else()
+    message(STATUS "DigitorEngine OpenColorIO: disabled")
+endif()
 
 target_sources(digitor_engine PRIVATE
     src/runtime/async_operation.cpp
@@ -43,6 +62,7 @@ target_sources(digitor_engine PRIVATE
     src/media/production_hardware_decode.cpp
     src/media/professional_import.cpp
     src/gpu/professional_color_management.cpp
+    src/gpu/ocio_color_pipeline.cpp
 )
 
 if(WIN32)
@@ -78,7 +98,8 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_production_hardware_decode_test tests/test_production_hardware_decode.cpp)
     add_executable(digitor_professional_import_test tests/test_professional_import.cpp)
     add_executable(digitor_professional_color_management_test tests/test_professional_color_management.cpp)
-    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test digitor_professional_import_test digitor_professional_color_management_test)
+    add_executable(digitor_ocio_color_pipeline_test tests/test_ocio_color_pipeline.cpp)
+    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
     endforeach()
@@ -107,6 +128,7 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_production_hardware_decode COMMAND digitor_production_hardware_decode_test)
     add_test(NAME digitor_professional_import COMMAND digitor_professional_import_test)
     add_test(NAME digitor_professional_color_management COMMAND digitor_professional_color_management_test)
+    add_test(NAME digitor_ocio_color_pipeline COMMAND digitor_ocio_color_pipeline_test)
 endif()
 
 if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
@@ -126,10 +148,10 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.44.0 SOVERSION 5)
+set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.45.0 SOVERSION 5)
 install(TARGETS digitor_engine EXPORT DigitorEngineTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/digitor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 configure_package_config_file(cmake/DigitorEngineConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.44.0 COMPATIBILITY SameMajorVersion)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.45.0 COMPATIBILITY SameMajorVersion)
 install(EXPORT DigitorEngineTargets FILE DigitorEngineTargets.cmake NAMESPACE Digitor:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
