@@ -45,6 +45,13 @@ int main() {
   static int context;
   std::atomic_uint64_t identity{1};
   auto decoder = std::make_unique<FakeDecoder>();
+
+  ProductionHardwareDecodeOptions decode_options{};
+  decode_options.renderer_backend = DIGITOR_RENDERER_D3D12;
+  decode_options.render_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+  decode_options.require_zero_copy = true;
+  decode_options.require_monotonic_timestamps = true;
+
   auto session = std::make_unique<ProductionHardwareDecodeSession>(
       std::move(decoder),
       [&](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
@@ -60,7 +67,7 @@ int main() {
             std::make_shared<std::atomic_bool>(true), false);
         return DIGITOR_RESULT_OK;
       },
-      {DIGITOR_RENDERER_D3D12, DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT, true, true});
+      decode_options);
 
   UnifiedRealMediaRuntimeConfig config{};
   config.playback.duration_us = 1000000;
