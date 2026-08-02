@@ -7,6 +7,7 @@
 #include <limits>
 #include <mutex>
 #include <new>
+#include <cstring>
 #include <string>
 #include <stdexcept>
 #include <thread>
@@ -25,6 +26,7 @@ struct DigitorSdkSession {
   std::vector<uint8_t> texture;
   uint32_t width{}, height{};
   uint64_t generation{};
+  DigitorPreviewMode preview_mode{DIGITOR_PREVIEW_MODE_CPU_COMPATIBILITY};
   digitor::SharedRenderer renderer;
 
   DigitorSdkSession()
@@ -174,6 +176,11 @@ DigitorResult digitor_sdk_preview_async(DigitorSdkSession *session, int64_t fram
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   std::scoped_lock lifecycle(owned->lifecycle_mutex);
   if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  // Strict mode is deliberately fail-closed until a real timeline GPU frame
+  // and a probed Flutter registrar are attached. Never run SharedRenderer or
+  // silently manufacture the legacy CPU texture for this mode.
+  if (session->preview_mode == DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT)
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   if (session->busy.exchange(true)) return DIGITOR_RESULT_RESOURCE_IN_USE;
   join_old(session);
   session->cancel.store(false);
@@ -253,12 +260,60 @@ DigitorResult digitor_sdk_get_native_texture(DigitorSdkSession *session,
   std::scoped_lock lifecycle(owned->lifecycle_mutex);
   if (owned->destroying) return DIGITOR_RESULT_INVALID_ARGUMENT;
   std::scoped_lock lock(session->mutex);
+  if (session->preview_mode == DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT)
+    return DIGITOR_RESULT_UNSUPPORTED;
   if (session->texture.empty()) return DIGITOR_RESULT_NOT_INITIALIZED;
   out_texture->pixels = session->texture.data();
   out_texture->width = session->width;
   out_texture->height = session->height;
   out_texture->row_bytes = session->width * 4;
   out_texture->generation = session->generation;
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_sdk_set_preview_mode(DigitorSdkSession *session,
+                                           DigitorPreviewMode mode) {
+  auto owned = acquire_session(session);
+  if (!owned || (mode != DIGITOR_PREVIEW_MODE_CPU_COMPATIBILITY &&
+                 mode != DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  if (owned->destroying || owned->busy.load()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+  std::scoped_lock lock(owned->mutex);
+  owned->preview_mode = mode;
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_sdk_get_native_gpu_texture(
+    DigitorSdkSession *session, DigitorNativeGpuTextureDescriptor *out_texture) {
+  if (!out_texture || out_texture->struct_size < sizeof(*out_texture))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owned = acquire_session(session);
+  if (!owned) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::memset(out_texture, 0, sizeof(*out_texture));
+  out_texture->struct_size = sizeof(*out_texture);
+  out_texture->api_version = DIGITOR_NATIVE_GPU_TEXTURE_DESCRIPTOR_VERSION;
+  // No platform Flutter registrar exists in this source tree. Returning an
+  // explicit error is essential: the CPU pointer must never masquerade as a
+  // native resource handle.
+  return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+}
+
+DigitorResult digitor_sdk_query_native_preview(
+    DigitorSdkSession *session, DigitorNativePreviewCapabilities *out) {
+  if (!out || out->struct_size < sizeof(*out)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owned = acquire_session(session);
+  if (!owned) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  std::scoped_lock lifecycle(owned->lifecycle_mutex);
+  std::memset(out, 0, sizeof(*out));
+  out->struct_size = sizeof(*out);
+  out->api_version = DIGITOR_NATIVE_PREVIEW_CAPABILITIES_VERSION;
+  out->cpu_fallback_only = 1;
+  out->sdr_supported = 1;
+  out->selected_mode = owned->preview_mode;
+  constexpr char reason[] =
+      "Flutter texture registrar and production timeline presenter are not bound";
+  std::memcpy(out->reason_unavailable, reason, sizeof(reason));
   return DIGITOR_RESULT_OK;
 }
 

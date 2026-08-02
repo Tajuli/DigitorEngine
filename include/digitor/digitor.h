@@ -173,7 +173,90 @@ typedef struct DigitorPowerWindowSettings {
 } DigitorPowerWindowSettings;
 
 typedef struct DigitorColorControls { float exposure; float contrast; float saturation; } DigitorColorControls;
+/* Legacy CPU preview view. Despite its historical name this is not a GPU
+ * texture. New integrations should use DigitorNativeGpuTextureDescriptor. */
 typedef struct DigitorNativeTexture { const void* pixels; uint32_t width; uint32_t height; uint32_t row_bytes; uint64_t generation; } DigitorNativeTexture;
+
+typedef enum DigitorPreviewMode {
+    DIGITOR_PREVIEW_MODE_CPU_COMPATIBILITY = 0,
+    DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT = 1
+} DigitorPreviewMode;
+typedef enum DigitorNativeTextureBackend {
+    DIGITOR_NATIVE_TEXTURE_BACKEND_NONE = 0,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_D3D11 = 1,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12 = 2,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_VULKAN = 3,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_METAL = 4,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_OPENGL_ES = 5,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_ANDROID_HARDWARE_BUFFER = 6,
+    DIGITOR_NATIVE_TEXTURE_BACKEND_CPU_RGBA8 = 100
+} DigitorNativeTextureBackend;
+typedef enum DigitorNativeTextureHandleType {
+    DIGITOR_NATIVE_TEXTURE_HANDLE_NONE = 0,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE = 1,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_D3D11_TEXTURE = 2,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_D3D12_RESOURCE = 3,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_VK_IMAGE = 4,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_METAL_TEXTURE = 5,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_CV_PIXEL_BUFFER = 6,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_ANDROID_HARDWARE_BUFFER = 7,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_EGL_IMAGE = 8,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_GL_TEXTURE = 9,
+    DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER = 100
+} DigitorNativeTextureHandleType;
+typedef enum DigitorNativeTextureReadiness {
+    DIGITOR_NATIVE_TEXTURE_NOT_READY = 0,
+    DIGITOR_NATIVE_TEXTURE_READY = 1,
+    DIGITOR_NATIVE_TEXTURE_DEVICE_LOST = 2
+} DigitorNativeTextureReadiness;
+
+#define DIGITOR_NATIVE_GPU_TEXTURE_DESCRIPTOR_VERSION 1u
+typedef struct DigitorNativeGpuTextureDescriptor {
+    uint32_t struct_size;
+    uint32_t api_version;
+    DigitorNativeTextureBackend backend;
+    DigitorNativeTextureHandleType handle_type;
+    uint64_t native_handle;
+    uint64_t secondary_handle;
+    uint32_t width;
+    uint32_t height;
+    DigitorPixelFormat pixel_format;
+    uint32_t alpha_mode;
+    uint32_t color_primaries;
+    uint32_t transfer_function;
+    uint32_t matrix_coefficients;
+    uint32_t color_range;
+    int64_t timestamp_us;
+    uint64_t generation;
+    uint64_t device_identity;
+    uint64_t context_identity;
+    uint64_t acquire_sync_handle;
+    uint64_t acquire_sync_value;
+    uint64_t release_sync_handle;
+    uint64_t release_sync_value;
+    uint64_t ownership_token;
+    uint8_t protected_content;
+    DigitorNativeTextureReadiness readiness;
+} DigitorNativeGpuTextureDescriptor;
+
+#define DIGITOR_NATIVE_PREVIEW_CAPABILITIES_VERSION 1u
+typedef struct DigitorNativePreviewCapabilities {
+    uint32_t struct_size;
+    uint32_t api_version;
+    uint8_t native_gpu_preview_available;
+    uint8_t true_shared_resource_zero_copy;
+    uint8_t gpu_to_gpu_copy;
+    uint8_t cpu_fallback_only;
+    uint8_t sdr_supported;
+    uint8_t hdr_supported;
+    uint8_t protected_content_supported;
+    uint8_t resize_supported;
+    DigitorNativeTextureBackend backend;
+    DigitorNativeTextureHandleType handle_type;
+    uint64_t supported_pixel_formats;
+    DigitorPreviewMode selected_mode;
+    char reason_unavailable[192];
+} DigitorNativePreviewCapabilities;
 typedef void (*DigitorAsyncCallback)(DigitorResult result, void* user_data);
 typedef void (*DigitorExportProgressCallback)(double fraction, int64_t completed, int64_t total, void* user_data);
 
@@ -243,6 +326,9 @@ DIGITOR_API DigitorResult digitor_sdk_set_color(DigitorSdkSession* session, Digi
 DIGITOR_API DigitorResult digitor_sdk_preview_async(DigitorSdkSession* session, int64_t frame, uint32_t width, uint32_t height, DigitorAsyncCallback callback, void* user_data);
 DIGITOR_API DigitorResult digitor_sdk_seek_async(DigitorSdkSession* session, int64_t frame, DigitorAsyncCallback callback, void* user_data);
 DIGITOR_API DigitorResult digitor_sdk_get_native_texture(DigitorSdkSession* session, DigitorNativeTexture* out_texture);
+DIGITOR_API DigitorResult digitor_sdk_set_preview_mode(DigitorSdkSession* session, DigitorPreviewMode mode);
+DIGITOR_API DigitorResult digitor_sdk_get_native_gpu_texture(DigitorSdkSession* session, DigitorNativeGpuTextureDescriptor* out_texture);
+DIGITOR_API DigitorResult digitor_sdk_query_native_preview(DigitorSdkSession* session, DigitorNativePreviewCapabilities* out_capabilities);
 DIGITOR_API DigitorResult digitor_sdk_export_async(DigitorSdkSession* session, const char* path, int32_t format, int32_t codec, int64_t first, int64_t last, uint32_t width, uint32_t height, DigitorExportProgressCallback progress, DigitorAsyncCallback completion, void* user_data);
 DIGITOR_API DigitorResult digitor_sdk_cancel(DigitorSdkSession* session);
 
