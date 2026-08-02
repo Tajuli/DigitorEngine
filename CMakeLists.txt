@@ -60,6 +60,8 @@ target_sources(digitor_engine PRIVATE
     src/render/timeline_render_runtime.cpp
     src/render/timeline_media_adapter.cpp
     src/media/production_hardware_decode.cpp
+    src/media/native_surface_import.cpp
+    src/gpu/windows_zero_copy_import.cpp
     src/media/professional_import.cpp
     src/media/camera_raw.cpp
     src/gpu/professional_color_management.cpp
@@ -69,6 +71,10 @@ target_sources(digitor_engine PRIVATE
     src/gpu/professional_lut_scopes.cpp
     src/gpu/broadcast_color_matching.cpp
 )
+
+if(APPLE)
+    target_sources(digitor_engine PRIVATE src/media/apple_native_zero_copy.mm)
+endif()
 
 if(WIN32)
     target_link_libraries(digitor_engine PRIVATE ole32)
@@ -101,6 +107,7 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_timeline_render_runtime_test tests/test_timeline_render_runtime.cpp)
     add_executable(digitor_timeline_media_adapter_test tests/test_timeline_media_adapter.cpp)
     add_executable(digitor_production_hardware_decode_test tests/test_production_hardware_decode.cpp)
+    add_executable(digitor_native_surface_import_test tests/test_native_surface_import.cpp)
     add_executable(digitor_professional_import_test tests/test_professional_import.cpp)
     add_executable(digitor_professional_color_management_test tests/test_professional_color_management.cpp)
     add_executable(digitor_ocio_color_pipeline_test tests/test_ocio_color_pipeline.cpp)
@@ -109,7 +116,7 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_hdr_ecosystem_test tests/test_hdr_ecosystem.cpp)
     add_executable(digitor_professional_lut_scopes_test tests/test_professional_lut_scopes.cpp)
     add_executable(digitor_broadcast_color_matching_test tests/test_broadcast_color_matching.cpp)
-    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test)
+    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test digitor_native_surface_import_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
     endforeach()
@@ -136,6 +143,7 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_timeline_render_runtime COMMAND digitor_timeline_render_runtime_test)
     add_test(NAME digitor_timeline_media_adapter COMMAND digitor_timeline_media_adapter_test)
     add_test(NAME digitor_production_hardware_decode COMMAND digitor_production_hardware_decode_test)
+    add_test(NAME digitor_native_surface_import COMMAND digitor_native_surface_import_test)
     add_test(NAME digitor_professional_import COMMAND digitor_professional_import_test)
     add_test(NAME digitor_professional_color_management COMMAND digitor_professional_color_management_test)
     add_test(NAME digitor_ocio_color_pipeline COMMAND digitor_ocio_color_pipeline_test)
