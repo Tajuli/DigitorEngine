@@ -2,6 +2,7 @@
 #include "digitor/production_hardware_encode.hpp"
 #include "export_m2_contract_cases.hpp"
 #include "export_m3_windows_contract_cases.hpp"
+#include "export_m5_apple_contract_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -174,5 +175,6 @@ int main() {
 
   run_export_m2_contract_cases();
   run_export_m3_windows_contract_cases();
+  run_export_m5_apple_contract_cases();
   return 0;
 }
