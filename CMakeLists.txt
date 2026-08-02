@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(DigitorEngine
-    VERSION 5.40.0
+    VERSION 5.41.0
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
@@ -33,6 +33,7 @@ target_sources(digitor_engine PRIVATE
     src/ffi/production_export_c_api.cpp
     src/render/ffmpeg_export_runtime.cpp
     src/render/hardware_export_runtime.cpp
+    src/render/production_hardware_encode.cpp
     src/ffi/export_job_c_api.cpp
     src/render/resumable_segment_export.cpp
     src/render/timeline_render_execution.cpp
@@ -64,13 +65,14 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_production_export_test tests/test_production_export.cpp)
     add_executable(digitor_ffmpeg_export_runtime_test tests/test_ffmpeg_export_runtime.cpp)
     add_executable(digitor_hardware_export_runtime_test tests/test_hardware_export_runtime.cpp)
+    add_executable(digitor_production_hardware_encode_test tests/test_production_hardware_encode.cpp)
     add_executable(digitor_export_job_c_api_test tests/test_export_job_c_api.cpp)
     add_executable(digitor_resumable_segment_export_test tests/test_resumable_segment_export.cpp)
     add_executable(digitor_timeline_render_execution_test tests/test_timeline_render_execution.cpp)
     add_executable(digitor_timeline_render_runtime_test tests/test_timeline_render_runtime.cpp)
     add_executable(digitor_timeline_media_adapter_test tests/test_timeline_media_adapter.cpp)
     add_executable(digitor_production_hardware_decode_test tests/test_production_hardware_decode.cpp)
-    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test)
+    foreach(target digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_production_hardware_decode_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
     endforeach()
@@ -89,6 +91,7 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_production_export COMMAND digitor_production_export_test)
     add_test(NAME digitor_ffmpeg_export_runtime COMMAND digitor_ffmpeg_export_runtime_test)
     add_test(NAME digitor_hardware_export_runtime COMMAND digitor_hardware_export_runtime_test)
+    add_test(NAME digitor_production_hardware_encode COMMAND digitor_production_hardware_encode_test)
     add_test(NAME digitor_export_job_c_api COMMAND digitor_export_job_c_api_test)
     add_test(NAME digitor_resumable_segment_export COMMAND digitor_resumable_segment_export_test)
     add_test(NAME digitor_timeline_render_execution COMMAND digitor_timeline_render_execution_test)
@@ -114,10 +117,10 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.40.0 SOVERSION 5)
+set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.41.0 SOVERSION 5)
 install(TARGETS digitor_engine EXPORT DigitorEngineTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/digitor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 configure_package_config_file(cmake/DigitorEngineConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.40.0 COMPATIBILITY SameMajorVersion)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.41.0 COMPATIBILITY SameMajorVersion)
 install(EXPORT DigitorEngineTargets FILE DigitorEngineTargets.cmake NAMESPACE Digitor:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
