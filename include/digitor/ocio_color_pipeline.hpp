@@ -15,6 +15,9 @@
 
 namespace digitor {
 
+inline constexpr DigitorResult DIGITOR_RESULT_INVALID_STATE =
+    DIGITOR_RESULT_NOT_INITIALIZED;
+
 enum class OcioTransformKind {
   color_space,
   display_view,
