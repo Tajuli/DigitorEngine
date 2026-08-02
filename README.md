@@ -1,159 +1,227 @@
 # DigitorEngine
 
-DigitorEngine is an **experimental C++20 rendering-engine foundation**. The repository reports
-version **4.7.0**, but that number is not evidence of ABI stability beyond the documented C contract.
-The implementation has a CPU reference path, native GPU resource allocation on selected
-platforms, editing data structures, and deterministic graph/LUT/effect prototypes. It does not
-contains the first native preview passes on Metal and OpenGL ES, but does not yet
-contain production media I/O or qualified Vulkan/D3D12 graphics pipelines.
+DigitorEngine is a C++20, GPU-first rendering and media-engine foundation for the Digitor cross-platform video editor.
 
-## Audited status
+Current package version: **5.40.0**.
 
-The legacy portable command layer executes recorded C++ callbacks synchronously on the CPU.
-Vulkan, Direct3D 12, Metal, and OpenGL ES backends allocate some native resources and perform
-device discovery, but do not create native command queues/buffers, compile native shaders,
-create pipelines/descriptors, dispatch/draw, transition textures, synchronize GPU work, or
-read rendered pixels back. The v3 preview path now records a Metal clear pass and a GLES
-fullscreen texture-copy shader and returns GPU-completed pixels to preview. See the
-[native pipeline notes](docs/native_gpu_pipeline.md) for exact backend scope.
+The repository contains substantial source implementations for rendering, color processing, node execution, timeline editing, media decode, playback, export orchestration, audio/video synchronization, and Flutter-facing runtime integration. It is not yet claimed as universally production-qualified on all Windows, Android, macOS, and iOS hardware. Real-device performance, driver interoperability, native texture registration, and long-duration stress validation remain release gates.
 
-When FFmpeg libraries are available, the media API performs packet-based software decoding into
-real RGBA pixels and float PCM. Export writes a private `DIGITOR` text/interchange stream or
-raw `.rgba` float buffers; it does not encode or mux MP4, MOV, MKV, or standard images. Preview
-is an in-memory cached `VideoFrame`, not a native display surface. Preview and export both call
-the same CPU-oriented `SharedRenderer`, but no test proves they consume the same decoded frame,
-execute a native shader graph, or produce pixel-identical results.
+## Current architecture
 
-See the evidence-based [implementation audit](docs/implementation_status.md), honest
-[platform matrix](docs/platform_support.md), [validation plan](docs/validation_plan.md), and
-[engineering backlog](docs/engineering_backlog.md).
+The intended production path is:
 
-## What is currently usable
+```text
+Media source
+  -> hardware or software decoder
+  -> native media surface / decoded frame
+  -> GPU import
+  -> timeline and node/color processing
+  -> production playback scheduler
+  -> native platform presenter / Flutter texture
+  -> shared production export path
+```
 
-- CMake static/shared-library build configuration and a C-compatible opaque-handle API.
-- CPU-backed texture/buffer storage and native resource allocation prototypes.
-- CPU color operations, `.cube` LUT parsing/interpolation, and CPU image effects.
-- A synchronous callback command model and dependency-ordered render graph prototype.
-- A CPU callback node graph with deterministic serialization and a limited frame cache.
-- Timeline edit data structures (tracks, clips, edits, keyframes, undo/redo).
-- Unit tests for the CPU/reference and data-structure paths on the host build.
+The engine follows a GPU-first policy. CPU implementations remain available as explicit reference or fallback paths where permitted, but a selected GPU production path must not silently switch to CPU after a backend failure.
 
-These components remain experimental. The C API lacks a documented ABI compatibility policy;
-not every exported function is protected against C++ exceptions; handle operations are not
-safe against concurrent destroy/use; and no packaged mobile or desktop application is supplied.
+## Implemented subsystems
+
+### Core rendering
+
+- C++20 engine and C-compatible opaque-handle API
+- CPU reference backend
+- Vulkan, Direct3D 12, Metal, and OpenGL ES backend infrastructure
+- textures, buffers, samplers, command recording, render graph, shader compilation/reflection contracts, and pipeline-cache infrastructure
+- deterministic validation and backend qualification helpers
+
+### Color and image processing
+
+- correction controls including exposure, contrast, saturation, temperature, tint, highlights, shadows, hue, and color boost
+- Primary Wheels
+- Log Wheels
+- RGB Curves
+- HSL Qualifier
+- 1D and 3D LUT support
+- blur, sharpen, glow, grain, vignette, motion blur, masks/windows, and related effect infrastructure
+- CPU reference implementations plus native GPU execution paths and qualification contracts where implemented
+
+### Node system
+
+- serial nodes
+- parallel branches
+- mixer and output nodes
+- production node graph and native node execution runtime
+- shader/kernel contracts and backend runtime factories
+- deterministic graph and qualification tests
+
+### Timeline and editing
+
+- multitrack timeline
+- professional timeline editing suite
+- clip and track operations
+- track enablement and removal
+- timeline completion APIs
+- timeline render execution and runtime
+- media adapter integration
+- preview/export frame-selection foundations
+
+### Playback
+
+- playback transport
+- audio-master synchronization and latency compensation
+- play, pause, stop, seek, scrub, frame step, looping, forward and reverse rates
+- background decode-ahead worker
+- bounded GPU-frame queue and memory budget
+- stale-frame rejection after seek
+- deadline-aware hold/drop behavior
+- adaptive full, half, quarter, and proxy quality
+- thermal and memory-pressure controls
+- playback telemetry
+
+### Media decode
+
+- FFmpeg-based media opening and packet decoding when FFmpeg is available
+- hardware decoder selection contracts for D3D11VA, VideoToolbox, and MediaCodec
+- production hardware-decode coordinator
+- native-surface and zero-copy importer contracts
+- strict CPU-frame rejection in zero-copy production sessions
+- timestamp and qualification evidence checks
+
+The generic FFmpeg `VideoDecoder` may still transfer some hardware frames into CPU-accessible memory for its CPU-frame API. The production zero-copy path is provided through `ProductionHardwareDecodeSession` with backend-specific native importers supplied by the platform host.
+
+### Unified real-media Flutter runtime
+
+Version 5.40 adds `UnifiedRealMediaRuntime`, which reuses the existing production components rather than rewriting them:
+
+```text
+timeline timestamp
+  -> frame resolver
+  -> ProductionHardwareDecodeSession
+  -> optional existing GPU timeline/node/color pipeline
+  -> ProductionPlaybackEngine
+  -> native Flutter platform presenter
+```
+
+The presenter receives a `ProcessedGpuFrame` plus backend, format, dimensions, timestamp, frame identity, and generation metadata. This coordinator performs no RGBA byte-buffer conversion or CPU texture readback.
+
+Platform hosts remain responsible for the final native bridge:
+
+- Windows: D3D11VA import and D3D12/Flutter texture presentation
+- Android: MediaCodec/AHardwareBuffer import and Vulkan or OpenGL ES presentation
+- Apple: VideoToolbox/CVPixelBuffer import and Metal presentation
+
+### Export
+
+- production export orchestration
+- FFmpeg export runtime
+- hardware-export runtime contracts
+- asynchronous export jobs
+- progress, cancellation, and error reporting
+- resumable segment export
+- timeline render integration
+- MP4, MOV, Matroska, image-sequence, and supported codec paths when the required FFmpeg components are present
+
+Not every public export entry point is guaranteed to use a zero-copy hardware encoder on every platform. Hardware encode and physical-device interoperability must be qualified per backend and codec.
+
+## Build
+
+### Basic host build
+
+```bash
+cmake -S . -B build \
+  -DDIGITOR_BUILD_TESTS=ON \
+  -DDIGITOR_BUILD_EXAMPLES=OFF
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+### Require FFmpeg
+
+```bash
+cmake -S . -B build \
+  -DDIGITOR_ENABLE_FFMPEG=ON \
+  -DDIGITOR_REQUIRE_FFMPEG=ON \
+  -DDIGITOR_BUILD_TESTS=ON
+```
+
+FFmpeg discovery supports pkg-config and `DIGITOR_FFMPEG_ROOT`. The engine does not download or vendor FFmpeg binaries. Deployments are responsible for shipping compatible runtime libraries and complying with FFmpeg licensing requirements.
+
+### Install and consume
+
+```bash
+cmake --install build --config Release --prefix install
+```
+
+A CMake consumer can then use:
+
+```cmake
+find_package(DigitorEngine CONFIG REQUIRED)
+target_link_libraries(my_target PRIVATE Digitor::Engine)
+```
+
+The installed package also resolves the required thread dependency.
+
+## Tests
+
+The CMake test suite includes dedicated targets for:
+
+- core engine and editor behavior
+- color processing and native GPU paths
+- node graph and node execution
+- audio latency and synchronization
+- playback transport and production playback
+- unified real-media runtime
+- multitrack and professional timeline editing
+- production export, FFmpeg export, hardware-export contracts, and export jobs
+- timeline render execution/runtime/media adapter
+- production hardware decode
+
+FFmpeg real-media and VFR parity tests are enabled only when FFmpeg is found and the corresponding fixture path is supplied.
 
 ## Platform status
 
-| Platform | Build configuration | Native resource code | Native rendering | Media/preview/export validation |
+| Platform | Engine/backend source | Production decode/import path | Native Flutter presentation | Current qualification boundary |
 |---|---|---|---|---|
-| Windows | Configured, not verified in this audit | Vulkan optional; D3D12 present | Not implemented | Not verified |
-| Android | Configured, not verified in this audit | Vulkan optional; GLES requires a current EGL context | Not implemented | Not verified |
-| macOS | Configured, not verified in this audit | Metal present | Not implemented | Not verified |
-| iOS | Conditional Apple source only; no iOS toolchain/project | Metal source present | Not implemented | Not verified |
+| Windows | D3D12 and optional Vulkan | D3D11VA/native-surface contracts | Host adapter required | Real GPU/driver/device tests required |
+| Android | Vulkan and OpenGL ES | MediaCodec/AHardwareBuffer contracts | Host adapter required | Real Adreno/Mali device tests required |
+| macOS | Metal | VideoToolbox/CVPixelBuffer contracts | Host adapter required | Apple Silicon and Intel device tests required where supported |
+| iOS | Metal | VideoToolbox/CVPixelBuffer contracts | Host adapter required | Real iPhone/iPad tests required |
 
-Linux is useful for the CPU reference build but is not one of the claimed production targets.
+Linux is primarily used for portable CPU builds, tests, FFmpeg validation, and CI. It is not currently a primary Digitor product target.
 
-## Build the audited host configuration
+## Production-readiness statement
 
-```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+Source-level implementation and contract tests do not by themselves prove device-level production readiness. Before release, each target requires:
 
-FFmpeg detection enables software decoding; encoding remains outside this milestone.
+- physical-device hardware decode, GPU import, render, presentation, and encode validation
+- codec and pixel-format matrix testing, including 8-bit/10-bit and SDR/HDR paths as applicable
+- preview/export identity and numerical comparison
+- device-loss, app suspend/resume, resize/orientation, and memory-pressure recovery
+- long playback and export stress testing
+- thermal, latency, dropped-frame, and memory benchmarks
+- Flutter plugin texture-registration and lifecycle validation
 
-## Public API
+No README claim should be interpreted as evidence that every backend is already qualified on every device.
 
-The C header is `include/digitor/digitor.h`. Treat it as experimental rather than ABI-stable
-until the ABI and concurrency work in the backlog is complete.
+## Documentation
 
-## Roadmap
+Useful source-backed documents include:
 
-See [docs/roadmap.md](docs/roadmap.md). Items are now organized by demonstrated capability,
-not by the repository version number.
+- `docs/unified_real_media_runtime.md`
+- `docs/production_readiness.md`
+- `docs/implementation_status.md`
+- `docs/platform_support.md`
+- `docs/native_gpu_pipeline.md`
+- `docs/deterministic_rendering.md`
+- `docs/rgb_curves.md`
+- `docs/color_science.md`
+- `docs/roadmap.md`
+
+Some older milestone documents are historical records. The current source tree, CMake targets, public headers, tests, and this README take precedence for version 5.40 behavior.
+
+## Public API and compatibility
+
+Public headers are installed from `include/digitor`. The repository exposes C and C++ APIs for different subsystems. Consumers should pin a tested engine version; long-term binary compatibility across all historical releases is not implied solely by the current major version.
 
 ## License
 
 MIT License
-
-## FFmpeg software media decoding
-
-When `libavformat`, `libavcodec`, `libavutil`, `libswscale`, and `libswresample` are found by
-pkg-config, DigitorEngine opens standard FFmpeg-supported containers (including MP4, MOV, MKV,
-and common audio containers), selects the best stream, and performs software packet decoding.
-Video is normalized to top-down RGBA32F and audio to interleaved float PCM. All PTS and duration
-fields use a 1/1,000,000-second engine timebase. Random backward access flushes and resets the
-codec; `seek(pts_us)` provides timestamp seeking. Configure with `-DDIGITOR_REQUIRE_FFMPEG=ON`
-to reject a build without the five development libraries. Hardware decoding and encoding remain
-out of scope.
-
-
-## 4.x render, export, and Flutter SDK
-
-Preview and export now consume one `SharedRenderer` render graph. Pixel regression helpers expose PSNR and SSIM and validate the exact pre-encode pixels. FFmpeg-backed exports support MP4, MOV, Matroska, PNG/TIFF/EXR sequences and H.264, H.265, or AV1 video, with encoder draining, muxing, cancellation, and progress callbacks. The C ABI exposes a non-blocking Flutter SDK session and native RGBA texture bridge for Windows, Android, iOS, and macOS; see `flutter/digitor_sdk/example`. AAC is selected through `ExportSettings::audio_codec` when an audio source is attached.
-
-## Stabilization build and FFmpeg dependency policy
-
-All desktop configurations are exercised with tests/examples enabled and FFmpeg disabled; dedicated jobs
-require FFmpeg. `DIGITOR_WARNINGS_AS_ERRORS=ON` applies strictness only to engine-owned compilation.
-Install verification uses `cmake --install` followed by pure C and C++ projects using the exported package.
-
-FFmpeg discovery first accepts pkg-config and also accepts `-DDIGITOR_FFMPEG_ROOT=/sdk/ffmpeg`. Linux users
-install their distribution's `libavcodec`, `libavformat`, `libavutil`, `libswscale`, and `libswresample`
-development packages. Homebrew `ffmpeg` plus `pkg-config` is supported on macOS. A Windows SDK root must
-contain `include/libavcodec/avcodec.h` and `lib` (or `lib64`) import/static libraries named `avcodec`,
-`avformat`, `avutil`, `swscale`, and `swresample` (optional `lib` prefix). Shared deployments must copy the
-matching FFmpeg runtime DLLs beside the application. On macOS deploy matching dylibs with corrected
-`@rpath` install names or require the Homebrew runtime. Configuration never downloads or vendors binaries.
-The summary says “enabled and linked”, “unavailable”, or fails when `DIGITOR_REQUIRE_FFMPEG=ON`.
-
-Engine compilation requires only the five development libraries, exposed to CMake as
-`DIGITOR_FFMPEG_LIBRARIES`; it never requires the `ffmpeg` command-line program. The independently
-discovered `DIGITOR_FFMPEG_CLI` is optional. Set `-DDIGITOR_GENERATE_TEST_MEDIA=ON` to require that
-program and generate the optional MP4/MOV/MKV/WAV fixture set. The option defaults to `OFF`; without
-the CLI, media tests continue with repository-owned Y4M/WAV source fixtures and malformed input.
-
-Generated media fixtures are created by `scripts/generate_media_fixtures.sh` from FFmpeg lavfi sources;
-MP4/H.264, MOV, MKV, WAV, and malformed inputs are never opaque checked-in binaries. Determinism and future
-plugin design are specified in [deterministic rendering](docs/deterministic_rendering.md) and
-[plugin architecture](docs/plugin_architecture.md). Current qualification limits are in
-[production readiness](docs/production_readiness.md); long-term ABI stability is not claimed.
-
-## Native shader milestone
-The canonical source contract is HLSL through DXC. Vulkan output must pass SPIRV-Tools validation and binary reflection before it is usable. Missing toolchains and unfinished D3D12/Metal/GLES reflection paths fail explicitly; the engine never substitutes a CPU callback after native compilation failure. See [the compiler](docs/shader_compiler.md), [reflection](docs/shader_reflection.md), [ABI](docs/shader_abi.md), and [cache](docs/pipeline_cache.md) documentation.
-
-## Color science v4.5
-
-The public C++ color-science foundation defines explicit metadata, linear BT.709
-working space, standards-based transfer functions, derived primary matrices,
-Bradford adaptation, integer YUV decoding, immutable transform graphs and
-baseline tone operators. See `docs/color_science.md` and the honest backend truth
-table in `docs/implementation_status.md`. Native color-graph GPU execution is not
-yet implemented; v4.5.0 does not claim ACES or a complete HDR pipeline.
-
-## v4.6.1 `grade_rgba32f` execution qualification
-
-The engine now records internal execution provenance for native grading and
-has deterministic no-fallback failure seams. The complete CPU/Vulkan/D3D12/
-Metal/GLES call graphs and evidence truth table are in
-[`docs/grade_rgba32f_execution.md`](docs/grade_rgba32f_execution.md). The native
-FP32 implementations issue real commands, but this audit did not run qualifying
-GPU hardware, so every GPU backend remains **Implemented,
-hardware-unverified**. FP16 is unsupported. Version 4.6.1 is an audit milestone,
-not a production-readiness claim.
-
-### RGB Curves
-
-An immutable FP32 CPU reference, monotone-cubic control-point compiler, deterministic 256/1024/4096-sample LUTs, and explicit CPU Render Graph node are documented in [`docs/rgb_curves.md`](docs/rgb_curves.md). Native GPU curves are truthfully unsupported; there is no CPU fallback after GPU selection.
-
-### RGB Curves native execution development
-
-A single canonical HLSL shader, device-scoped bounded native FP32 LUT cache,
-backend-neutral Render Graph pass, native backend dispatch, and measured CPU
-reference accounting are present. Dedicated Windows/macOS qualification and
-Android compile-only jobs report hardware absence honestly. Native curve
-outputs remain in retained RGBA32F textures/images and matching preview
-backends consume them without CPU readback; validation readback stays separate.
-See [the RGB Curves specification](docs/rgb_curves.md) and the exact
-[implementation truth table](docs/implementation_status.md).
