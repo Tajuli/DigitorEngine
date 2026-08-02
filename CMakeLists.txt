@@ -1,12 +1,24 @@
 cmake_minimum_required(VERSION 3.21)
 
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineVersion.cmake")
 project(DigitorEngine
-    VERSION 5.50.0
+    VERSION ${DIGITOR_ENGINE_VERSION}
     DESCRIPTION "GPU-first cross-platform rendering engine foundation"
     LANGUAGES C CXX
 )
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineBase.cmake")
+# DigitorEngineBase is retained for compatibility and still declares its legacy
+# project version. Restore the canonical package identity immediately after it.
+set(PROJECT_VERSION "${DIGITOR_ENGINE_VERSION}")
+set(PROJECT_VERSION_MAJOR "${DIGITOR_ENGINE_VERSION_MAJOR}")
+set(PROJECT_VERSION_MINOR "${DIGITOR_ENGINE_VERSION_MINOR}")
+set(PROJECT_VERSION_PATCH "${DIGITOR_ENGINE_VERSION_PATCH}")
+set(CMAKE_PROJECT_VERSION "${DIGITOR_ENGINE_VERSION}")
+set(CMAKE_PROJECT_VERSION_MAJOR "${DIGITOR_ENGINE_VERSION_MAJOR}")
+set(CMAKE_PROJECT_VERSION_MINOR "${DIGITOR_ENGINE_VERSION_MINOR}")
+set(CMAKE_PROJECT_VERSION_PATCH "${DIGITOR_ENGINE_VERSION_PATCH}")
+
 find_package(Threads REQUIRED)
 target_link_libraries(digitor_engine PRIVATE Threads::Threads)
 
@@ -182,10 +194,14 @@ endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
-set_target_properties(digitor_engine PROPERTIES EXPORT_NAME Engine VERSION 5.50.0 SOVERSION 5)
+set_target_properties(digitor_engine PROPERTIES
+    EXPORT_NAME Engine
+    VERSION ${DIGITOR_ENGINE_VERSION}
+    SOVERSION ${DIGITOR_ENGINE_SOVERSION}
+)
 install(TARGETS digitor_engine EXPORT DigitorEngineTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/digitor DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 configure_package_config_file(cmake/DigitorEngineConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION 5.50.0 COMPATIBILITY SameMajorVersion)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" VERSION ${DIGITOR_ENGINE_VERSION} COMPATIBILITY SameMajorVersion)
 install(EXPORT DigitorEngineTargets FILE DigitorEngineTargets.cmake NAMESPACE Digitor:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/DigitorEngineConfigVersion.cmake" DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/DigitorEngine")
