@@ -54,6 +54,38 @@ const char* hardware_name(HardwareDecode value) noexcept {
   return "FFmpeg unknown";
 }
 
+NativeMediaPixelFormat native_pixel_format(AVPixelFormat format) noexcept {
+  switch(format){
+    case AV_PIX_FMT_NV12:return NativeMediaPixelFormat::nv12;
+    case AV_PIX_FMT_P010LE:return NativeMediaPixelFormat::p010;
+    case AV_PIX_FMT_YUV420P:return NativeMediaPixelFormat::yuv420p;
+    case AV_PIX_FMT_YUV420P10LE:return NativeMediaPixelFormat::yuv420p10;
+    case AV_PIX_FMT_BGRA:return NativeMediaPixelFormat::bgra8;
+    case AV_PIX_FMT_RGBA:return NativeMediaPixelFormat::rgba8;
+    default:return NativeMediaPixelFormat::unknown;
+  }
+}
+PixelFormat engine_pixel_format(NativeMediaPixelFormat format) noexcept {
+  switch(format){
+    case NativeMediaPixelFormat::nv12:return PixelFormat::nv12;
+    case NativeMediaPixelFormat::p010:return PixelFormat::p010;
+    case NativeMediaPixelFormat::yuv420p:return PixelFormat::yuv420p;
+    case NativeMediaPixelFormat::yuv420p10:return PixelFormat::yuv420p10;
+    case NativeMediaPixelFormat::bgra8:return PixelFormat::bgra8;
+    case NativeMediaPixelFormat::rgba8:return PixelFormat::rgba8;
+    default:return PixelFormat::rgba32f;
+  }
+}
+DecoderOptions audio_decoder_options(std::size_t cache_capacity) {
+  DecoderOptions options;
+  options.hardware=HardwareDecode::cpu;
+  options.allow_cpu_fallback=true;
+  options.cache_capacity=cache_capacity;
+  options.output_mode=DecodeOutputMode::cpu_rgba32f;
+  options.require_zero_copy=false;
+  return options;
+}
+
 class DecoderBase {
 protected:
  AVFormatContext* format_{}; AVCodecContext* codec_{}; AVPacket* packet_{}; AVFrame* frame_{}; AVFrame* transfer_frame_{};
@@ -63,6 +95,7 @@ protected:
  std::int64_t seek_target_us_{};
  HardwareDecode selected_decode_{HardwareDecode::cpu};
  bool hardware_accelerated_{};
+ DecoderOptions options_{};
 
  static AVPixelFormat choose_pixel_format(AVCodecContext* context,const AVPixelFormat* formats) {
   auto* self=static_cast<DecoderBase*>(context->opaque);
@@ -100,7 +133,13 @@ protected:
   hardware_accelerated_=false;
  }
  void cleanup(){av_frame_free(&transfer_frame_);av_frame_free(&frame_);av_packet_free(&packet_);avcodec_free_context(&codec_);av_buffer_unref(&hw_device_);avformat_close_input(&format_);}
- explicit DecoderBase(const std::string& path,AVMediaType type,DecoderOptions options) try {
+ explicit DecoderBase(const std::string& path,AVMediaType type,DecoderOptions options) try : options_(options) {
+  if(type==AVMEDIA_TYPE_VIDEO&&options_.require_zero_copy){
+    options_.output_mode=DecodeOutputMode::native_gpu_surface;
+    options_.allow_cpu_fallback=false;
+    if(options_.hardware==HardwareDecode::cpu)
+      throw std::runtime_error("zero-copy decode requires a hardware decoder");
+  }
   int r=avformat_open_input(&format_,path.c_str(),nullptr,nullptr);if(r<0)fail("cannot open media",r);
   if((r=avformat_find_stream_info(format_,nullptr))<0)fail("cannot discover streams",r);
   if(!format_->nb_streams)throw std::runtime_error("cannot discover streams: container reported zero streams");
@@ -109,14 +148,14 @@ protected:
   stream_=format_->streams[stream_index_];codec_=avcodec_alloc_context3(decoder);if(!codec_)throw std::bad_alloc();
   if((r=avcodec_parameters_to_context(codec_,stream_->codecpar))<0)fail("cannot copy codec parameters",r);
 
-  if(type==AVMEDIA_TYPE_VIDEO&&options.hardware!=HardwareDecode::cpu){
-   const HardwareDecode requested=options.hardware==HardwareDecode::automatic?platform_hardware_decode():options.hardware;
+  if(type==AVMEDIA_TYPE_VIDEO&&options_.hardware!=HardwareDecode::cpu){
+   const HardwareDecode requested=options_.hardware==HardwareDecode::automatic?platform_hardware_decode():options_.hardware;
    std::string diagnostic;
    const bool configured=requested!=HardwareDecode::cpu&&configure_hardware(decoder,requested,diagnostic);
    if(!configured){
     disable_hardware();
-    const bool explicit_hardware=options.hardware!=HardwareDecode::automatic;
-    if(explicit_hardware||!options.allow_cpu_fallback)
+    const bool explicit_hardware=options_.hardware!=HardwareDecode::automatic;
+    if(explicit_hardware||!options_.allow_cpu_fallback)
       throw std::runtime_error("hardware video decoder unavailable: "+diagnostic);
    }
   }
@@ -124,7 +163,7 @@ protected:
   r=avcodec_open2(codec_,decoder,nullptr);
   if(r<0&&hardware_accelerated_){
    const auto diagnostic=error_text(r);
-   const bool may_fallback=options.hardware==HardwareDecode::automatic&&options.allow_cpu_fallback;
+   const bool may_fallback=options_.hardware==HardwareDecode::automatic&&options_.allow_cpu_fallback&&!options_.require_zero_copy;
    if(!may_fallback)fail("open selected hardware decoder",r);
    avcodec_free_context(&codec_);
    av_buffer_unref(&hw_device_);
@@ -135,12 +174,17 @@ protected:
      throw std::runtime_error("hardware decoder failed ("+diagnostic+"); software fallback also failed ("+error_text(r)+")");
   } else if(r<0) fail("unsupported codec",r);
 
+  if(type==AVMEDIA_TYPE_VIDEO&&options_.output_mode==DecodeOutputMode::native_gpu_surface&&!hardware_accelerated_)
+    throw std::runtime_error("native GPU surface output requested but hardware decode is unavailable");
+
   packet_=av_packet_alloc();frame_=av_frame_alloc();transfer_frame_=av_frame_alloc();
   if(!packet_||!frame_||!transfer_frame_)throw std::bad_alloc();
  } catch(...) { cleanup(); throw; }
  virtual ~DecoderBase(){cleanup();}
  AVFrame* decoded_frame(){
   if(!hardware_accelerated_||frame_->format!=hw_pixel_format_)return frame_;
+  if(options_.require_zero_copy||options_.output_mode==DecodeOutputMode::native_gpu_surface)
+    throw std::runtime_error("zero-copy decoder refused hardware frame download");
   av_frame_unref(transfer_frame_);
   const int r=av_hwframe_transfer_data(transfer_frame_,frame_,0);
   if(r<0)fail("transfer hardware frame",r);
@@ -148,6 +192,51 @@ protected:
     throw std::runtime_error("hardware frame transfer changed decoded dimensions");
   av_frame_copy_props(transfer_frame_,frame_);
   return transfer_frame_;
+ }
+ NativeMediaSurfacePtr retain_native_surface(){
+  if(!hardware_accelerated_||frame_->format!=hw_pixel_format_)return {};
+  auto* clone=av_frame_clone(frame_);
+  if(!clone)throw std::bad_alloc();
+  NativeMediaSurface::Owner owner(clone,[](void* pointer){
+    auto* owned=static_cast<AVFrame*>(pointer);
+    av_frame_free(&owned);
+  });
+  NativeMediaSurfaceDescriptor descriptor;
+  descriptor.struct_size=sizeof(descriptor);
+  descriptor.api_version=1;
+  descriptor.width=static_cast<std::uint32_t>(frame_->width);
+  descriptor.height=static_cast<std::uint32_t>(frame_->height);
+  descriptor.timestamp_us=timestamp();
+  descriptor.color.primaries=frame_->color_primaries;
+  descriptor.color.transfer=frame_->color_trc;
+  descriptor.color.matrix=frame_->colorspace;
+  descriptor.color.full_range=frame_->color_range==AVCOL_RANGE_JPEG?1:0;
+  descriptor.color.chroma_location=static_cast<std::uint8_t>(std::max(0,static_cast<int>(frame_->chroma_location)));
+
+  AVPixelFormat software_format=AV_PIX_FMT_NONE;
+  if(frame_->hw_frames_ctx){
+    const auto* frames=static_cast<const AVHWFramesContext*>(frame_->hw_frames_ctx->data);
+    if(frames)software_format=frames->sw_format;
+  }
+  descriptor.pixel_format=native_pixel_format(software_format);
+
+  switch(static_cast<AVPixelFormat>(frame_->format)){
+    case AV_PIX_FMT_D3D11:
+      descriptor.platform=NativeMediaPlatform::windows;
+      descriptor.handle_type=NativeMediaHandleType::d3d11_texture2d;
+      descriptor.native_handle=reinterpret_cast<std::uintptr_t>(frame_->data[0]);
+      descriptor.array_slice=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(frame_->data[1]));
+      break;
+    case AV_PIX_FMT_VIDEOTOOLBOX:
+      descriptor.platform=NativeMediaPlatform::apple;
+      descriptor.handle_type=NativeMediaHandleType::cv_pixel_buffer;
+      descriptor.native_handle=reinterpret_cast<std::uintptr_t>(frame_->data[3]);
+      break;
+    default:
+      return {};
+  }
+  if(descriptor.native_handle==0)return {};
+  return std::make_shared<NativeMediaSurface>(descriptor,std::move(owner));
  }
  bool receive(){
   if(decoder_finished_)return false;
@@ -187,7 +276,14 @@ protected:
  std::int64_t timestamp()const {auto p=frame_->best_effort_timestamp;return p==AV_NOPTS_VALUE?0:av_rescale_q(p,stream_->time_base,engine_time_base);}
  std::int64_t duration()const {auto d=frame_->duration;return d>0?av_rescale_q(d,stream_->time_base,engine_time_base):0;}
  bool is_preroll(std::int64_t pts)const{return seek_target_us_>0&&pts<seek_target_us_;}
- DecoderInfo decoder_info()const {return {selected_decode_,hardware_accelerated_,hardware_name(selected_decode_)};}
+ DecoderInfo decoder_info()const {
+  NativeMediaHandleType handle=NativeMediaHandleType::none;
+  if(options_.output_mode==DecodeOutputMode::native_gpu_surface||options_.require_zero_copy){
+    if(hw_pixel_format_==AV_PIX_FMT_D3D11)handle=NativeMediaHandleType::d3d11_texture2d;
+    else if(hw_pixel_format_==AV_PIX_FMT_VIDEOTOOLBOX)handle=NativeMediaHandleType::cv_pixel_buffer;
+  }
+  return {selected_decode_,hardware_accelerated_,hardware_name(selected_decode_),handle!=NativeMediaHandleType::none,handle};
+ }
 };
 
 class Video final:public VideoDecoder,private DecoderBase {
@@ -195,14 +291,27 @@ class Video final:public VideoDecoder,private DecoderBase {
  std::shared_ptr<VideoFrame> next(){
   while(receive()&&is_preroll(timestamp())){}
   if(decoder_finished_)return {};
-  AVFrame* decoded=decoded_frame();
   auto out=std::make_shared<VideoFrame>();out->number=next_number_++;out->pts=timestamp();out->duration=duration();
-  out->width=decoded->width;out->height=decoded->height;
-  if(decoded->width<=0||decoded->height<=0||static_cast<std::uint64_t>(decoded->width)*decoded->height>std::numeric_limits<std::size_t>::max()/sizeof(Color))
+  out->width=static_cast<std::uint32_t>(frame_->width);out->height=static_cast<std::uint32_t>(frame_->height);
+  if(frame_->width<=0||frame_->height<=0||static_cast<std::uint64_t>(frame_->width)*frame_->height>std::numeric_limits<std::size_t>::max()/sizeof(Color))
     throw std::runtime_error("invalid decoded video dimensions");
+  out->color.primaries=frame_->color_primaries;out->color.transfer=frame_->color_trc;out->color.matrix=frame_->colorspace;
+  out->color.range=frame_->color_range==AVCOL_RANGE_JPEG?ColorRange::full:(frame_->color_range==AVCOL_RANGE_MPEG?ColorRange::limited:ColorRange::unspecified);
+
+  const bool native_requested=options_.output_mode==DecodeOutputMode::native_gpu_surface||options_.require_zero_copy;
+  if(native_requested){
+    out->native_surface=retain_native_surface();
+    if(!out->native_surface)
+      throw std::runtime_error("hardware decoder did not expose a supported native zero-copy surface");
+    out->pixel_format=engine_pixel_format(out->native_surface->descriptor().pixel_format);
+    cache_.put(out->number,out);
+    return out;
+  }
+
+  AVFrame* decoded=decoded_frame();
+  out->width=static_cast<std::uint32_t>(decoded->width);out->height=static_cast<std::uint32_t>(decoded->height);
   out->color.primaries=decoded->color_primaries;out->color.transfer=decoded->color_trc;out->color.matrix=decoded->colorspace;
   out->color.range=decoded->color_range==AVCOL_RANGE_JPEG?ColorRange::full:(decoded->color_range==AVCOL_RANGE_MPEG?ColorRange::limited:ColorRange::unspecified);
-
   constexpr int flags=SWS_BILINEAR|SWS_ACCURATE_RND|SWS_FULL_CHR_H_INT|SWS_FULL_CHR_H_INP;
   sws_=sws_getCachedContext(sws_,decoded->width,decoded->height,static_cast<AVPixelFormat>(decoded->format),
       decoded->width,decoded->height,AV_PIX_FMT_RGBA64LE,flags,nullptr,nullptr,nullptr);
@@ -221,6 +330,7 @@ class Video final:public VideoDecoder,private DecoderBase {
   constexpr float inverse=1.0f/65535.0f;
   for(std::size_t i=0;i<out->pixels.size();++i)
     out->pixels[i]={rgba[i*4]*inverse,rgba[i*4+1]*inverse,rgba[i*4+2]*inverse,rgba[i*4+3]*inverse};
+  out->pixel_format=PixelFormat::rgba32f;
   cache_.put(out->number,out);return out;
  }
 public:
@@ -237,11 +347,11 @@ class Audio final:public AudioDecoder,private DecoderBase {
   int r=swr_alloc_set_opts2(&swr_,&codec_->ch_layout,AV_SAMPLE_FMT_FLT,codec_->sample_rate,&frame_->ch_layout,static_cast<AVSampleFormat>(frame_->format),frame_->sample_rate,0,nullptr);if(r<0)fail("configure resampler",r);if((r=swr_init(swr_))<0)fail("initialize resampler",r);
   const int capacity=av_rescale_rnd(swr_get_delay(swr_,frame_->sample_rate)+frame_->nb_samples,codec_->sample_rate,frame_->sample_rate,AV_ROUND_UP);out->samples.resize(static_cast<std::size_t>(capacity)*out->channels);std::uint8_t* destination=reinterpret_cast<std::uint8_t*>(out->samples.data());r=swr_convert(swr_,&destination,capacity,const_cast<const std::uint8_t**>(frame_->extended_data),frame_->nb_samples);if(r<0)fail("resample audio",r);out->samples.resize(static_cast<std::size_t>(r)*out->channels);out->duration=av_rescale_q(r,AVRational{1,static_cast<int>(out->sample_rate)},engine_time_base);cache_.put(out->number,out);return out;}
 public:
- Audio(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_AUDIO,DecoderOptions{HardwareDecode::cpu,true,o.cache_capacity}),cache_(o.cache_capacity){}
+ Audio(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_AUDIO,audio_decoder_options(o.cache_capacity)),cache_(o.cache_capacity){}
  ~Audio()override{swr_free(&swr_);}
  std::shared_ptr<AudioFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto hit=cache_.get(n))return hit;if(n<next_number_)throw std::out_of_range("frame is no longer cached; seek before decoding it again");std::shared_ptr<AudioFrame> result;while(next_number_<=n){result=next();if(!result)return {};}return result;}
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
- DecoderInfo info()const override{return {HardwareDecode::cpu,false,"FFmpeg software"};}
+ DecoderInfo info()const override{return {HardwareDecode::cpu,false,"FFmpeg software",false,NativeMediaHandleType::none};}
 };
 #endif
 }
