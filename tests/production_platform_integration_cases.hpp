@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/production_platform_integration.hpp"
+#include "source_release_readiness_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -159,4 +160,6 @@ inline void run_production_platform_integration_cases() {
         return DIGITOR_RESULT_OK;
       };
   assert(validate_windows_vulkan_zero_copy_interop(invalid));
+
+  run_source_release_readiness_cases();
 }
