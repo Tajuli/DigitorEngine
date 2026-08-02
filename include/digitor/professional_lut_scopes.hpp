@@ -33,7 +33,7 @@ struct ProfessionalLutMetadata {
 
 struct ProfessionalLut {
   ProfessionalLutMetadata metadata;
-  std::variant<Lut1D, Lut3D> data;
+  std::variant<std::monostate, Lut1D, Lut3D> data;
 };
 
 struct LutGpuResource {
