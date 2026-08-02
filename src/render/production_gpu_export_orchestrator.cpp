@@ -1,6 +1,5 @@
 #include "digitor/production_gpu_export_orchestrator.hpp"
 
-#include <algorithm>
 #include <exception>
 #include <utility>
 
@@ -11,10 +10,8 @@ ProductionGpuExportOrchestrator::ProductionGpuExportOrchestrator(
     TimelineRenderRuntime& timeline,
     HardwareEncoderCallbacks encoder_callbacks,
     ProductionGpuExportCallbacks callbacks)
-    : snapshot_(std::move(snapshot)),
-      timeline_(timeline),
-      encoder_callbacks_(std::move(encoder_callbacks)),
-      callbacks_(std::move(callbacks)) {
+    : snapshot_(std::move(snapshot)), timeline_(timeline),
+      encoder_callbacks_(std::move(encoder_callbacks)), callbacks_(std::move(callbacks)) {
   if (snapshot_) telemetry_.snapshot_identity = snapshot_->identity();
 }
 
@@ -53,12 +50,10 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
         return fail_locked(DIGITOR_RESULT_INVALID_ARGUMENT,
                            "missing immutable export snapshot", diagnostic);
       const auto contract = validate_export_snapshot(*snapshot_);
-      if (!contract)
-        return fail_locked(contract.result, contract.diagnostic, diagnostic);
+      if (!contract) return fail_locked(contract.result, contract.diagnostic, diagnostic);
       if (!export_policy_uses_gpu(snapshot_->policy()))
         return fail_locked(DIGITOR_RESULT_UNSUPPORTED,
-                           "GPU orchestrator accepts hardware-required snapshots only",
-                           diagnostic);
+                           "GPU orchestrator accepts hardware-required snapshots only", diagnostic);
       if (schedule.empty())
         return fail_locked(DIGITOR_RESULT_INVALID_ARGUMENT,
                            "export frame schedule is empty", diagnostic);
@@ -66,8 +61,7 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
       for (const auto& item : schedule) {
         if (item.pts_us < 0 || item.duration_us <= 0 || item.pts_us <= previous_pts)
           return fail_locked(DIGITOR_RESULT_INVALID_ARGUMENT,
-                             "export schedule timestamps must be positive and strictly monotonic",
-                             diagnostic);
+                             "export schedule must be valid and strictly monotonic", diagnostic);
         previous_pts = item.pts_us;
       }
       telemetry_.requested_frames = schedule.size();
@@ -78,14 +72,14 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
     HardwareEncodeConfig encode_config{};
     encode_config.profile = frozen.profile;
     encode_config.backend = frozen.encoder_backend;
+    encode_config.output_path = frozen.output_path;
     encode_config.duration_us = frozen.duration_us;
     encode_config.require_hardware = true;
     encode_config.require_zero_copy = true;
     encode_config.require_monotonic_timestamps = true;
     encode_config.require_atomic_finalize = true;
 
-    ProductionHardwareEncodeSession encoder(std::move(encode_config),
-                                            encoder_callbacks_);
+    ProductionHardwareEncodeSession encoder(std::move(encode_config), encoder_callbacks_);
     std::string local;
     auto result = encoder.start(&local);
     if (result != DIGITOR_RESULT_OK) {
@@ -99,22 +93,19 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
           (callbacks_.cancelled && callbacks_.cancelled())) {
         encoder.cancel();
         std::scoped_lock lock(mutex_);
-        return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                           "GPU export cancelled", diagnostic);
+        return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE, "GPU export cancelled", diagnostic);
       }
 
       auto rendered = timeline_.render(
-          TimelineExecutionMode::export_render, timing.pts_us, frozen.width,
-          frozen.height, frozen.timeline_revision, frozen.render_revision,
-          1024, false);
+          TimelineExecutionMode::export_render, timing.pts_us, frozen.width, frozen.height,
+          frozen.timeline_revision, frozen.render_revision, 1024, false);
       if (rendered.cancelled) {
         encoder.cancel();
         std::scoped_lock lock(mutex_);
-        return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                           "timeline render cancelled", diagnostic);
+        return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE, "timeline render cancelled", diagnostic);
       }
-      if (!rendered.success || !rendered.gpu_resident ||
-          !rendered.video.gpu || !rendered.video.rgba.empty()) {
+      if (!rendered.success || !rendered.gpu_resident || !rendered.video.gpu ||
+          !rendered.video.rgba.empty()) {
         encoder.cancel();
         std::scoped_lock lock(mutex_);
         ++telemetry_.cpu_staging_frames;
@@ -130,15 +121,13 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
       if (!frame_contract) {
         encoder.cancel();
         std::scoped_lock lock(mutex_);
-        return fail_locked(frame_contract.result, frame_contract.diagnostic,
-                           diagnostic);
+        return fail_locked(frame_contract.result, frame_contract.diagnostic, diagnostic);
       }
       if (rendered.video.gpu->metadata().timestamp != timing.pts_us) {
         encoder.cancel();
         std::scoped_lock lock(mutex_);
         return fail_locked(DIGITOR_RESULT_INVALID_ARGUMENT,
-                           "rendered frame timestamp differs from frozen schedule",
-                           diagnostic);
+                           "rendered frame timestamp differs from frozen schedule", diagnostic);
       }
 
       {
@@ -152,8 +141,7 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
         if (result != DIGITOR_RESULT_OK) {
           encoder.cancel();
           std::scoped_lock lock(mutex_);
-          return fail_locked(result,
-                             local.empty() ? "audio mux submission failed" : local,
+          return fail_locked(result, local.empty() ? "audio mux submission failed" : local,
                              diagnostic);
         }
         std::scoped_lock lock(mutex_);
@@ -185,8 +173,7 @@ DigitorResult ProductionGpuExportOrchestrator::execute(
     result = encoder.finish(&local);
     if (result != DIGITOR_RESULT_OK) {
       std::scoped_lock lock(mutex_);
-      return fail_locked(result,
-                         local.empty() ? "hardware encoder finalize failed" : local,
+      return fail_locked(result, local.empty() ? "hardware encoder finalize failed" : local,
                          diagnostic);
     }
 
