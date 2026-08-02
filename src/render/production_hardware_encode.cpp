@@ -29,7 +29,7 @@ DigitorResult ProductionHardwareEncodeSession::fail_locked(
   telemetry_.state = HardwareEncodeState::failed;
   telemetry_.diagnostic = std::move(diagnostic);
   if (output) *output = telemetry_.diagnostic;
-  return DIGITOR_RESULT_BACKEND_FAILURE;
+  return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 }
 
 DigitorResult ProductionHardwareEncodeSession::start(std::string* diagnostic) noexcept {
