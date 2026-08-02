@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/windows_hardware_encode_adapter.hpp"
+#include "export_m4_android_contract_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -146,6 +147,8 @@ inline void run_export_m3_windows_contract_cases() {
   assert(violating.start() == DIGITOR_RESULT_OK);
   assert(violating.submit({m3_frame(0), 0, 33333, true}) != DIGITOR_RESULT_OK);
   assert(cancelled >= 1);
+
+  run_export_m4_android_contract_cases();
 }
 
 }  // namespace
