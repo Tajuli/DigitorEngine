@@ -25,6 +25,10 @@ struct TranscodeRequest {
   std::int64_t resume_from_us{};
   bool copy_audio{false};
   bool strip_metadata{true};
+  // File-based FFmpeg transcode necessarily re-opens and re-decodes the source.
+  // Strict zero-copy exports must use ProductionHardwareEncodeSession with
+  // ProcessedGpuFrame submission instead of this runtime.
+  bool require_zero_copy{false};
 };
 
 struct TranscodeResult {
