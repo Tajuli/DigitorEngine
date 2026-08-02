@@ -215,7 +215,7 @@ protected:
 
   AVPixelFormat software_format=AV_PIX_FMT_NONE;
   if(frame_->hw_frames_ctx){
-    const auto* frames=static_cast<const AVHWFramesContext*>(frame_->hw_frames_ctx->data);
+    const auto* frames=reinterpret_cast<const AVHWFramesContext*>(frame_->hw_frames_ctx->data);
     if(frames)software_format=frames->sw_format;
   }
   descriptor.pixel_format=native_pixel_format(software_format);
@@ -257,7 +257,8 @@ protected:
      continue;
     }
     av_packet_unref(packet_);
-    if(r!=AVERROR_EOF)fail("read packet",r);input_eof_=true;
+    if(r!=AVERROR_EOF)fail("read packet",r);
+    input_eof_=true;
    }
    if(!flush_sent_){
     r=avcodec_send_packet(codec_,nullptr);
@@ -269,8 +270,13 @@ protected:
   }
  }
  void seek_to(std::int64_t pts){
-  const auto target=av_rescale_q(pts,engine_time_base,stream_->time_base);int r=av_seek_frame(format_,stream_index_,target,AVSEEK_FLAG_BACKWARD);
-  if(r<0)fail("seek",r);avcodec_flush_buffers(codec_);av_packet_unref(packet_);av_frame_unref(frame_);av_frame_unref(transfer_frame_);
+  const auto target=av_rescale_q(pts,engine_time_base,stream_->time_base);
+  const int r=av_seek_frame(format_,stream_index_,target,AVSEEK_FLAG_BACKWARD);
+  if(r<0)fail("seek",r);
+  avcodec_flush_buffers(codec_);
+  av_packet_unref(packet_);
+  av_frame_unref(frame_);
+  av_frame_unref(transfer_frame_);
   input_eof_=flush_sent_=decoder_finished_=packet_pending_=false;next_number_=0;seek_target_us_=pts;
  }
  std::int64_t timestamp()const {auto p=frame_->best_effort_timestamp;return p==AV_NOPTS_VALUE?0:av_rescale_q(p,stream_->time_base,engine_time_base);}
