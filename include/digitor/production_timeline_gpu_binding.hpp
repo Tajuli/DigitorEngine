@@ -12,7 +12,7 @@ namespace digitor {
 
 struct ProductionTimelineGpuHost {
   DigitorRendererBackend backend{DIGITOR_RENDERER_CPU};
-  std::uint64_t context_identity{};
+  const void* context_identity{};
   DigitorPixelFormat working_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
   std::string device_identity;
 
@@ -49,7 +49,7 @@ class ProductionTimelineGpuBinding final {
 
   [[nodiscard]] bool valid() const noexcept {
     const auto& h = state_->host;
-    return h.backend != DIGITOR_RENDERER_CPU && h.context_identity != 0 &&
+    return h.backend != DIGITOR_RENDERER_CPU && h.context_identity != nullptr &&
            h.working_format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
            !h.device_identity.empty() && h.create_target && h.execute_effects &&
            h.composite_layer && h.frame_evictable;
@@ -66,7 +66,8 @@ class ProductionTimelineGpuBinding final {
       const auto native = state->host.create_target(width, height, timestamp);
       if (!native || !*native ||
           !validate_frame(*state, **native, width, height, timestamp)) {
-        state->telemetry.last_diagnostic = "production GPU target creation failed validation";
+        state->telemetry.last_diagnostic =
+            "production GPU target creation failed validation";
         return std::nullopt;
       }
       ++state->telemetry.targets_created;
@@ -83,7 +84,8 @@ class ProductionTimelineGpuBinding final {
       if (!validate_render_frame(*state, frame)) return false;
       ProcessedGpuFramePtr output;
       std::string diagnostic;
-      const auto result = state->host.execute_effects(layer, frame.gpu, output, diagnostic);
+      const auto result =
+          state->host.execute_effects(layer, frame.gpu, output, diagnostic);
       if (result != DIGITOR_RESULT_OK || !output ||
           !validate_frame(*state, *output, frame.width, frame.height,
                           frame.gpu->metadata().timestamp)) {
@@ -93,7 +95,8 @@ class ProductionTimelineGpuBinding final {
         return false;
       }
       frame.gpu = std::move(output);
-      frame.provenance = "production-gpu-effects:" + state->host.device_identity;
+      frame.provenance =
+          "production-gpu-effects:" + state->host.device_identity;
       ++state->telemetry.effect_dispatches;
       return true;
     };
@@ -102,11 +105,14 @@ class ProductionTimelineGpuBinding final {
                                   const RenderVideoFrame& input,
                                   RenderVideoFrame& target) {
       if (!validate_render_frame(*state, input) ||
-          !validate_render_frame(*state, target)) return false;
+          !validate_render_frame(*state, target)) {
+        return false;
+      }
       if (input.width != target.width || input.height != target.height ||
           input.gpu->metadata().timestamp != target.gpu->metadata().timestamp) {
         ++state->telemetry.rejected_metadata_frames;
-        state->telemetry.last_diagnostic = "timeline composite input/target mismatch";
+        state->telemetry.last_diagnostic =
+            "timeline composite input/target mismatch";
         return false;
       }
       ProcessedGpuFramePtr output;
@@ -122,7 +128,8 @@ class ProductionTimelineGpuBinding final {
         return false;
       }
       target.gpu = std::move(output);
-      target.provenance = "production-gpu-composite:" + state->host.device_identity;
+      target.provenance =
+          "production-gpu-composite:" + state->host.device_identity;
       ++state->telemetry.composite_dispatches;
       return true;
     };
@@ -152,9 +159,10 @@ class ProductionTimelineGpuBinding final {
                              std::uint32_t width,
                              std::uint32_t height,
                              std::int64_t timestamp) {
-    if (frame.backend() == DIGITOR_RENDERER_CPU || frame.has_cpu_pixels()) {
+    if (frame.backend() == DIGITOR_RENDERER_CPU) {
       ++state.telemetry.rejected_cpu_frames;
-      state.telemetry.last_diagnostic = "CPU frame rejected by production timeline GPU binding";
+      state.telemetry.last_diagnostic =
+          "CPU frame rejected by production timeline GPU binding";
       return false;
     }
     if (frame.backend() != state.host.backend) {
@@ -162,25 +170,31 @@ class ProductionTimelineGpuBinding final {
       state.telemetry.last_diagnostic = "timeline frame backend mismatch";
       return false;
     }
-    if (!frame.context_compatible(state.host.backend, state.host.context_identity)) {
+    if (!frame.has_context_identity(state.host.context_identity) ||
+        !frame.context_live()) {
       ++state.telemetry.rejected_context_frames;
-      state.telemetry.last_diagnostic = "timeline frame context/device mismatch";
+      state.telemetry.last_diagnostic =
+          "timeline frame context/device mismatch or retired context";
       return false;
     }
-    const auto& m = frame.metadata();
-    if (!frame.ready() || m.width != width || m.height != height ||
-        m.timestamp != timestamp || m.format != state.host.working_format) {
+    const auto& metadata = frame.metadata();
+    if (!frame.ready() || metadata.width != width || metadata.height != height ||
+        metadata.timestamp != timestamp ||
+        metadata.format != state.host.working_format) {
       ++state.telemetry.rejected_metadata_frames;
-      state.telemetry.last_diagnostic = "timeline frame metadata/readiness mismatch";
+      state.telemetry.last_diagnostic =
+          "timeline frame metadata/readiness mismatch";
       return false;
     }
     return true;
   }
 
-  static bool validate_render_frame(State& state, const RenderVideoFrame& frame) {
+  static bool validate_render_frame(State& state,
+                                    const RenderVideoFrame& frame) {
     if (!frame.gpu || !frame.rgba.empty()) {
       ++state.telemetry.rejected_cpu_frames;
-      state.telemetry.last_diagnostic = "mixed or CPU timeline frame rejected";
+      state.telemetry.last_diagnostic =
+          "mixed or CPU timeline frame rejected";
       return false;
     }
     return validate_frame(state, *frame.gpu, frame.width, frame.height,
