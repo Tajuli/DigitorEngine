@@ -83,6 +83,7 @@ add_library(digitor_engine
     src/platform/platform.cpp
     src/ffi/digitor_c_api.cpp
     src/ffi/flutter_sdk.cpp
+    src/ffi/native_preview_presentation.cpp
     src/media/media.cpp
     src/editor/timeline.cpp
     src/render/renderer.cpp

@@ -76,6 +76,9 @@ public:
   [[nodiscard]] bool same_context(const ProcessedGpuFrame& other) const noexcept {
     return context_ != nullptr && context_ == other.context_;
   }
+  [[nodiscard]] bool has_context_identity(const void* identity) const noexcept {
+    return identity != nullptr && context_ == identity;
+  }
   [[nodiscard]] bool production_compatible_with(
       const ProcessedGpuFrame& other) const noexcept {
     return backend_ == other.backend_ && same_context(other) && context_live() &&
