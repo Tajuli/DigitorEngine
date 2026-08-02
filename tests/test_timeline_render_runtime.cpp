@@ -19,7 +19,8 @@ void require(bool condition, const char* message) {
 digitor::RenderVideoFrame make_gpu_frame(std::uint64_t identity,
                                          std::uint32_t width,
                                          std::uint32_t height,
-                                         const char* provenance) {
+                                         const char* provenance,
+                                         const void* supplied_context = nullptr) {
   using namespace digitor;
   static int context;
   GpuFrameMetadata metadata;
@@ -36,7 +37,8 @@ digitor::RenderVideoFrame make_gpu_frame(std::uint64_t identity,
   frame.width = width;
   frame.height = height;
   frame.gpu = std::make_shared<ProcessedGpuFrame>(
-      &context, DIGITOR_RENDERER_CPU, metadata, identity, std::move(native),
+      supplied_context ? supplied_context : &context, DIGITOR_RENDERER_CPU,
+      metadata, identity, std::move(native),
       std::move(ready), false);
   frame.provenance = provenance;
   return frame;
@@ -165,5 +167,39 @@ int main() {
   require(gpu_invalidated.success, "GPU render after invalidation failed");
   require(gpu_invalidated.cache_hits == 1 && gpu_invalidated.cache_misses == 1,
           "GPU clip invalidation failed");
+
+  // A resident handle from a different logical device/context must never be
+  // accepted merely because its backend enum and dimensions match.
+  static int foreign_context;
+  auto mismatched_callbacks = gpu_callbacks;
+  mismatched_callbacks.decode_video = [](const VideoExecutionLayer& layer, bool) {
+    return std::optional<RenderVideoFrame>{make_gpu_frame(
+        700, 2, 1, layer.clip_id.c_str(), &foreign_context)};
+  };
+  TimelineRenderRuntime mismatched_runtime(executor, mismatched_callbacks, 1, 4);
+  const auto mismatched = mismatched_runtime.render(
+      TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
+  require(!mismatched.success &&
+              mismatched.diagnostic.find("device/context mismatch") != std::string::npos,
+          "cross-device GPU frame was not rejected");
+
+  // RGBA32F 2x1 frames consume 32 bytes. A 32-byte budget therefore retains
+  // only the most recently used layer even when the frame-count cap is higher.
+  int budget_decodes = 0;
+  auto budget_callbacks = gpu_callbacks;
+  budget_callbacks.decode_video = [&](const VideoExecutionLayer& layer, bool) {
+    ++budget_decodes;
+    return std::optional<RenderVideoFrame>{make_gpu_frame(
+        layer.clip_id == "base" ? 801 : 802, 2, 1, layer.clip_id.c_str())};
+  };
+  TimelineRenderRuntime budget_runtime(executor, budget_callbacks, 1, 8, 32);
+  require(budget_runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1,
+                                1, 1, 0).success,
+          "byte-budget render failed");
+  require(budget_runtime.gpu_cache_bytes() <= 32, "GPU cache exceeded byte budget");
+  require(budget_runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1,
+                                1, 1, 0).success,
+          "byte-budget repeated render failed");
+  require(budget_decodes > 2, "byte-budget eviction did not force a cache miss");
   return 0;
 }

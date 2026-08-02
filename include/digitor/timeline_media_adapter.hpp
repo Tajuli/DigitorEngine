@@ -41,6 +41,7 @@ struct MediaAdapterCallbacks {
   std::function<bool(const RenderVideoFrame&, const TimelineExecutionPlan&)> deliver_preview;
   std::function<bool(const RenderVideoFrame&, const TimelineExecutionPlan&)> deliver_export;
   std::function<bool()> cancelled;
+  std::function<bool(const ProcessedGpuFrame&)> gpu_frame_evictable;
 };
 
 class TimelineMediaAdapter {

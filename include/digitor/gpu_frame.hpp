@@ -71,6 +71,16 @@ public:
   }
   [[nodiscard]] DigitorResult validation_readback(std::vector<float>& out) const noexcept;
   [[nodiscard]] bool context_live() const noexcept;
+  // Opaque identity comparison used by orchestration code. Native context
+  // pointers are deliberately never exposed or dereferenced here.
+  [[nodiscard]] bool same_context(const ProcessedGpuFrame& other) const noexcept {
+    return context_ != nullptr && context_ == other.context_;
+  }
+  [[nodiscard]] bool production_compatible_with(
+      const ProcessedGpuFrame& other) const noexcept {
+    return backend_ == other.backend_ && same_context(other) && context_live() &&
+           other.context_live() && ready() && other.ready();
+  }
   void add_context_retirement_callback(
       GpuContextLifetime::RetirementCallback callback) const noexcept;
 
