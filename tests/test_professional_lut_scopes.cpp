@@ -1,7 +1,9 @@
 #include "digitor/professional_lut_scopes.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace digitor;
