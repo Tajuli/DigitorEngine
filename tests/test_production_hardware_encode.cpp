@@ -1,22 +1,26 @@
+#include "digitor/export_render_snapshot.hpp"
 #include "digitor/production_hardware_encode.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <memory>
 #include <string>
+#include <type_traits>
 
 using namespace digitor;
 
 namespace {
-ProcessedGpuFramePtr make_frame(std::int64_t pts, std::uint64_t identity = 1) {
+ProcessedGpuFramePtr make_frame(std::int64_t pts, std::uint64_t identity = 1,
+                                DigitorRendererBackend backend = DIGITOR_RENDERER_D3D12) {
   static int context;
   GpuFrameMetadata metadata{};
   metadata.width = 1920;
   metadata.height = 1080;
   metadata.format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
   metadata.timestamp = pts;
+  metadata.color_metadata = "linear-rgba";
   return std::make_shared<ProcessedGpuFrame>(
-      &context, DIGITOR_RENDERER_D3D12, metadata, identity,
+      &context, backend, metadata, identity,
       std::static_pointer_cast<void>(std::make_shared<int>(1)),
       std::make_shared<std::atomic_bool>(true), false);
 }
@@ -34,9 +38,76 @@ HardwareEncodeConfig config() {
   value.profile.ten_bit = true;
   return value;
 }
+
+ExportRenderSnapshotData hardware_snapshot_data() {
+  ExportRenderSnapshotData value{};
+  value.snapshot_identity = 1001;
+  value.timeline_revision = 11;
+  value.render_revision = 12;
+  value.node_graph_revision = 13;
+  value.color_pipeline_revision = 14;
+  value.audio_revision = 15;
+  value.width = 1920;
+  value.height = 1080;
+  value.working_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+  value.fps_num = 30;
+  value.fps_den = 1;
+  value.duration_us = 100000;
+  value.color_metadata = "linear-rgba";
+  value.profile.width = 1920;
+  value.profile.height = 1080;
+  value.profile.fps_num = 30;
+  value.profile.fps_den = 1;
+  value.profile.prefer_hardware = true;
+  value.profile.allow_software_fallback = false;
+  value.policy = ExportExecutionPolicy::hardware_required;
+  value.renderer_backend = DIGITOR_RENDERER_D3D12;
+  value.encoder_backend = EncoderBackend::nvenc;
+  return value;
+}
 }  // namespace
 
 int main() {
+  static_assert(!std::is_copy_assignable_v<ExportRenderSnapshot>);
+  static_assert(!std::is_move_assignable_v<ExportRenderSnapshot>);
+
+  const ExportRenderSnapshot frozen(hardware_snapshot_data());
+  assert(frozen.identity() == 1001);
+  assert(export_policy_uses_gpu(frozen.policy()));
+  assert(validate_export_snapshot(frozen));
+  assert(validate_frame_against_snapshot(frozen, *make_frame(0)));
+
+  auto hidden_fallback = hardware_snapshot_data();
+  hidden_fallback.profile.allow_software_fallback = true;
+  assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(hidden_fallback))));
+
+  auto mixed_renderer = hardware_snapshot_data();
+  mixed_renderer.renderer_backend = DIGITOR_RENDERER_CPU;
+  assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(mixed_renderer))));
+
+  auto mixed_encoder = hardware_snapshot_data();
+  mixed_encoder.encoder_backend = EncoderBackend::software;
+  assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(mixed_encoder))));
+
+  auto mismatched_profile = hardware_snapshot_data();
+  mismatched_profile.profile.width = 1280;
+  assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(mismatched_profile))));
+
+  assert(!validate_frame_against_snapshot(frozen,
+                                          *make_frame(0, 9, DIGITOR_RENDERER_VULKAN)));
+  assert(!validate_frame_against_snapshot(frozen,
+                                          *make_frame(0, 10, DIGITOR_RENDERER_CPU)));
+
+  auto cpu_data = hardware_snapshot_data();
+  cpu_data.policy = ExportExecutionPolicy::explicit_cpu_reference;
+  cpu_data.renderer_backend = DIGITOR_RENDERER_CPU;
+  cpu_data.encoder_backend = EncoderBackend::software;
+  cpu_data.profile.prefer_hardware = false;
+  cpu_data.profile.allow_software_fallback = true;
+  const ExportRenderSnapshot cpu_snapshot(std::move(cpu_data));
+  assert(validate_export_snapshot(cpu_snapshot));
+  assert(!export_policy_uses_gpu(cpu_snapshot.policy()));
+
   std::uint64_t opened = 0;
   std::uint64_t submitted = 0;
   std::uint64_t drained = 0;
