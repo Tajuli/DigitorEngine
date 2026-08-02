@@ -39,6 +39,7 @@ struct ExportRenderSnapshotData final {
   bool variable_frame_rate{};
   bool hdr{};
   std::string color_metadata;
+  std::string output_path;
   ExportProfile profile;
   ExportExecutionPolicy policy{ExportExecutionPolicy::unsupported};
   DigitorRendererBackend renderer_backend{DIGITOR_RENDERER_CPU};
@@ -85,9 +86,9 @@ struct ExportContractValidation final {
             "export snapshot revisions must be frozen and non-zero"};
   }
   if (value.width == 0 || value.height == 0 || value.fps_num <= 0 ||
-      value.fps_den <= 0 || value.duration_us <= 0) {
+      value.fps_den <= 0 || value.duration_us <= 0 || value.output_path.empty()) {
     return {DIGITOR_RESULT_INVALID_ARGUMENT,
-            "invalid export dimensions, timing, or duration"};
+            "invalid export dimensions, timing, duration, or output path"};
   }
   if (value.profile.width != static_cast<std::int32_t>(value.width) ||
       value.profile.height != static_cast<std::int32_t>(value.height) ||

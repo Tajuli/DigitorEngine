@@ -1,5 +1,6 @@
 #include "digitor/export_render_snapshot.hpp"
 #include "digitor/production_hardware_encode.hpp"
+#include "export_m2_contract_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -54,6 +55,7 @@ ExportRenderSnapshotData hardware_snapshot_data() {
   value.fps_den = 1;
   value.duration_us = 100000;
   value.color_metadata = "linear-rgba";
+  value.output_path = "output.mp4";
   value.profile.width = 1920;
   value.profile.height = 1080;
   value.profile.fps_num = 30;
@@ -92,6 +94,10 @@ int main() {
   auto mismatched_profile = hardware_snapshot_data();
   mismatched_profile.profile.width = 1280;
   assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(mismatched_profile))));
+
+  auto missing_output = hardware_snapshot_data();
+  missing_output.output_path.clear();
+  assert(!validate_export_snapshot(ExportRenderSnapshot(std::move(missing_output))));
 
   assert(!validate_frame_against_snapshot(frozen,
                                           *make_frame(0, 9, DIGITOR_RENDERER_VULKAN)));
@@ -164,5 +170,7 @@ int main() {
   cancelled_session.cancel();
   assert(cancelled_session.telemetry().state == HardwareEncodeState::cancelled);
   assert(cancelled == 1);
+
+  run_export_m2_contract_cases();
   return 0;
 }
