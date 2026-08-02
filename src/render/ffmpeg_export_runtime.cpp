@@ -104,6 +104,11 @@ TranscodeResult FfmpegExportRuntime::transcode(const TranscodeRequest& request,
                                                 ResumableExportSession* session) {
   TranscodeResult result;
   result.output_path = request.output_path;
+  if (request.require_zero_copy) {
+    result.diagnostic = "file-based FFmpeg transcode is not zero-copy; submit ProcessedGpuFrame objects through ProductionHardwareEncodeSession";
+    if (session) session->fail(result.diagnostic);
+    return result;
+  }
   if (cancelled_.exchange(false)) {
     result.cancelled = true;
     result.diagnostic = "cancelled before start";
