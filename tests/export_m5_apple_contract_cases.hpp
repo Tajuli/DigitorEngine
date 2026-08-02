@@ -1,6 +1,8 @@
 #pragma once
 
 #include "digitor/apple_hardware_encode_adapter.hpp"
+#include "export_m4_android_contract_cases.hpp"
+#include "export_m6_release_qualification_cases.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -103,6 +105,9 @@ inline void run_export_m5_apple_contract_cases() {
   assert(failed.start() == DIGITOR_RESULT_OK);
   assert(failed.submit({m5_frame(0), 0, 33333, true}) != DIGITOR_RESULT_OK);
   assert(cancelled >= 1);
+
+  run_export_m4_android_contract_cases();
+  run_export_m6_release_qualification_cases();
 }
 
 }  // namespace
