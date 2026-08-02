@@ -2,6 +2,9 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
+if("@DIGITOR_BUILT_WITH_OCIO@" STREQUAL "ON")
+    find_dependency(OpenColorIO 2 CONFIG)
+endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/DigitorEngineTargets.cmake")
 check_required_components(DigitorEngine)
