@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <vector>
@@ -56,6 +57,14 @@ Mat3 rgb_to_xyz(const Chromaticities&);
 Mat3 inverse(const Mat3&);
 Mat3 multiply(const Mat3&, const Mat3&);
 Vec3 multiply(const Mat3&, Vec3);
+inline Vec3 multiply(const Mat3& matrix, std::initializer_list<double> values) {
+  Vec3 vector{};
+  auto it = values.begin();
+  if (it != values.end()) vector.x = *it++;
+  if (it != values.end()) vector.y = *it++;
+  if (it != values.end()) vector.z = *it;
+  return multiply(matrix, vector);
+}
 Mat3 rgb_to_rgb(const Chromaticities& source, const Chromaticities& destination);
 enum class Adaptation { bradford };
 Mat3 adaptation_matrix(Adaptation, Chromaticity source_white, Chromaticity destination_white);
