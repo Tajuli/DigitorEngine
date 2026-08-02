@@ -9,7 +9,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <unordered_map>
 
 namespace digitor {
 
@@ -84,7 +83,6 @@ class UnifiedRealMediaRuntime final {
   std::uint64_t default_estimated_frame_bytes_{};
 
   mutable std::mutex mutex_;
-  std::unordered_map<std::uint64_t, NativeMediaSurfacePtr> retained_surfaces_;
   std::optional<UnifiedNativeTextureDescriptor> last_texture_;
   std::uint64_t presentation_generation_{};
 };
