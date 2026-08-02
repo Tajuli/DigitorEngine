@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace digitor;
