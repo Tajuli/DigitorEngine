@@ -43,6 +43,17 @@ int main() {
   assert(digitor::ffmpeg_video_encoder(digitor::EncoderBackend::nvenc,
                                        digitor::ExportCodec::hevc) == "hevc_nvenc");
 
+  auto strict = request;
+  strict.output_path = root / "strict.mp4";
+  strict.require_zero_copy = true;
+  captured.clear();
+  const auto rejected = runtime.transcode(strict, digitor::EncoderBackend::nvenc);
+  assert(!rejected.success);
+  assert(!rejected.cancelled);
+  assert(rejected.diagnostic.find("not zero-copy") != std::string::npos);
+  assert(captured.empty());
+  assert(!std::filesystem::exists(strict.output_path));
+
   digitor::PersistentArtifactCache cache(root / "cache", 1024 * 1024);
   digitor::ProxyRequest proxy;
   proxy.clip_id = "clip";
