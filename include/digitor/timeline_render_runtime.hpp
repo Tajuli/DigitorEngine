@@ -61,6 +61,9 @@ struct TimelineRenderCallbacks {
                                                 std::uint32_t height,
                                                 std::int64_t timestamp_us)> create_gpu_target;
   std::function<bool()> cancelled;
+  // A completion/fence query. Returning false pins the cache entry until the
+  // backend reports that all submitted GPU work using it has completed.
+  std::function<bool(const ProcessedGpuFrame&)> gpu_frame_evictable;
 };
 
 class TimelineRenderRuntime {
@@ -68,7 +71,8 @@ class TimelineRenderRuntime {
   TimelineRenderRuntime(TimelineRenderExecutor executor,
                         TimelineRenderCallbacks callbacks,
                         std::size_t memory_cache_bytes = 64U * 1024U * 1024U,
-                        std::size_t gpu_cache_frames = 16U);
+                        std::size_t gpu_cache_frames = 16U,
+                        std::size_t gpu_cache_bytes = 256U * 1024U * 1024U);
 
   [[nodiscard]] TimelineRenderResult render(TimelineExecutionMode mode,
                                             std::int64_t timeline_us,
@@ -81,17 +85,22 @@ class TimelineRenderRuntime {
 
   void invalidate_clip(const std::string& clip_id);
   void clear_cache() noexcept;
+  void notify_gpu_memory_pressure(std::size_t new_budget_bytes) noexcept;
+  [[nodiscard]] std::size_t gpu_cache_bytes() const noexcept;
 
  private:
   struct GpuCacheEntry {
     RenderVideoFrame frame;
     std::uint64_t stamp{};
+    std::size_t estimated_bytes{};
   };
 
   TimelineRenderExecutor executor_;
   TimelineRenderCallbacks callbacks_;
   TimelineFrameCache cache_;
   std::size_t gpu_cache_capacity_{};
+  std::size_t gpu_cache_budget_bytes_{};
+  std::size_t gpu_cache_bytes_{};
   std::uint64_t gpu_cache_clock_{};
   std::unordered_map<RenderCacheKey, GpuCacheEntry, RenderCacheKeyHash> gpu_cache_;
   mutable std::mutex gpu_cache_mutex_;
@@ -106,6 +115,11 @@ class TimelineRenderRuntime {
   [[nodiscard]] std::optional<RenderVideoFrame> get_gpu_cached(const RenderCacheKey& key);
   void put_gpu_cached(RenderCacheKey key, RenderVideoFrame frame);
   void evict_gpu_cache_locked();
+  [[nodiscard]] static std::size_t estimate_gpu_bytes(const RenderVideoFrame&) noexcept;
+  [[nodiscard]] static bool gpu_frame_compatible(const RenderVideoFrame& frame,
+                                                 const RenderVideoFrame& target,
+                                                 std::int64_t timestamp_us,
+                                                 std::string& diagnostic) noexcept;
 };
 
 }  // namespace digitor

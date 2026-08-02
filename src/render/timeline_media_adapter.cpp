@@ -72,6 +72,7 @@ TimelineRenderCallbacks TimelineMediaAdapter::make_render_callbacks(TimelineExec
   };
   out.create_gpu_target = callbacks_.create_gpu_target;
   out.cancelled = callbacks_.cancelled;
+  out.gpu_frame_evictable = callbacks_.gpu_frame_evictable;
   return out;
 }
 
