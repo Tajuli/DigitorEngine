@@ -11,6 +11,9 @@ add_executable(digitor_apple_metal_effects_qualification
     ../../src/platform/apple/apple_metal_builtin_effect_shaders.mm
 )
 target_compile_features(digitor_apple_metal_effects_qualification PRIVATE cxx_std_20)
+target_compile_options(digitor_apple_metal_effects_qualification PRIVATE
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>"
+)
 target_link_libraries(digitor_apple_metal_effects_qualification
     PRIVATE Digitor::Engine "-framework Metal" "-framework Foundation"
 )
