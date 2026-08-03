@@ -23,4 +23,10 @@ if(DIGITOR_BUILD_TESTS)
   target_link_libraries(digitor_native_platform_provider_indexing_test PRIVATE Digitor::Engine)
   add_test(NAME digitor_native_platform_provider_indexing
            COMMAND digitor_native_platform_provider_indexing_test)
+
+  add_executable(digitor_release_qualification_bundle_test
+    "${CMAKE_CURRENT_LIST_DIR}/../tests/test_release_qualification_bundle.cpp")
+  target_link_libraries(digitor_release_qualification_bundle_test PRIVATE Digitor::Engine)
+  add_test(NAME digitor_release_qualification_bundle
+           COMMAND digitor_release_qualification_bundle_test)
 endif()
