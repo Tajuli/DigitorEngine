@@ -1,0 +1,40 @@
+name: Android Vulkan Effect Shaders
+
+on:
+  pull_request:
+    paths:
+      - 'shaders/vulkan/digitor_builtin_effect.comp'
+      - 'tools/embed_spirv.py'
+      - 'cmake/AndroidVulkanEffectShaders.cmake'
+      - 'include/digitor/android_vulkan_builtin_effect_shaders.hpp'
+      - '.github/workflows/android-vulkan-effect-shaders.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan shader tools
+        run: sudo apt-get update && sudo apt-get install -y glslc spirv-tools
+      - name: Compile SDR and HDR SPIR-V
+        run: |
+          mkdir -p build/vulkan-effects artifacts
+          glslc -fshader-stage=compute -O -DDIGITOR_EFFECT_RGBA8=1 shaders/vulkan/digitor_builtin_effect.comp -o build/vulkan-effects/effects-rgba8.spv
+          glslc -fshader-stage=compute -O -DDIGITOR_EFFECT_RGBA16F=1 shaders/vulkan/digitor_builtin_effect.comp -o build/vulkan-effects/effects-rgba16f.spv
+          spirv-val --target-env vulkan1.1 build/vulkan-effects/effects-rgba8.spv
+          spirv-val --target-env vulkan1.1 build/vulkan-effects/effects-rgba16f.spv
+      - name: Verify deterministic embedding
+        run: |
+          python3 tools/embed_spirv.py build/vulkan-effects/effects-rgba8.spv digitor_builtin_effect_rgba8_spv build/vulkan-effects/rgba8.hpp
+          python3 tools/embed_spirv.py build/vulkan-effects/effects-rgba16f.spv digitor_builtin_effect_rgba16f_spv build/vulkan-effects/rgba16f.hpp
+          cp build/vulkan-effects/*.spv artifacts/
+          sha256sum build/vulkan-effects/*.spv | tee artifacts/android-vulkan-effect-shaders.sha256
+          echo 'ANDROID_VULKAN_EFFECT_SHADERS=PASS' | tee artifacts/android-vulkan-effect-shaders.log
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-vulkan-effect-shaders
+          path: artifacts
+          if-no-files-found: error
