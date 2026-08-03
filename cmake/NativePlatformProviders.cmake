@@ -17,10 +17,35 @@ function(digitor_configure_native_platform_provider target)
       message(FATAL_ERROR
         "DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY is required with a native provider source")
     endif()
+
     target_sources(${target} PRIVATE "${DIGITOR_NATIVE_PLATFORM_PROVIDER_SOURCE}")
     target_compile_definitions(${target} PRIVATE
       DIGITOR_HAS_PRODUCTION_NATIVE_PROVIDER=1
       DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY="${DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY}")
+
+    if(WIN32)
+      target_link_libraries(${target} PRIVATE
+        d3d12
+        dxgi
+        mf
+        mfplat
+        mfuuid
+        ole32)
+      target_compile_definitions(${target} PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX)
+    elseif(ANDROID)
+      target_link_libraries(${target} PRIVATE android mediandk log)
+    elseif(APPLE)
+      find_library(DIGITOR_PROVIDER_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+      find_library(DIGITOR_PROVIDER_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+      find_library(DIGITOR_PROVIDER_METAL_FRAMEWORK Metal REQUIRED)
+      target_link_libraries(${target} PRIVATE
+        ${DIGITOR_PROVIDER_COREVIDEO_FRAMEWORK}
+        ${DIGITOR_PROVIDER_VIDEOTOOLBOX_FRAMEWORK}
+        ${DIGITOR_PROVIDER_METAL_FRAMEWORK})
+    endif()
+
     message(STATUS
       "DigitorEngine production-native provider: ${DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY}")
   elseif(DIGITOR_REQUIRE_NATIVE_PLATFORM_PROVIDER)
