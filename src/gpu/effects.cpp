@@ -12,7 +12,9 @@ void run(const Color*in,Color*out,int w,int h,EffectSettings s){std::vector<Colo
 void apply_effect_gpu(CommandEncoder&e,const Color*i,Color*o,std::uint32_t w,std::uint32_t h,const EffectSettings&s){if(!i||!o||!w||!h)throw std::invalid_argument("invalid effect image");e.dispatch([=]{run(i,o,int(w),int(h),s);});}
 }
 
-// Filter and plugin implementations are compiled through this established
-// translation unit to keep all legacy platform manifests in sync.
+// Filter, plugin, and beauty implementations are compiled through this
+// established translation unit to keep legacy platform manifests in sync.
 #include "filter.cpp"
 #include "plugin.cpp"
+#include "beauty.cpp"
+#include "beauty_plugin.cpp"
