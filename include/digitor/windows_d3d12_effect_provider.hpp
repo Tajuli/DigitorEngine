@@ -1,5 +1,6 @@
 #pragma once
 
+#include "digitor/digitor.h"
 #include "digitor/native_effects.hpp"
 
 #include <cstdint>
