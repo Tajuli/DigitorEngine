@@ -2,10 +2,13 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(set = 0, binding = 0, rgba8) readonly uniform image2D input_rgba8;
-layout(set = 0, binding = 1, rgba8) writeonly uniform image2D output_rgba8;
-layout(set = 0, binding = 2, rgba16f) readonly uniform image2D input_rgba16f;
-layout(set = 0, binding = 3, rgba16f) writeonly uniform image2D output_rgba16f;
+#if defined(DIGITOR_EFFECT_RGBA16F)
+layout(set = 0, binding = 0, rgba16f) readonly uniform image2D input_image;
+layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D output_image;
+#else
+layout(set = 0, binding = 0, rgba8) readonly uniform image2D input_image;
+layout(set = 0, binding = 1, rgba8) writeonly uniform image2D output_image;
+#endif
 
 layout(push_constant) uniform EffectConstants {
   uint effect_kind;
@@ -21,14 +24,7 @@ layout(push_constant) uniform EffectConstants {
 } pc;
 
 vec4 read_pixel(ivec2 p, ivec2 size) {
-  p = clamp(p, ivec2(0), size - ivec2(1));
-  return pc.format_kind == 2u ? imageLoad(input_rgba16f, p)
-                              : imageLoad(input_rgba8, p);
-}
-
-void write_pixel(ivec2 p, vec4 value) {
-  if (pc.format_kind == 2u) imageStore(output_rgba16f, p, value);
-  else imageStore(output_rgba8, p, value);
+  return imageLoad(input_image, clamp(p, ivec2(0), size - ivec2(1)));
 }
 
 float hash21(vec2 p) {
@@ -37,8 +33,7 @@ float hash21(vec2 p) {
 }
 
 void main() {
-  ivec2 size = pc.format_kind == 2u ? imageSize(output_rgba16f)
-                                    : imageSize(output_rgba8);
+  ivec2 size = imageSize(output_image);
   ivec2 p = ivec2(gl_GlobalInvocationID.xy);
   if (any(greaterThanEqual(p, size))) return;
 
@@ -53,9 +48,9 @@ void main() {
     int step_size = max(1, int(round(radius * (pc.quality == 2u ? 0.5 : 0.25))));
     ivec2 axis = ivec2(step_size, 0);
     if (pc.effect_kind == 8u) {
-      float radians = radians(pc.angle);
-      axis = ivec2(round(cos(radians) * step_size), round(sin(radians) * step_size));
-      if (axis == ivec2(0)) axis.x = 1;
+      float r = radians(pc.angle);
+      axis = ivec2(round(cos(r) * step_size), round(sin(r) * step_size));
+      if (all(equal(axis, ivec2(0)))) axis.x = 1;
     } else if (pc.pass_index > 0u) {
       axis = ivec2(0, step_size);
     }
@@ -64,12 +59,9 @@ void main() {
     vec3 d = read_pixel(p + axis, size).rgb;
     vec3 e = read_pixel(p + axis * 2, size).rgb;
     vec3 blurred = (a + b * 2.0 + src.rgb * 4.0 + d * 2.0 + e) / 10.0;
-    if (pc.effect_kind == 2u) {
-      vec3 highlights = max(blurred - 0.55, vec3(0.0)) * 2.2222222;
-      rgb = mix(src.rgb, src.rgb + highlights, amount);
-    } else {
-      rgb = mix(src.rgb, blurred, amount);
-    }
+    rgb = pc.effect_kind == 2u
+        ? mix(src.rgb, src.rgb + max(blurred - 0.55, vec3(0.0)) * 2.2222222, amount)
+        : mix(src.rgb, blurred, amount);
   } else if (pc.effect_kind == 1u) {
     vec3 n = read_pixel(p + ivec2(0, -1), size).rgb;
     vec3 s = read_pixel(p + ivec2(0, 1), size).rgb;
@@ -77,11 +69,9 @@ void main() {
     vec3 e = read_pixel(p + ivec2(1, 0), size).rgb;
     rgb = mix(src.rgb, src.rgb * 5.0 - n - s - w - e, amount);
   } else if (pc.effect_kind == 3u) {
-    float r2 = dot(centered, centered);
-    float scale = 1.0 + amount * 0.35 * r2;
+    float scale = 1.0 + amount * 0.35 * dot(centered, centered);
     vec2 sample_uv = clamp((centered / scale + 1.0) * 0.5, 0.0, 1.0);
-    ivec2 q = min(ivec2(sample_uv * vec2(size)), size - ivec2(1));
-    rgb = read_pixel(q, size).rgb;
+    rgb = read_pixel(min(ivec2(sample_uv * vec2(size)), size - ivec2(1)), size).rgb;
   } else if (pc.effect_kind == 4u || pc.effect_kind == 5u) {
     float grain = hash21(vec2(p)) - 0.5;
     if (pc.effect_kind == 5u) {
@@ -91,14 +81,13 @@ void main() {
     rgb = src.rgb + grain * amount * (pc.effect_kind == 5u ? 0.16 : 0.25);
   } else if (pc.effect_kind == 6u) {
     int offset = max(1, int(round(1.0 + radius * 0.12)));
-    float red = read_pixel(p + ivec2(offset, 0), size).r;
-    float blue = read_pixel(p - ivec2(offset, 0), size).b;
-    rgb = mix(src.rgb, vec3(red, src.g, blue), amount);
+    rgb = mix(src.rgb, vec3(read_pixel(p + ivec2(offset, 0), size).r,
+                            src.g,
+                            read_pixel(p - ivec2(offset, 0), size).b), amount);
   } else if (pc.effect_kind == 7u) {
-    float dist = length(centered * vec2(0.9, 1.0));
-    float vignette = smoothstep(0.45, 1.15, dist);
+    float vignette = smoothstep(0.45, 1.15, length(centered * vec2(0.9, 1.0)));
     rgb = src.rgb * (1.0 - vignette * amount * 0.85);
   }
 
-  write_pixel(p, vec4(max(rgb, vec3(0.0)), src.a));
+  imageStore(output_image, p, vec4(max(rgb, vec3(0.0)), src.a));
 }
