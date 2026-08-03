@@ -17,7 +17,9 @@ int fail(const char* message) {
 int main() {
   using namespace digitor;
 
-  ConsumerPluginPlan plan = ConsumerPluginPlan::free;
+  bool allow_paid_import = true;
+  bool allow_paid_preview = true;
+  bool allow_paid_export = false;
   bool applied = false;
   std::string applied_version;
 
@@ -28,14 +30,6 @@ int main() {
                                               std::string& diagnostic) {
     diagnostic.clear();
     return true;
-  };
-  marketplace_bindings.verify_entitlement = [](const auto& entry,
-                                                const auto& entitlement,
-                                                std::string& diagnostic) {
-    const bool ok = entry.product_id == entitlement.product_id &&
-                    !entitlement.token.empty();
-    if (!ok) diagnostic = "entitlement mismatch";
-    return ok;
   };
   marketplace_bindings.download = [](auto, std::vector<std::byte>& bytes,
                                       std::string& diagnostic) {
@@ -89,13 +83,22 @@ int main() {
     return fail("catalog load failed");
 
   ConsumerPluginRuntimeBindings consumer_bindings{};
-  consumer_bindings.current_plan = [&] { return plan; };
-  consumer_bindings.entitlement_for = [](const auto& entry) {
-    RemotePluginEntitlement value{};
-    value.product_id = entry.product_id;
-    value.user_id = "paid-user";
-    value.token = "signed-entitlement";
-    return std::optional<RemotePluginEntitlement>(value);
+  consumer_bindings.authorize = [&](const auto& entry,
+                                     ConsumerPluginOperation operation,
+                                     auto, std::string& diagnostic) {
+    if (entry.tier == RemotePluginTier::free) {
+      diagnostic.clear();
+      return true;
+    }
+    bool allowed = true;
+    if (operation == ConsumerPluginOperation::import_plugin)
+      allowed = allow_paid_import;
+    else if (operation == ConsumerPluginOperation::apply_preview)
+      allowed = allow_paid_preview;
+    else if (operation == ConsumerPluginOperation::apply_export)
+      allowed = allow_paid_export;
+    if (!allowed) diagnostic = "upgrade required";
+    return allowed;
   };
   consumer_bindings.apply_instance = [&](const auto& instance, auto,
                                           auto, std::string& diagnostic) {
@@ -107,32 +110,39 @@ int main() {
   ConsumerPluginRuntime runtime(marketplace, std::move(consumer_bindings));
 
   if (!runtime.import_plugin("effect.free"))
-    return fail("free user could not import free plugin");
-  if (runtime.import_plugin("effect.paid"))
-    return fail("free user imported paid plugin");
-  const auto free_apply = runtime.apply("effect.free", "instance.free",
-                                        "clip.1", {{"amount", 0.7}},
-                                        ConsumerPluginSurface::preview);
-  if (!free_apply || !applied || applied_version != "1.0.0")
-    return fail("free plugin did not apply through consumer runtime");
-
-  plan = ConsumerPluginPlan::paid;
+    return fail("app-authorized free plugin import failed");
   if (!runtime.import_plugin("effect.paid"))
-    return fail("paid user could not import paid plugin");
+    return fail("app-authorized paid plugin import failed");
+
+  const auto paid_preview = runtime.apply("effect.paid", "instance.paid",
+                                          "clip.1", {{"amount", 0.7}},
+                                          ConsumerPluginSurface::preview);
+  if (!paid_preview || !applied || applied_version != "1.0.0")
+    return fail("app-authorized paid preview was blocked");
+
   applied = false;
-  const auto paid_apply = runtime.apply("effect.paid", "instance.paid",
-                                        "clip.1", {},
-                                        ConsumerPluginSurface::export_frame);
-  if (!paid_apply || !applied || paid_apply.instance->tier != RemotePluginTier::paid)
-    return fail("paid plugin did not apply through export runtime");
+  const auto blocked_export = runtime.apply(
+      "effect.paid", "instance.paid.export", "clip.1", {},
+      ConsumerPluginSurface::export_frame);
+  if (blocked_export || applied || blocked_export.diagnostic != "upgrade required")
+    return fail("app-denied paid export was not blocked");
+
+  allow_paid_export = true;
+  const auto paid_export = runtime.apply(
+      "effect.paid", "instance.paid.export", "clip.1", {},
+      ConsumerPluginSurface::export_frame);
+  if (!paid_export || !applied)
+    return fail("app-authorized paid export was blocked");
+
   if (runtime.apply("effect.paid", "invalid", "clip.1",
                     {{"amount", 2.0}}, ConsumerPluginSurface::preview))
     return fail("out-of-range parameter was accepted");
 
   std::cout << "CONSUMER_PLUGIN_QUALIFICATION=PASS\n";
-  std::cout << "FREE_USER=FREE_ONLY\n";
-  std::cout << "PAID_USER=FREE_AND_PAID\n";
+  std::cout << "APP_AUTHORITY=PASS\n";
+  std::cout << "PAID_PREVIEW_ALLOWED_BY_APP=PASS\n";
+  std::cout << "PAID_EXPORT_BLOCKED_BY_APP=PASS\n";
+  std::cout << "PAID_EXPORT_ALLOWED_BY_APP=PASS\n";
   std::cout << "PLUGIN_VERSION_PINNING=PASS\n";
-  std::cout << "PREVIEW_EXPORT_BINDING=PASS\n";
   return 0;
 }
