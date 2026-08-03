@@ -1,0 +1,80 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "native-release-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "DIGITOR_BUILD_TESTS": "ON",
+        "DIGITOR_REQUIRE_NATIVE_PLATFORM_PROVIDER": "ON",
+        "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "${sourceDir}/cmake/NativeProviderTopLevel.cmake"
+      }
+    },
+    {
+      "name": "windows-native-release",
+      "inherits": "native-release-base",
+      "displayName": "Windows production-native release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "macos-native-release",
+      "inherits": "native-release-base",
+      "displayName": "macOS production-native release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "android-native-release",
+      "inherits": "native-release-base",
+      "displayName": "Android production-native release"
+    },
+    {
+      "name": "ios-native-release",
+      "inherits": "native-release-base",
+      "displayName": "iOS production-native release"
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-native-release", "configurePreset": "windows-native-release" },
+    { "name": "macos-native-release", "configurePreset": "macos-native-release" },
+    { "name": "android-native-release", "configurePreset": "android-native-release" },
+    { "name": "ios-native-release", "configurePreset": "ios-native-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-native-release",
+      "configurePreset": "windows-native-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-native-release",
+      "configurePreset": "macos-native-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "android-native-release",
+      "configurePreset": "android-native-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "ios-native-release",
+      "configurePreset": "ios-native-release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
