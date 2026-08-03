@@ -1,0 +1,37 @@
+name: Effects Release Qualification Contract
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/effects_release_qualification.hpp'
+      - 'src/effects_release_qualification.cpp'
+      - 'tests/effects_release_qualification/**'
+      - 'docs/effects-release-qualification.md'
+      - '.github/workflows/effects-release-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/effects_release_qualification -B build/effects-release -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/effects-release --config Release --parallel 2
+      - name: Run qualification contract
+        shell: bash
+        run: |
+          if [ -x build/effects-release/digitor_effects_release_qualification ]; then
+            build/effects-release/digitor_effects_release_qualification | tee effects-release-qualification.log
+          else
+            build/effects-release/Release/digitor_effects_release_qualification.exe | tee effects-release-qualification.log
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: effects-release-qualification-${{ matrix.os }}
+          path: effects-release-qualification.log
+          if-no-files-found: error
