@@ -1,0 +1,47 @@
+name: Android GLES Effect Provider
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/android_gles_effect_provider.hpp'
+      - 'src/platform/android/android_gles_effect_provider.cpp'
+      - 'cmake/AndroidGlesEffectProvider.cmake'
+      - 'tests/android_gles_effect_provider/**'
+      - '.github/workflows/android-gles-effect-provider.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Android arm64 GLES build
+        run: |
+          cmake -S tests/android_gles_effect_provider \
+            -B build/android-gles-effects \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-26 \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build GLES provider and embedded shaders
+        run: cmake --build build/android-gles-effects --parallel 2
+      - name: Emit qualification evidence
+        run: |
+          mkdir -p artifacts
+          printf '%s\n' \
+            'ANDROID_GLES_EFFECT_PROVIDER=PASS' \
+            'ABI=arm64-v8a' \
+            'MIN_API=26' \
+            'GLSL_ES=300' \
+            'BUILTIN_EFFECTS=9' \
+            'SDR=RGBA8' \
+            'HDR=RGBA16F_CAPABILITY_GATED' \
+            'DEVICE_EXECUTION=REQUIRES_PHYSICAL_ANDROID' \
+            | tee artifacts/android-gles-effect-provider.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-gles-effect-provider
+          path: artifacts/android-gles-effect-provider.log
+          if-no-files-found: error
