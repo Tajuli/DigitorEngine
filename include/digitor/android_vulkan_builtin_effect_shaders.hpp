@@ -19,7 +19,8 @@ struct AndroidVulkanBuiltinEffectShadersBindings final {
   void* physical_device{};
   void* device{};
   std::uint32_t queue_family_index{};
-  AndroidVulkanBuiltinEffectShaderCode compute_shader;
+  AndroidVulkanBuiltinEffectShaderCode rgba8_compute_shader;
+  AndroidVulkanBuiltinEffectShaderCode rgba16f_compute_shader;
 };
 
 struct AndroidVulkanBuiltinEffectShadersResult final {
@@ -32,7 +33,7 @@ struct AndroidVulkanBuiltinEffectShadersResult final {
 };
 
 // Creates the repository-owned Vulkan compute package for all built-in effects.
-// The supplied SPIR-V must be generated from
+// Both SPIR-V variants must be generated from
 // shaders/vulkan/digitor_builtin_effect.comp by the repository build rules.
 [[nodiscard]] AndroidVulkanBuiltinEffectShadersResult
 create_android_vulkan_builtin_effect_shaders(
