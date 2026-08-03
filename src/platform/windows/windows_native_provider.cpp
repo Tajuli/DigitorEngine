@@ -137,6 +137,7 @@ WindowsNativeProviderResult create_windows_native_provider(
 
 }  // namespace digitor
 
-// The Windows release package compiles the concrete D3D12 effects provider
-// through its established provider source, avoiding a second platform manifest.
+// The Windows release package compiles the concrete D3D12 provider and the
+// repository-owned built-in HLSL shader package through one platform manifest.
 #include "windows_d3d12_effect_provider.cpp"
+#include "windows_d3d12_builtin_effect_shaders.cpp"
