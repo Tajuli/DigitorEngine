@@ -1,26 +1,27 @@
 #include "digitor/native_platform_provider_fixed.hpp"
 
 #include <cassert>
+#include <string>
 
 using namespace digitor;
 
 namespace {
-NativeImplementationEvidence evidence(const char* id) {
+NativeImplementationEvidence evidence(std::string id) {
   NativeImplementationEvidence value{};
   value.production_implementation = true;
   value.native_api_bound = true;
   value.synchronization_bound = true;
   value.zero_copy_telemetry_bound = true;
-  value.implementation_identity = id;
+  value.implementation_identity = std::move(id);
   return value;
 }
 
 NativePlatformProvider provider(ProductionPlatform platform, const char* prefix) {
   NativePlatformProvider value{};
   value.platform = platform;
-  value.timeline = evidence((std::string(prefix) + "-timeline").c_str());
-  value.flutter_texture = evidence((std::string(prefix) + "-flutter").c_str());
-  value.encoder = evidence((std::string(prefix) + "-encoder").c_str());
+  value.timeline = evidence(std::string(prefix) + "-timeline");
+  value.flutter_texture = evidence(std::string(prefix) + "-flutter");
+  value.encoder = evidence(std::string(prefix) + "-encoder");
   value.package_identity = std::string(prefix) + "-package";
   value.build_identity = std::string(prefix) + "-build";
   value.create = [](ProductionPlatformFactoryInputs inputs) {
@@ -31,24 +32,40 @@ NativePlatformProvider provider(ProductionPlatform platform, const char* prefix)
 }
 
 int main() {
-  static_assert(*native_provider_index(ProductionPlatform::windows) == 0);
-  static_assert(*native_provider_index(ProductionPlatform::android) == 1);
-  static_assert(*native_provider_index(ProductionPlatform::macos) == 2);
+  static_assert(*native_platform_slot(ProductionPlatform::windows) == 0);
+  static_assert(*native_platform_slot(ProductionPlatform::android) == 1);
+  static_assert(*native_platform_slot(ProductionPlatform::macos) == 2);
+  static_assert(*native_platform_slot(ProductionPlatform::ios) == 3);
   static_assert(*native_provider_index(ProductionPlatform::ios) == 3);
 
-  StrictNativePlatformProviderRegistry registry;
+  NativePlatformProviderRegistry registry;
   assert(registry.install(provider(ProductionPlatform::windows, "windows")) == DIGITOR_RESULT_OK);
   assert(registry.install(provider(ProductionPlatform::android, "android")) == DIGITOR_RESULT_OK);
   assert(registry.install(provider(ProductionPlatform::macos, "macos")) == DIGITOR_RESULT_OK);
   assert(!registry.complete());
   assert(registry.install(provider(ProductionPlatform::ios, "ios")) == DIGITOR_RESULT_OK);
   assert(registry.complete());
+  assert(registry.provider(ProductionPlatform::windows));
+  assert(registry.provider(ProductionPlatform::android));
+  assert(registry.provider(ProductionPlatform::macos));
   assert(registry.provider(ProductionPlatform::ios));
+  assert(registry.install(provider(ProductionPlatform::ios, "ios-duplicate")) ==
+         DIGITOR_RESULT_RESOURCE_IN_USE);
 
-  auto duplicate_identity = provider(ProductionPlatform::windows, "bad");
-  duplicate_identity.encoder.implementation_identity =
-      duplicate_identity.flutter_texture.implementation_identity;
-  assert(!validate_native_platform_provider_strict(duplicate_identity));
+  auto flutter_encoder_collision = provider(ProductionPlatform::windows, "bad-a");
+  flutter_encoder_collision.encoder.implementation_identity =
+      flutter_encoder_collision.flutter_texture.implementation_identity;
+  assert(!validate_native_platform_provider(flutter_encoder_collision));
+
+  auto timeline_flutter_collision = provider(ProductionPlatform::android, "bad-b");
+  timeline_flutter_collision.flutter_texture.implementation_identity =
+      timeline_flutter_collision.timeline.implementation_identity;
+  assert(!validate_native_platform_provider_strict(timeline_flutter_collision));
+
+  auto timeline_encoder_collision = provider(ProductionPlatform::macos, "bad-c");
+  timeline_encoder_collision.encoder.implementation_identity =
+      timeline_encoder_collision.timeline.implementation_identity;
+  assert(!validate_native_platform_provider(timeline_encoder_collision));
 
   const auto ios = provider(ProductionPlatform::ios, "ios-readiness");
   const auto readiness = strict_source_readiness_from_provider(ios, true, true, true);
