@@ -6,8 +6,6 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 
-#include <atomic>
-#include <limits>
 #include <mutex>
 #include <utility>
 
@@ -55,6 +53,12 @@ struct D3D12EffectState final {
     }
     recording = true;
     return true;
+  }
+
+  void abort_recording() noexcept {
+    if (!recording) return;
+    list->Close();
+    recording = false;
   }
 
   bool submit_and_wait(std::string& diagnostic) {
@@ -211,18 +215,20 @@ WindowsD3D12EffectProviderResult create_windows_d3d12_effect_provider(
   provider.record_pass = [state](const NativeEffectPass& pass,
                                  std::string& diagnostic) {
     std::lock_guard<std::mutex> lock(state->mutex);
-    if (!state->begin(diagnostic)) return false;
     auto* input = reinterpret_cast<ID3D12Resource*>(pass.input.texture_handle);
     auto* output = reinterpret_cast<ID3D12Resource*>(pass.output.texture_handle);
     if (!input || !output || input == output) {
       diagnostic = "invalid D3D12 effect pass resources";
+      state->abort_recording();
       return false;
     }
+    if (!state->begin(diagnostic)) return false;
     transition(state->list.Get(), input, D3D12_RESOURCE_STATE_COMMON,
                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     transition(state->list.Get(), output, D3D12_RESOURCE_STATE_COMMON,
                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     if (!state->dispatch(state->list.Get(), pass, input, output, diagnostic)) {
+      state->abort_recording();
       return false;
     }
     D3D12_RESOURCE_BARRIER uav{};
