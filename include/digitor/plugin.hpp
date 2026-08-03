@@ -17,6 +17,7 @@ namespace digitor {
 
 inline constexpr std::uint32_t plugin_sdk_abi_version = 1;
 
+enum class BeautyKind;
 enum class PluginKind { filter, video_effect };
 enum class PluginTrust { sandboxed_shader, trusted_native };
 enum class PluginParameterType { floating, integer, boolean, enumeration, color };
@@ -74,6 +75,14 @@ struct PluginExecutionContext {
     std::int64_t frame{};
     bool hdr{};
     std::uint32_t backend_flag{plugin_backend_none};
+
+    // Optional engine-owned, refined R32F skin matte. Beauty plugins use a
+    // conservative chroma fallback when absent, but production hosts should
+    // provide a face-aware matte for eyes/lips/hair/background protection.
+    const float* skin_matte{};
+    std::size_t skin_matte_count{};
+    std::uint64_t stream_id{};
+    bool scene_cut{};
 };
 
 using PluginCpuProcessor = std::function<bool(
@@ -120,6 +129,10 @@ PluginDefinition make_filter_plugin(FilterPreset preset,
                                     std::string vendor = "Digitor");
 PluginDefinition make_effect_plugin(std::string id, std::string name,
                                     EffectType effect,
+                                    std::string vendor = "Digitor");
+PluginDefinition make_beauty_plugin(BeautyKind kind,
+                                    std::string vendor = "Digitor");
+std::vector<PluginDefinition> make_builtin_beauty_plugins(
                                     std::string vendor = "Digitor");
 
 } // namespace digitor
