@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace digitor {
@@ -27,6 +28,17 @@ struct NativeProviderValidation final {
   explicit operator bool() const noexcept { return result == DIGITOR_RESULT_OK; }
 };
 
+[[nodiscard]] constexpr std::optional<std::size_t> native_platform_slot(
+    ProductionPlatform platform) noexcept {
+  switch (platform) {
+    case ProductionPlatform::windows: return 0;
+    case ProductionPlatform::android: return 1;
+    case ProductionPlatform::macos: return 2;
+    case ProductionPlatform::ios: return 3;
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] inline NativeProviderValidation validate_native_platform_provider(
     const NativePlatformProvider& provider) {
   if (!provider.timeline.valid() || !provider.flutter_texture.valid() ||
@@ -39,10 +51,13 @@ struct NativeProviderValidation final {
     return {DIGITOR_RESULT_INVALID_ARGUMENT,
             "provider package/build identity and factory are required"};
   }
-  if (provider.timeline.implementation_identity ==
-          provider.flutter_texture.implementation_identity ||
-      provider.timeline.implementation_identity ==
-          provider.encoder.implementation_identity) {
+  if (!native_platform_slot(provider.platform)) {
+    return {DIGITOR_RESULT_INVALID_ARGUMENT, "invalid provider platform"};
+  }
+  const auto& timeline = provider.timeline.implementation_identity;
+  const auto& flutter = provider.flutter_texture.implementation_identity;
+  const auto& encoder = provider.encoder.implementation_identity;
+  if (timeline == flutter || timeline == encoder || flutter == encoder) {
     return {DIGITOR_RESULT_INVALID_ARGUMENT,
             "native component identities must identify distinct implementations"};
   }
@@ -58,24 +73,24 @@ class NativePlatformProviderRegistry final {
       if (diagnostic) *diagnostic = validation.diagnostic;
       return validation.result;
     }
-    const auto index = static_cast<std::size_t>(provider.platform);
-    if (index >= providers_.size()) {
+    const auto index = native_platform_slot(provider.platform);
+    if (!index) {
       if (diagnostic) *diagnostic = "invalid platform provider index";
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    if (providers_[index]) {
+    if (providers_[*index]) {
       if (diagnostic) *diagnostic = "platform provider already installed";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
-    providers_[index] = std::make_shared<NativePlatformProvider>(std::move(provider));
+    providers_[*index] = std::make_shared<NativePlatformProvider>(std::move(provider));
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
   }
 
   [[nodiscard]] std::shared_ptr<const NativePlatformProvider> provider(
       ProductionPlatform platform) const noexcept {
-    const auto index = static_cast<std::size_t>(platform);
-    return index < providers_.size() ? providers_[index] : nullptr;
+    const auto index = native_platform_slot(platform);
+    return index ? providers_[*index] : nullptr;
   }
 
   [[nodiscard]] bool complete() const noexcept {
@@ -93,7 +108,12 @@ class NativePlatformProviderRegistry final {
     const NativePlatformProvider& provider, bool platform_compile_passed,
     bool backend_matches_snapshot, bool device_identity_matches) {
   PlatformSourceReadiness out{};
-  out.platform = static_cast<SourceReleasePlatform>(provider.platform);
+  switch (provider.platform) {
+    case ProductionPlatform::windows: out.platform = SourceReleasePlatform::windows; break;
+    case ProductionPlatform::android: out.platform = SourceReleasePlatform::android; break;
+    case ProductionPlatform::macos: out.platform = SourceReleasePlatform::macos; break;
+    case ProductionPlatform::ios: out.platform = SourceReleasePlatform::ios; break;
+  }
   out.timeline_binding = provider.timeline.valid()
                              ? NativeBindingKind::production_native
                              : NativeBindingKind::callback_contract;
