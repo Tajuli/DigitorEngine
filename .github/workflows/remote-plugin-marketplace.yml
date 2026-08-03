@@ -28,14 +28,14 @@ jobs:
       - name: Qualify marketplace on Unix
         if: runner.os != 'Windows'
         run: build/remote-plugin-marketplace/digitor_remote_plugin_marketplace_qualification | tee remote-plugin-marketplace.log
-      - name: Qualify consumer runtime on Unix
-        if: runner.os != 'Windows'
-        run: build/remote-plugin-marketplace/digitor_consumer_plugin_runtime_qualification | tee consumer-plugin-runtime.log
       - name: Qualify marketplace on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: build/remote-plugin-marketplace/Release/digitor_remote_plugin_marketplace_qualification.exe | Tee-Object -FilePath remote-plugin-marketplace.log
-      - name: Qualify consumer runtime on Windows
+      - name: Qualify consumer authorization on Unix
+        if: runner.os != 'Windows'
+        run: build/remote-plugin-marketplace/digitor_consumer_plugin_runtime_qualification | tee consumer-plugin-runtime.log
+      - name: Qualify consumer authorization on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: build/remote-plugin-marketplace/Release/digitor_consumer_plugin_runtime_qualification.exe | Tee-Object -FilePath consumer-plugin-runtime.log
