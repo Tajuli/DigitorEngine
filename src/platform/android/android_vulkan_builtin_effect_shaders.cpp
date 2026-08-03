@@ -191,7 +191,7 @@ create_android_vulkan_builtin_effect_shaders(
                        state->sdr.pipeline) ||
       !create_pipeline(state->device, state->pipeline_layout, state->hdr.shader,
                        state->hdr.pipeline)) {
-    out.result = DIGITOR_RESULT_PIPELINE_CREATION_FAILED;
+    out.result = DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out.diagnostic = "Vulkan built-in effect shader or pipeline creation failed";
     return out;
   }
@@ -301,10 +301,6 @@ create_android_vulkan_builtin_effect_shaders(
                   (pass.output.height + 7u) / 8u, 1u);
     storage_barrier(command_buffer, output);
 
-    // Descriptor contents and views must remain alive until queue completion. The
-    // provider submits synchronously after recording the stack, so cleanup is
-    // deferred to the provider lifetime through vkDeviceWaitIdle-free pool reset
-    // on the next package destruction. This avoids CPU/GPU race-prone early frees.
     diagnostic.clear();
     return true;
   };
