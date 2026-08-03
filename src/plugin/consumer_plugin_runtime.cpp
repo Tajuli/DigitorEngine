@@ -14,6 +14,12 @@ ConsumerPluginApplyResult apply_failure(DigitorResult result,
   return out;
 }
 
+ConsumerPluginOperation operation_for(ConsumerPluginSurface surface) noexcept {
+  return surface == ConsumerPluginSurface::preview
+      ? ConsumerPluginOperation::apply_preview
+      : ConsumerPluginOperation::apply_export;
+}
+
 }  // namespace
 
 ConsumerPluginRuntime::ConsumerPluginRuntime(
@@ -21,42 +27,46 @@ ConsumerPluginRuntime::ConsumerPluginRuntime(
     ConsumerPluginRuntimeBindings bindings)
     : marketplace_(marketplace), bindings_(std::move(bindings)) {}
 
-std::vector<ConsumerPluginView> ConsumerPluginRuntime::browse(
-    RemotePluginKind kind) const {
-  std::vector<ConsumerPluginView> out;
-  const ConsumerPluginPlan plan = bindings_.current_plan
-      ? bindings_.current_plan() : ConsumerPluginPlan::free;
-  for (const auto& entry : marketplace_.available(kind)) {
-    ConsumerPluginView view{};
-    view.plugin = entry;
-    if (const auto installed = marketplace_.installed(entry.id))
-      view.install_state = installed->state;
-    view.requires_upgrade = entry.tier == RemotePluginTier::paid &&
-                            plan == ConsumerPluginPlan::free;
-    view.install_allowed = !view.requires_upgrade && !entry.revoked;
-    view.apply_allowed = view.install_allowed &&
-                         view.install_state == RemotePluginInstallState::installed;
-    out.push_back(std::move(view));
-  }
-  return out;
-}
-
-bool ConsumerPluginRuntime::access_allowed(
+bool ConsumerPluginRuntime::authorized(
     const RemotePluginCatalogEntry& entry,
+    ConsumerPluginOperation operation,
+    std::string_view project_or_clip_id,
     std::string& diagnostic) const {
   if (entry.revoked) {
     diagnostic = "plugin has been revoked";
     return false;
   }
-  const ConsumerPluginPlan plan = bindings_.current_plan
-      ? bindings_.current_plan() : ConsumerPluginPlan::free;
-  if (entry.tier == RemotePluginTier::paid &&
-      plan != ConsumerPluginPlan::paid) {
-    diagnostic = "paid plugin requires a paid Digitor plan";
+  if (!bindings_.authorize) {
+    diagnostic = "consumer app authorization binding is unavailable";
+    return false;
+  }
+  if (!bindings_.authorize(entry, operation, project_or_clip_id, diagnostic)) {
+    if (diagnostic.empty()) diagnostic = "consumer app denied plugin operation";
     return false;
   }
   diagnostic.clear();
   return true;
+}
+
+std::vector<ConsumerPluginView> ConsumerPluginRuntime::browse(
+    RemotePluginKind kind) const {
+  std::vector<ConsumerPluginView> out;
+  for (const auto& entry : marketplace_.available(kind)) {
+    ConsumerPluginView view{};
+    view.plugin = entry;
+    if (const auto installed = marketplace_.installed(entry.id))
+      view.install_state = installed->state;
+    std::string diagnostic;
+    view.visible = authorized(entry, ConsumerPluginOperation::browse, {}, diagnostic);
+    view.import_allowed = authorized(
+        entry, ConsumerPluginOperation::import_plugin, {}, diagnostic);
+    view.preview_allowed = authorized(
+        entry, ConsumerPluginOperation::apply_preview, {}, diagnostic);
+    view.export_allowed = authorized(
+        entry, ConsumerPluginOperation::apply_export, {}, diagnostic);
+    out.push_back(std::move(view));
+  }
+  return out;
 }
 
 RemotePluginOperationResult ConsumerPluginRuntime::import_plugin(
@@ -69,27 +79,11 @@ RemotePluginOperationResult ConsumerPluginRuntime::import_plugin(
     return out;
   }
   std::string diagnostic;
-  if (!access_allowed(*entry, diagnostic)) {
+  if (!authorized(*entry, ConsumerPluginOperation::import_plugin, {}, diagnostic)) {
     RemotePluginOperationResult out{};
     out.result = DIGITOR_RESULT_UNSUPPORTED;
     out.diagnostic = std::move(diagnostic);
     return out;
-  }
-  if (entry->tier == RemotePluginTier::paid) {
-    if (!bindings_.entitlement_for) {
-      RemotePluginOperationResult out{};
-      out.result = DIGITOR_RESULT_UNSUPPORTED;
-      out.diagnostic = "paid plugin entitlement provider is unavailable";
-      return out;
-    }
-    const auto entitlement = bindings_.entitlement_for(*entry);
-    if (!entitlement) {
-      RemotePluginOperationResult out{};
-      out.result = DIGITOR_RESULT_UNSUPPORTED;
-      out.diagnostic = "paid plugin entitlement is unavailable";
-      return out;
-    }
-    return marketplace_.install(plugin_id, entitlement);
   }
   return marketplace_.install(plugin_id);
 }
@@ -126,7 +120,7 @@ ConsumerPluginApplyResult ConsumerPluginRuntime::apply(
     return apply_failure(DIGITOR_RESULT_INVALID_ARGUMENT,
                          "plugin is absent from the trusted catalog");
   std::string diagnostic;
-  if (!access_allowed(*entry, diagnostic))
+  if (!authorized(*entry, operation_for(surface), project_or_clip_id, diagnostic))
     return apply_failure(DIGITOR_RESULT_UNSUPPORTED, std::move(diagnostic));
   const auto installed = marketplace_.installed(plugin_id);
   if (!installed || installed->state != RemotePluginInstallState::installed ||
@@ -169,6 +163,14 @@ DigitorResult ConsumerPluginRuntime::remove(
   if (it == instances_.end() || project_or_clip_id.empty()) {
     if (diagnostic) *diagnostic = "plugin instance or target is invalid";
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+  const auto entry = marketplace_.find(it->second.plugin_id);
+  std::string local;
+  if (!entry || !authorized(*entry, ConsumerPluginOperation::remove,
+                            project_or_clip_id, local)) {
+    if (diagnostic) *diagnostic = local.empty()
+        ? "consumer app denied plugin removal" : local;
+    return DIGITOR_RESULT_UNSUPPORTED;
   }
   if (bindings_.remove_instance)
     bindings_.remove_instance(instance_id, surface, project_or_clip_id);
