@@ -166,27 +166,23 @@ DigitorResult RemotePluginMarketplace::load_catalog(
 }
 
 RemotePluginOperationResult RemotePluginMarketplace::install(
-    std::string_view plugin_id,
-    const std::optional<RemotePluginEntitlement>& entitlement) {
+    std::string_view plugin_id) {
   const auto entry = find(plugin_id);
   if (!entry) return failure(DIGITOR_RESULT_INVALID_ARGUMENT,
                              "remote plugin is absent from the catalog");
-  return install_impl(*entry, entitlement, false);
+  return install_impl(*entry, false);
 }
 
 RemotePluginOperationResult RemotePluginMarketplace::update(
-    std::string_view plugin_id,
-    const std::optional<RemotePluginEntitlement>& entitlement) {
+    std::string_view plugin_id) {
   const auto entry = find(plugin_id);
   if (!entry) return failure(DIGITOR_RESULT_INVALID_ARGUMENT,
                              "remote plugin is absent from the catalog");
-  return install_impl(*entry, entitlement, true);
+  return install_impl(*entry, true);
 }
 
 RemotePluginOperationResult RemotePluginMarketplace::install_impl(
-    const RemotePluginCatalogEntry& entry,
-    const std::optional<RemotePluginEntitlement>& entitlement,
-    bool is_update) {
+    const RemotePluginCatalogEntry& entry, bool is_update) {
   if (entry.revoked)
     return failure(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                    "remote plugin has been revoked");
@@ -194,14 +190,7 @@ RemotePluginOperationResult RemotePluginMarketplace::install_impl(
                         entry.minimum_engine_version))
     return failure(DIGITOR_RESULT_UNSUPPORTED,
                    "remote plugin requires a newer engine version");
-  if (entry.tier == RemotePluginTier::paid) {
-    std::string diagnostic;
-    if (!entitlement || !bindings_.verify_entitlement ||
-        !bindings_.verify_entitlement(entry, *entitlement, diagnostic)) {
-      if (diagnostic.empty()) diagnostic = "paid plugin entitlement is invalid";
-      return failure(DIGITOR_RESULT_UNSUPPORTED, std::move(diagnostic));
-    }
-  }
+
   const auto* artifact = artifact_for(entry, bindings_.backend);
   if (!artifact)
     return failure(DIGITOR_RESULT_UNSUPPORTED,
