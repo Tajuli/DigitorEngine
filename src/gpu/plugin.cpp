@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <iomanip>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 
@@ -17,6 +19,14 @@ bool valid_id(std::string_view id) {
         if (!ok) return false;
     }
     return true;
+}
+
+bool parse_finite_float(std::string_view text, float& value) {
+    if (text.empty()) return false;
+    std::istringstream stream{std::string(text)};
+    stream.imbue(std::locale::classic());
+    stream >> std::noskipws >> value;
+    return stream && stream.eof() && std::isfinite(value);
 }
 
 float parameter(const PluginInstance& instance, std::string_view id, float fallback) {
@@ -244,6 +254,7 @@ bool execute_plugin_gpu(const PluginRegistry& registry, CommandEncoder& encoder,
 
 std::string serialize_plugin_instance(const PluginInstance& instance) {
     std::ostringstream out;
+    out.imbue(std::locale::classic());
     out << "digitor-plugin-v1\n" << instance.plugin_id << '\n'
         << (instance.enabled ? 1 : 0) << '\n' << instance.values.size() << '\n';
     for (const auto& [id, value] : instance.values) out << id << '=' << value << '\n';
@@ -252,6 +263,7 @@ std::string serialize_plugin_instance(const PluginInstance& instance) {
 
 std::optional<PluginInstance> deserialize_plugin_instance(std::string_view text) {
     std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
     std::string line;
     if (!std::getline(in, line) || line != "digitor-plugin-v1") return std::nullopt;
     PluginInstance result;
@@ -271,9 +283,7 @@ std::optional<PluginInstance> deserialize_plugin_instance(std::string_view text)
         if (!valid_id(id)) return std::nullopt;
         float value{};
         const auto number = std::string_view(line).substr(split + 1);
-        const auto value_result = std::from_chars(number.data(), number.data() + number.size(), value);
-        if (value_result.ec != std::errc{} || value_result.ptr != number.data() + number.size() ||
-            !std::isfinite(value)) return std::nullopt;
+        if (!parse_finite_float(number, value)) return std::nullopt;
         result.values.emplace(id, value);
     }
     if (std::getline(in, line) && !line.empty()) return std::nullopt;
