@@ -108,7 +108,7 @@ AndroidGlesEffectProviderResult create_android_gles_effect_provider(AndroidGlesE
   if(!b.supports_external_textures||!b.supports_external_synchronization){out.result=DIGITOR_RESULT_BACKEND_UNAVAILABLE;out.diagnostic="Android GLES effects require shared external textures and synchronization";return out;}
   auto state=std::make_shared<GlesState>(); state->display=reinterpret_cast<EGLDisplay>(b.egl_display); state->context=reinterpret_cast<EGLContext>(b.egl_context); state->identity=b.device_identity; state->hdr=b.supports_rgba16f;
   std::string diagnostic; if(!state->initialize(diagnostic)){out.result=DIGITOR_RESULT_BACKEND_UNAVAILABLE;out.diagnostic=std::move(diagnostic);return out;}
-  NativeEffectBackendProvider p{}; p.backend=NativeEffectBackend::opengl_es; p.device_identity=state->identity; p.supports_external_memory=true; p.supports_external_synchronization=true; p.supports_hdr=state->hdr;
+  NativeEffectBackendProvider p{}; p.backend=NativeEffectBackend::gles; p.device_identity=state->identity; p.supports_external_memory=true; p.supports_external_synchronization=true; p.supports_hdr=state->hdr;
   p.pass_count=[](const EffectDescriptor& d,const EffectInstance&,EffectQuality){return d.type==EffectType::blur||d.type==EffectType::glow||d.type==EffectType::motion_blur?2u:1u;};
   p.allocate_transient=[state](const NativeEffectSurface& proto,NativeEffectSurface& output,std::string& d){
     std::lock_guard<std::mutex> lock(state->mutex); if(!state->current(d))return false; GLenum internal=format_for(proto.format,state->hdr); if(!internal){d="unsupported GLES effect format";return false;}
