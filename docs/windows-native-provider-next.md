@@ -1,0 +1,1 @@
+Next implementation unit: add `platform/windows/windows_native_provider.cpp` using the validated SDKs, with repository-owned Flutter texture registration, D3D12/Vulkan synchronization, and one selected hardware encoder session. Do not mark Windows production-native until this source compiles in CI and passes physical-device qualification.
