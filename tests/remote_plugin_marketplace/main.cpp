@@ -43,13 +43,6 @@ int main() {
     if (signature != "valid-signature") { d = "signature rejected"; return false; }
     return true;
   };
-  bindings.verify_entitlement = [](const auto& entry, const auto& entitlement,
-                                   std::string& d) {
-    if (entry.product_id != entitlement.product_id || entitlement.token != "paid-ok") {
-      d = "entitlement rejected"; return false;
-    }
-    return true;
-  };
   bindings.download = [](auto, std::vector<std::byte>& bytes, std::string&) {
     bytes.assign(16, std::byte{0x2a}); return true;
   };
@@ -80,14 +73,10 @@ int main() {
     return fail("free filter install failed");
   if (!registered || marketplace.available(RemotePluginKind::filter).size() != 1)
     return fail("free filter was not registered");
-  if (marketplace.install("effect.remote_paid"))
-    return fail("paid effect installed without entitlement");
-  RemotePluginEntitlement entitlement{};
-  entitlement.product_id = "effect.remote_paid.lifetime";
-  entitlement.user_id = "user-1";
-  entitlement.token = "paid-ok";
-  if (!marketplace.install("effect.remote_paid", entitlement))
-    return fail("paid effect install with entitlement failed");
+  // Tier is catalog metadata only. The consumer app decides whether this call
+  // is made; the engine performs no subscription or purchase verification.
+  if (!marketplace.install("effect.remote_paid"))
+    return fail("app-authorized paid effect install failed");
   if (marketplace.uninstall("effect.remote_paid", &diagnostic) != DIGITOR_RESULT_OK)
     return fail("paid effect uninstall failed");
 
@@ -100,8 +89,8 @@ int main() {
     return fail("installed plugin was not marked revoked");
 
   std::cout << "QUALIFICATION=PASS\n";
-  std::cout << "FREE_PLUGIN=PASS\n";
-  std::cout << "PAID_ENTITLEMENT=PASS\n";
+  std::cout << "APP_AUTHORITY=PASS\n";
+  std::cout << "ENGINE_ENTITLEMENT_CHECK=NONE\n";
   std::cout << "SIGNATURE_HASH_REVOCATION=PASS\n";
   std::cout << "ENGINE_SOURCE_EDIT_FOR_NEW_PLUGIN=NOT_REQUIRED\n";
   return 0;
