@@ -84,8 +84,11 @@ int main() {
     return fail("selected backend mismatch was accepted");
 
   const auto telemetry = runtime.telemetry();
-  if (dispatches != 2 || telemetry.gpu_dispatches != 2 ||
-      telemetry.preview_frames != 1 || telemetry.export_frames != 1 ||
+  // Three requests dispatch successfully: the matching preview/export pair and
+  // the second preview that establishes the record later compared against the
+  // deliberately mismatched export request.
+  if (dispatches != 3 || telemetry.gpu_dispatches != 3 ||
+      telemetry.preview_frames != 2 || telemetry.export_frames != 1 ||
       telemetry.cpu_readbacks != 0 || telemetry.cpu_uploads != 0 ||
       telemetry.cpu_fallback_frames != 0 || telemetry.parity_failures != 1)
     return fail("zero-copy telemetry contract failed");
