@@ -138,7 +138,7 @@ int main() {
   bindings.device = device.Get();
   bindings.command_queue = queue.Get();
   bindings.device_identity = reinterpret_cast<std::uint64_t>(device.Get());
-  bindings.shader_package_identity = shaders.identity;
+  bindings.shader_package_identity = shaders.package_identity;
   bindings.dispatch = shaders.dispatch;
   bindings.supports_hdr = true;
   bindings.supports_external_memory = true;
