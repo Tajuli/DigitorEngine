@@ -11,8 +11,14 @@
 
 namespace digitor {
 
-enum class ConsumerPluginPlan : std::uint32_t { free, paid };
 enum class ConsumerPluginSurface : std::uint32_t { preview, export_frame };
+enum class ConsumerPluginOperation : std::uint32_t {
+  browse,
+  import_plugin,
+  apply_preview,
+  apply_export,
+  remove
+};
 
 struct ConsumerPluginInstance final {
   std::string instance_id;
@@ -28,15 +34,17 @@ struct ConsumerPluginView final {
   RemotePluginCatalogEntry plugin;
   RemotePluginInstallState install_state{RemotePluginInstallState::not_installed};
   bool visible{true};
-  bool install_allowed{};
-  bool apply_allowed{};
-  bool requires_upgrade{};
+  bool import_allowed{};
+  bool preview_allowed{};
+  bool export_allowed{};
 };
 
-using ConsumerPluginPlanProvider =
-    std::function<ConsumerPluginPlan()>;
-using ConsumerPluginEntitlementProvider = std::function<
-    std::optional<RemotePluginEntitlement>(const RemotePluginCatalogEntry&)>;
+// DigitorEngine does not inspect subscriptions, purchases, plans or accounts.
+// The consumer app is authoritative and returns true when the requested
+// operation is allowed. Returning false blocks only that operation.
+using ConsumerPluginAuthorize = std::function<bool(
+    const RemotePluginCatalogEntry&, ConsumerPluginOperation,
+    std::string_view project_or_clip_id, std::string& diagnostic)>;
 using ConsumerPluginApply = std::function<bool(
     const ConsumerPluginInstance&, ConsumerPluginSurface,
     std::string_view project_or_clip_id, std::string& diagnostic)>;
@@ -45,8 +53,7 @@ using ConsumerPluginRemove = std::function<void(
     std::string_view project_or_clip_id)>;
 
 struct ConsumerPluginRuntimeBindings final {
-  ConsumerPluginPlanProvider current_plan;
-  ConsumerPluginEntitlementProvider entitlement_for;
+  ConsumerPluginAuthorize authorize;
   ConsumerPluginApply apply_instance;
   ConsumerPluginRemove remove_instance;
 };
@@ -80,8 +87,10 @@ class ConsumerPluginRuntime final {
   std::vector<ConsumerPluginInstance> instances() const;
 
  private:
-  bool access_allowed(const RemotePluginCatalogEntry& entry,
-                      std::string& diagnostic) const;
+  bool authorized(const RemotePluginCatalogEntry& entry,
+                  ConsumerPluginOperation operation,
+                  std::string_view project_or_clip_id,
+                  std::string& diagnostic) const;
   bool validate_parameters(
       const RemotePluginCatalogEntry& entry,
       const std::unordered_map<std::string, double>& parameters,
