@@ -16,6 +16,22 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          choco install vulkan-sdk --yes --no-progress
+          $sdk = Get-ChildItem 'C:\VulkanSDK' -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $sdk) { throw 'Vulkan SDK installation directory was not found' }
+          "VULKAN_SDK=$($sdk.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$($sdk.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Test-Path "$($sdk.FullName)\Include\vulkan\vulkan.h")) {
+            throw 'Vulkan headers were not installed'
+          }
+          if (-not (Test-Path "$($sdk.FullName)\Lib\vulkan-1.lib")) {
+            throw 'Vulkan import library was not installed'
+          }
       - name: Configure provider qualification
         shell: pwsh
         run: cmake -S tests/windows_vulkan_effect_provider -B build/windows-vulkan-effects -A x64 -DCMAKE_BUILD_TYPE=Release
