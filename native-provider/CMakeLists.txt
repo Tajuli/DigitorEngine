@@ -10,9 +10,17 @@ include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NativePlatformProviders.cmake")
 digitor_configure_native_platform_provider(digitor_engine)
 
 if(DIGITOR_BUILD_TESTS)
+  enable_testing()
+
   add_executable(digitor_native_platform_provider_test
     "${CMAKE_CURRENT_LIST_DIR}/../tests/test_native_platform_provider.cpp")
   target_link_libraries(digitor_native_platform_provider_test PRIVATE Digitor::Engine)
   add_test(NAME digitor_native_platform_provider
            COMMAND digitor_native_platform_provider_test)
+
+  add_executable(digitor_native_platform_provider_indexing_test
+    "${CMAKE_CURRENT_LIST_DIR}/../tests/test_native_platform_provider_indexing.cpp")
+  target_link_libraries(digitor_native_platform_provider_indexing_test PRIVATE Digitor::Engine)
+  add_test(NAME digitor_native_platform_provider_indexing
+           COMMAND digitor_native_platform_provider_indexing_test)
 endif()
