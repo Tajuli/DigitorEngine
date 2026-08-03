@@ -1,0 +1,32 @@
+name: Windows Vulkan Effects Provider
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/windows_vulkan_effect_provider.hpp'
+      - 'src/platform/windows/windows_vulkan_effect_provider.cpp'
+      - 'cmake/WindowsVulkanEffects.cmake'
+      - 'tests/windows_vulkan_effect_provider/**'
+      - '.github/workflows/windows-vulkan-effects-provider.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure provider qualification
+        shell: pwsh
+        run: cmake -S tests/windows_vulkan_effect_provider -B build/windows-vulkan-effects -A x64 -DCMAKE_BUILD_TYPE=Release
+      - name: Build provider qualification
+        shell: pwsh
+        run: cmake --build build/windows-vulkan-effects --config Release --parallel 2
+      - name: Run fail-closed contract test
+        shell: pwsh
+        run: build/windows-vulkan-effects/Release/digitor_windows_vulkan_effect_provider_qualification.exe | Tee-Object -FilePath windows-vulkan-effects-provider.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-vulkan-effects-provider
+          path: windows-vulkan-effects-provider.log
+          if-no-files-found: error
