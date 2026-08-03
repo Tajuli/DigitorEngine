@@ -16,5 +16,14 @@ void apply_effect_gpu(CommandEncoder&e,const Color*i,Color*o,std::uint32_t w,std
 // established translation unit to keep legacy platform manifests in sync.
 #include "filter.cpp"
 #include "plugin.cpp"
+
+// These implementation units intentionally share one legacy translation unit.
+// Rename their private helper identifiers while including them so anonymous-
+// namespace helpers from effects/filter cannot collide across included files.
+#define clamp01 beauty_clamp01
+#define mix beauty_mix
 #include "beauty.cpp"
+#undef mix
+#undef clamp01
+
 #include "beauty_plugin.cpp"
