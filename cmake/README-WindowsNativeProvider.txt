@@ -1,0 +1,1 @@
+Use cmake/WindowsNativeProviderTopLevel.cmake for production Windows release configuration. This validates Flutter Windows, D3D12, DXGI 1.6, Media Foundation, Vulkan, and the selected hardware encoder SDK before attaching the repository-owned provider source to digitor_engine.
