@@ -4,7 +4,9 @@ if(NOT DIGITOR_GLSLC)
   message(FATAL_ERROR "glslc is required to build Android Vulkan effect shaders")
 endif()
 
-set(_shader "${CMAKE_SOURCE_DIR}/shaders/vulkan/digitor_builtin_effect.comp")
+get_filename_component(_digitor_repo_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+set(_shader "${_digitor_repo_root}/shaders/vulkan/digitor_builtin_effect.comp")
+set(_embed_tool "${_digitor_repo_root}/tools/embed_spirv.py")
 set(_generated "${CMAKE_BINARY_DIR}/generated/digitor")
 file(MAKE_DIRECTORY "${_generated}")
 
@@ -25,9 +27,9 @@ foreach(_variant IN ITEMS rgba8 rgba16f)
   add_custom_command(
     OUTPUT "${_hpp}"
     COMMAND Python3::Interpreter
-            "${CMAKE_SOURCE_DIR}/tools/embed_spirv.py"
+            "${_embed_tool}"
             "${_spv}" "digitor_builtin_effect_${_variant}_spv" "${_hpp}"
-    DEPENDS "${_spv}" "${CMAKE_SOURCE_DIR}/tools/embed_spirv.py"
+    DEPENDS "${_spv}" "${_embed_tool}"
     VERBATIM)
   list(APPEND DIGITOR_ANDROID_VULKAN_EFFECT_SHADER_HEADERS "${_hpp}")
 endforeach()
