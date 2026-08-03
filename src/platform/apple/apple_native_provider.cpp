@@ -68,8 +68,7 @@ AppleNativeProviderResult create_apple_native_provider(
     out.diagnostic = "required Apple native APIs or zero-copy capabilities are unavailable";
     return out;
   }
-  if (bindings.capabilities.device_identity != bindings.capabilities.device_identity ||
-      !bindings.flutter.flutter_texture_registrar ||
+  if (!bindings.flutter.flutter_texture_registrar ||
       bindings.flutter.implementation_identity.empty() ||
       !bindings.flutter.attached || !bindings.flutter.present) {
     out.result = DIGITOR_RESULT_NOT_INITIALIZED;
