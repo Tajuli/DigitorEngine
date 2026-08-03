@@ -1,0 +1,42 @@
+name: Apple Metal Effects Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/native_effects.hpp'
+      - 'include/digitor/effect_system.hpp'
+      - 'include/digitor/apple_metal_effect_provider.hpp'
+      - 'include/digitor/apple_metal_builtin_effect_shaders.hpp'
+      - 'src/gpu/native_effects.cpp'
+      - 'src/gpu/effect_system.cpp'
+      - 'src/platform/apple/apple_metal_effect_provider.mm'
+      - 'src/platform/apple/apple_metal_builtin_effect_shaders.mm'
+      - 'tests/test_apple_metal_effects_qualification.mm'
+      - 'tests/apple_metal_effects_qualification/CMakeLists.txt'
+      - '.github/workflows/apple-metal-effects-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/apple_metal_effects_qualification -B build/apple-metal-effects -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/apple-metal-effects --config Release --parallel 2
+      - name: Execute qualification
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          ./build/apple-metal-effects/digitor_apple_metal_effects_qualification 2>&1 | tee artifacts/apple-metal-effects-qualification.log
+          grep -q 'APPLE_METAL_EFFECTS_QUALIFICATION=PASS' artifacts/apple-metal-effects-qualification.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-metal-effects-qualification
+          path: artifacts/apple-metal-effects-qualification.log
+          if-no-files-found: warn
