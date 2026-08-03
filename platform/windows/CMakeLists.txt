@@ -5,21 +5,20 @@ if(NOT WIN32)
 endif()
 
 set(DIGITOR_FLUTTER_WINDOWS_INCLUDE_DIR "" CACHE PATH
-    "Directory containing flutter/plugin_registrar_windows.h and flutter/texture_registrar.h")
+    "Directory containing Flutter Windows embedding headers")
 set(DIGITOR_FLUTTER_WINDOWS_LIBRARY "" CACHE FILEPATH
     "Flutter Windows engine import library")
+set(DIGITOR_WINDOWS_NATIVE_PROVIDER_IDENTITY "digitor-windows-native-v1" CACHE STRING
+    "Stable identity embedded in the Windows native provider")
 
 if(NOT DIGITOR_FLUTTER_WINDOWS_INCLUDE_DIR)
   message(FATAL_ERROR "DIGITOR_FLUTTER_WINDOWS_INCLUDE_DIR is required")
 endif()
-if(NOT EXISTS "${DIGITOR_FLUTTER_WINDOWS_INCLUDE_DIR}/flutter/plugin_registrar_windows.h")
-  message(FATAL_ERROR "Flutter Windows plugin registrar header was not found")
-endif()
-if(NOT EXISTS "${DIGITOR_FLUTTER_WINDOWS_INCLUDE_DIR}/flutter/texture_registrar.h")
-  message(FATAL_ERROR "Flutter Windows texture registrar header was not found")
-endif()
 if(NOT DIGITOR_FLUTTER_WINDOWS_LIBRARY OR NOT EXISTS "${DIGITOR_FLUTTER_WINDOWS_LIBRARY}")
   message(FATAL_ERROR "DIGITOR_FLUTTER_WINDOWS_LIBRARY must point to the Flutter Windows import library")
+endif()
+if(NOT DIGITOR_WINDOWS_NATIVE_PROVIDER_IDENTITY)
+  message(FATAL_ERROR "DIGITOR_WINDOWS_NATIVE_PROVIDER_IDENTITY is required")
 endif()
 
 add_library(digitor_windows_native_provider STATIC
@@ -37,6 +36,7 @@ target_compile_definitions(digitor_windows_native_provider PRIVATE
   WIN32_LEAN_AND_MEAN
   NOMINMAX
   DIGITOR_WINDOWS_NATIVE_PROVIDER=1
+  DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY="${DIGITOR_WINDOWS_NATIVE_PROVIDER_IDENTITY}"
 )
 
 target_link_libraries(digitor_windows_native_provider
