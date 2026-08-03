@@ -136,3 +136,7 @@ WindowsNativeProviderResult create_windows_native_provider(
 }
 
 }  // namespace digitor
+
+// The Windows release package compiles the concrete D3D12 effects provider
+// through its established provider source, avoiding a second platform manifest.
+#include "windows_d3d12_effect_provider.cpp"
