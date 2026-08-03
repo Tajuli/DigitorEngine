@@ -26,6 +26,10 @@
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "DIGITOR_NATIVE_PLATFORM_PROVIDER_SOURCE": "${sourceDir}/platform/windows/windows_native_provider.cpp",
+        "DIGITOR_NATIVE_PLATFORM_PROVIDER_IDENTITY": "digitor-windows-native-v1"
       }
     },
     {
