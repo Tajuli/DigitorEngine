@@ -53,6 +53,8 @@ struct RemotePluginCatalogEntry final {
   std::string version;
   std::string minimum_engine_version;
   RemotePluginKind kind{RemotePluginKind::effect};
+  // Metadata only. DigitorEngine never interprets user plans, purchases,
+  // subscriptions or export rights. The consumer app owns those decisions.
   RemotePluginTier tier{RemotePluginTier::free};
   std::string product_id;
   std::string publisher_key_id;
@@ -67,13 +69,6 @@ struct RemotePluginCatalog final {
   std::string catalog_id;
   std::string generated_at;
   std::vector<RemotePluginCatalogEntry> plugins;
-};
-
-struct RemotePluginEntitlement final {
-  std::string product_id;
-  std::string user_id;
-  std::string token;
-  std::uint64_t expires_unix_seconds{};
 };
 
 struct RemotePluginInstallRecord final {
@@ -94,9 +89,6 @@ using RemotePluginSha256 = std::function<std::string(
 using RemotePluginSignatureVerifier = std::function<bool(
     std::string_view publisher_key_id, std::string_view canonical_payload,
     std::string_view signature, std::string& diagnostic)>;
-using RemotePluginEntitlementVerifier = std::function<bool(
-    const RemotePluginCatalogEntry&, const RemotePluginEntitlement&,
-    std::string& diagnostic)>;
 using RemotePluginPackageInstaller = std::function<bool(
     const RemotePluginCatalogEntry&, const RemotePluginArtifact&,
     const std::vector<std::byte>& bytes, std::string& installed_path,
@@ -112,7 +104,6 @@ struct RemotePluginMarketplaceBindings final {
   RemotePluginDownload download;
   RemotePluginSha256 sha256;
   RemotePluginSignatureVerifier verify_signature;
-  RemotePluginEntitlementVerifier verify_entitlement;
   RemotePluginPackageInstaller install_package;
   RemotePluginRuntimeRegistrar register_runtime;
   RemotePluginRuntimeUnregister unregister_runtime;
@@ -131,12 +122,8 @@ class RemotePluginMarketplace final {
 
   DigitorResult load_catalog(RemotePluginCatalog catalog,
                              std::string* diagnostic = nullptr);
-  RemotePluginOperationResult install(
-      std::string_view plugin_id,
-      const std::optional<RemotePluginEntitlement>& entitlement = std::nullopt);
-  RemotePluginOperationResult update(
-      std::string_view plugin_id,
-      const std::optional<RemotePluginEntitlement>& entitlement = std::nullopt);
+  RemotePluginOperationResult install(std::string_view plugin_id);
+  RemotePluginOperationResult update(std::string_view plugin_id);
   DigitorResult uninstall(std::string_view plugin_id,
                           std::string* diagnostic = nullptr);
 
@@ -147,8 +134,7 @@ class RemotePluginMarketplace final {
 
  private:
   RemotePluginOperationResult install_impl(
-      const RemotePluginCatalogEntry&,
-      const std::optional<RemotePluginEntitlement>&, bool is_update);
+      const RemotePluginCatalogEntry&, bool is_update);
 
   RemotePluginMarketplaceBindings bindings_;
   std::optional<RemotePluginCatalog> catalog_;
