@@ -15,8 +15,7 @@ digitor::PluginZeroCopyRequest request_for(
     std::string digest = "stack-v1") {
   using namespace digitor;
   PluginZeroCopyRequest request{};
-  request.instance.instance_id = surface == ConsumerPluginSurface::preview
-      ? "preview-instance" : "export-instance";
+  request.instance.instance_id = "effect-instance-1";
   request.instance.plugin_id = "effect.cinematic_glow";
   request.instance.plugin_version = "1.2.0";
   request.instance.kind = RemotePluginKind::effect;
@@ -84,9 +83,6 @@ int main() {
     return fail("selected backend mismatch was accepted");
 
   const auto telemetry = runtime.telemetry();
-  // Three requests dispatch successfully: the matching preview/export pair and
-  // the second preview that establishes the record later compared against the
-  // deliberately mismatched export request.
   if (dispatches != 3 || telemetry.gpu_dispatches != 3 ||
       telemetry.preview_frames != 2 || telemetry.export_frames != 1 ||
       telemetry.cpu_readbacks != 0 || telemetry.cpu_uploads != 0 ||
