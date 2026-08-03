@@ -105,8 +105,8 @@ class PluginZeroCopyFrameRuntime final {
 
   PluginZeroCopyBindings bindings_;
   PluginZeroCopyTelemetry telemetry_;
-  std::unordered_map<std::int64_t, ParityRecord> preview_records_;
-  std::unordered_map<std::int64_t, ParityRecord> export_records_;
+  std::unordered_map<std::string, ParityRecord> preview_records_;
+  std::unordered_map<std::string, ParityRecord> export_records_;
 };
 
 }  // namespace digitor
