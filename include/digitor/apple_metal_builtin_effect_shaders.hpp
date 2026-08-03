@@ -8,6 +8,13 @@
 
 namespace digitor {
 
+// The public C result ABI intentionally exposes broad error categories. These
+// aliases keep shader-package diagnostics precise without extending that ABI.
+inline constexpr DigitorResult DIGITOR_RESULT_SHADER_COMPILE_FAILED =
+    DIGITOR_RESULT_INTERNAL_ERROR;
+inline constexpr DigitorResult DIGITOR_RESULT_PIPELINE_CREATION_FAILED =
+    DIGITOR_RESULT_INTERNAL_ERROR;
+
 struct AppleMetalBuiltinEffectShadersResult final {
   AppleMetalEffectDispatch dispatch;
   std::shared_ptr<void> lifetime;
