@@ -12,8 +12,9 @@ void run(const Color*in,Color*out,int w,int h,EffectSettings s){std::vector<Colo
 void apply_effect_gpu(CommandEncoder&e,const Color*i,Color*o,std::uint32_t w,std::uint32_t h,const EffectSettings&s){if(!i||!o||!w||!h)throw std::invalid_argument("invalid effect image");e.dispatch([=]{run(i,o,int(w),int(h),s);});}
 }
 
-// Filter, plugin, beauty, effect, and visual-stack implementations are
-// compiled through this established unit to keep platform manifests in sync.
+// Filter, plugin, beauty, effect, visual-stack, and native-effect
+// implementations are compiled through this established unit so all platform
+// manifests receive the same public runtime.
 #include "filter.cpp"
 #include "plugin.cpp"
 
@@ -26,3 +27,4 @@ void apply_effect_gpu(CommandEncoder&e,const Color*i,Color*o,std::uint32_t w,std
 #include "beauty_plugin.cpp"
 #include "effect_system.cpp"
 #include "visual_stack.cpp"
+#include "native_effects.cpp"
