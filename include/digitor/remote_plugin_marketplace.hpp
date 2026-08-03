@@ -14,7 +14,6 @@
 namespace digitor {
 
 enum class RemotePluginKind : std::uint32_t { filter, effect };
-enum class RemotePluginTier : std::uint32_t { free, paid };
 enum class RemotePluginBackend : std::uint32_t {
   windows_d3d12,
   windows_vulkan,
@@ -47,16 +46,15 @@ struct RemotePluginArtifact final {
   std::string package_path;
 };
 
+// DigitorEngine intentionally contains no free/paid, subscription, product,
+// purchase, trial, preview-right or export-right fields. Consumer apps own all
+// commercial policy and submit only operations they have already authorized.
 struct RemotePluginCatalogEntry final {
   std::string id;
   std::string display_name;
   std::string version;
   std::string minimum_engine_version;
   RemotePluginKind kind{RemotePluginKind::effect};
-  // Metadata only. DigitorEngine never interprets user plans, purchases,
-  // subscriptions or export rights. The consumer app owns those decisions.
-  RemotePluginTier tier{RemotePluginTier::free};
-  std::string product_id;
   std::string publisher_key_id;
   std::string signature;
   std::vector<RemotePluginParameter> parameters;
@@ -65,7 +63,7 @@ struct RemotePluginCatalogEntry final {
 };
 
 struct RemotePluginCatalog final {
-  std::uint32_t schema_version{1};
+  std::uint32_t schema_version{2};
   std::string catalog_id;
   std::string generated_at;
   std::vector<RemotePluginCatalogEntry> plugins;
@@ -77,7 +75,6 @@ struct RemotePluginInstallRecord final {
   std::string package_path;
   std::string sha256;
   RemotePluginKind kind{RemotePluginKind::effect};
-  RemotePluginTier tier{RemotePluginTier::free};
   RemotePluginInstallState state{RemotePluginInstallState::not_installed};
 };
 

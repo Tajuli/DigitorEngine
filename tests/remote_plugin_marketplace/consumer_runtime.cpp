@@ -17,10 +17,8 @@ int fail(const char* message) {
 int main() {
   using namespace digitor;
 
-  bool allow_paid_import = true;
-  bool allow_paid_preview = true;
-  bool allow_paid_export = false;
-  bool applied = false;
+  int preview_calls = 0;
+  int export_calls = 0;
   std::string applied_version;
 
   RemotePluginMarketplaceBindings marketplace_bindings{};
@@ -58,91 +56,68 @@ int main() {
   catalog.catalog_id = "digitor-official";
   catalog.generated_at = "2026-08-04T00:00:00Z";
 
-  auto make_entry = [](std::string id, RemotePluginTier tier) {
-    RemotePluginCatalogEntry entry{};
-    entry.id = std::move(id);
-    entry.display_name = entry.id;
-    entry.version = "1.0.0";
-    entry.minimum_engine_version = "5.0.0";
-    entry.kind = RemotePluginKind::effect;
-    entry.tier = tier;
-    entry.product_id = tier == RemotePluginTier::paid ? "product.pro" : "";
-    entry.publisher_key_id = "digitor";
-    entry.signature = "signed";
-    entry.parameters.push_back({"amount", "Amount", 0.0, 1.0, 0.5, true});
-    entry.artifacts.push_back({RemotePluginBackend::windows_d3d12,
-                               "https://plugins.example/plugin.digitorfx",
-                               std::string(64, 'a'), "shaders/effect.dxil"});
-    return entry;
-  };
-  catalog.plugins.push_back(make_entry("effect.free", RemotePluginTier::free));
-  catalog.plugins.push_back(make_entry("effect.paid", RemotePluginTier::paid));
+  RemotePluginCatalogEntry entry{};
+  entry.id = "effect.remote";
+  entry.display_name = "Remote Effect";
+  entry.version = "1.0.0";
+  entry.minimum_engine_version = "5.0.0";
+  entry.kind = RemotePluginKind::effect;
+  entry.publisher_key_id = "digitor";
+  entry.signature = "signed";
+  entry.parameters.push_back({"amount", "Amount", 0.0, 1.0, 0.5, true});
+  entry.artifacts.push_back({RemotePluginBackend::windows_d3d12,
+                             "https://plugins.example/plugin.digitorfx",
+                             std::string(64, 'a'), "shaders/effect.dxil"});
+  catalog.plugins.push_back(std::move(entry));
+
   std::string diagnostic;
   if (marketplace.load_catalog(std::move(catalog), &diagnostic) !=
       DIGITOR_RESULT_OK)
     return fail("catalog load failed");
 
   ConsumerPluginRuntimeBindings consumer_bindings{};
-  consumer_bindings.authorize = [&](const auto& entry,
-                                     ConsumerPluginOperation operation,
-                                     auto, std::string& diagnostic) {
-    if (entry.tier == RemotePluginTier::free) {
-      diagnostic.clear();
-      return true;
-    }
-    bool allowed = true;
-    if (operation == ConsumerPluginOperation::import_plugin)
-      allowed = allow_paid_import;
-    else if (operation == ConsumerPluginOperation::apply_preview)
-      allowed = allow_paid_preview;
-    else if (operation == ConsumerPluginOperation::apply_export)
-      allowed = allow_paid_export;
-    if (!allowed) diagnostic = "upgrade required";
-    return allowed;
-  };
-  consumer_bindings.apply_instance = [&](const auto& instance, auto,
+  consumer_bindings.apply_instance = [&](const auto& instance, auto surface,
                                           auto, std::string& diagnostic) {
-    applied = true;
+    if (surface == ConsumerPluginSurface::preview) ++preview_calls;
+    else ++export_calls;
     applied_version = instance.plugin_version;
     diagnostic.clear();
     return true;
   };
   ConsumerPluginRuntime runtime(marketplace, std::move(consumer_bindings));
 
-  if (!runtime.import_plugin("effect.free"))
-    return fail("app-authorized free plugin import failed");
-  if (!runtime.import_plugin("effect.paid"))
-    return fail("app-authorized paid plugin import failed");
+  if (!runtime.import_plugin("effect.remote"))
+    return fail("plugin import failed");
 
-  const auto paid_preview = runtime.apply("effect.paid", "instance.paid",
-                                          "clip.1", {{"amount", 0.7}},
-                                          ConsumerPluginSurface::preview);
-  if (!paid_preview || !applied || applied_version != "1.0.0")
-    return fail("app-authorized paid preview was blocked");
+  const auto preview = runtime.apply("effect.remote", "instance.preview",
+                                     "clip.1", {{"amount", 0.7}},
+                                     ConsumerPluginSurface::preview);
+  if (!preview || preview_calls != 1 || export_calls != 0 ||
+      applied_version != "1.0.0")
+    return fail("full preview request was not processed");
 
-  applied = false;
-  const auto blocked_export = runtime.apply(
-      "effect.paid", "instance.paid.export", "clip.1", {},
-      ConsumerPluginSurface::export_frame);
-  if (blocked_export || applied || blocked_export.diagnostic != "upgrade required")
-    return fail("app-denied paid export was not blocked");
+  // A free-user app can show its own small upgrade dialog and simply avoid
+  // sending an export request. The engine remains idle and policy-neutral.
+  if (export_calls != 0)
+    return fail("engine exported without an app request");
 
-  allow_paid_export = true;
-  const auto paid_export = runtime.apply(
-      "effect.paid", "instance.paid.export", "clip.1", {},
-      ConsumerPluginSurface::export_frame);
-  if (!paid_export || !applied)
-    return fail("app-authorized paid export was blocked");
+  // Once the app decides export is allowed, the identical plugin instance is
+  // processed normally. Engine behavior does not depend on commercial status.
+  const auto exported = runtime.apply("effect.remote", "instance.export",
+                                      "clip.1", {},
+                                      ConsumerPluginSurface::export_frame);
+  if (!exported || export_calls != 1)
+    return fail("app-submitted export request was not processed");
 
-  if (runtime.apply("effect.paid", "invalid", "clip.1",
+  if (runtime.apply("effect.remote", "invalid", "clip.1",
                     {{"amount", 2.0}}, ConsumerPluginSurface::preview))
     return fail("out-of-range parameter was accepted");
 
   std::cout << "CONSUMER_PLUGIN_QUALIFICATION=PASS\n";
-  std::cout << "APP_AUTHORITY=PASS\n";
-  std::cout << "PAID_PREVIEW_ALLOWED_BY_APP=PASS\n";
-  std::cout << "PAID_EXPORT_BLOCKED_BY_APP=PASS\n";
-  std::cout << "PAID_EXPORT_ALLOWED_BY_APP=PASS\n";
+  std::cout << "FULL_PREVIEW=PASS\n";
+  std::cout << "EXPORT_WITHOUT_APP_REQUEST=ZERO\n";
+  std::cout << "EXPORT_WITH_APP_REQUEST=PASS\n";
+  std::cout << "COMMERCIAL_POLICY_IN_ENGINE=NONE\n";
   std::cout << "PLUGIN_VERSION_PINNING=PASS\n";
   return 0;
 }

@@ -12,20 +12,12 @@
 namespace digitor {
 
 enum class ConsumerPluginSurface : std::uint32_t { preview, export_frame };
-enum class ConsumerPluginOperation : std::uint32_t {
-  browse,
-  import_plugin,
-  apply_preview,
-  apply_export,
-  remove
-};
 
 struct ConsumerPluginInstance final {
   std::string instance_id;
   std::string plugin_id;
   std::string plugin_version;
   RemotePluginKind kind{RemotePluginKind::effect};
-  RemotePluginTier tier{RemotePluginTier::free};
   std::unordered_map<std::string, double> parameters;
   bool enabled{true};
 };
@@ -33,18 +25,8 @@ struct ConsumerPluginInstance final {
 struct ConsumerPluginView final {
   RemotePluginCatalogEntry plugin;
   RemotePluginInstallState install_state{RemotePluginInstallState::not_installed};
-  bool visible{true};
-  bool import_allowed{};
-  bool preview_allowed{};
-  bool export_allowed{};
 };
 
-// DigitorEngine does not inspect subscriptions, purchases, plans or accounts.
-// The consumer app is authoritative and returns true when the requested
-// operation is allowed. Returning false blocks only that operation.
-using ConsumerPluginAuthorize = std::function<bool(
-    const RemotePluginCatalogEntry&, ConsumerPluginOperation,
-    std::string_view project_or_clip_id, std::string& diagnostic)>;
 using ConsumerPluginApply = std::function<bool(
     const ConsumerPluginInstance&, ConsumerPluginSurface,
     std::string_view project_or_clip_id, std::string& diagnostic)>;
@@ -53,7 +35,6 @@ using ConsumerPluginRemove = std::function<void(
     std::string_view project_or_clip_id)>;
 
 struct ConsumerPluginRuntimeBindings final {
-  ConsumerPluginAuthorize authorize;
   ConsumerPluginApply apply_instance;
   ConsumerPluginRemove remove_instance;
 };
@@ -65,6 +46,11 @@ struct ConsumerPluginApplyResult final {
   explicit operator bool() const noexcept { return result == DIGITOR_RESULT_OK; }
 };
 
+// The runtime processes every valid request identically. It does not know
+// whether a plugin or user is free, paid, subscribed, trial or locked. The
+// consumer app decides which requests to send. For example, the app may send
+// preview requests for all plugins while withholding an export request until
+// the user upgrades.
 class ConsumerPluginRuntime final {
  public:
   ConsumerPluginRuntime(RemotePluginMarketplace& marketplace,
@@ -87,10 +73,6 @@ class ConsumerPluginRuntime final {
   std::vector<ConsumerPluginInstance> instances() const;
 
  private:
-  bool authorized(const RemotePluginCatalogEntry& entry,
-                  ConsumerPluginOperation operation,
-                  std::string_view project_or_clip_id,
-                  std::string& diagnostic) const;
   bool validate_parameters(
       const RemotePluginCatalogEntry& entry,
       const std::unordered_map<std::string, double>& parameters,

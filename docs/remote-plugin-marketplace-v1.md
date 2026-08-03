@@ -1,39 +1,40 @@
-# Digitor Remote Filter and Effects Marketplace v1
+# Digitor Remote Filter and Effects Marketplace v2
 
 DigitorEngine supports signed `.digitorfx` filter/effect packages published through an approved website or GitHub-backed catalog. Normal plugins can be added, imported and applied without editing or rebuilding engine source.
 
-## Authority boundary
+## Strict authority boundary
 
-The consumer app is the only authority for user plans, subscriptions, purchases, trials, preview rights and export rights.
+DigitorEngine has no concept of free or paid plugins, free or paid users, subscriptions, purchases, trials, preview rights or export rights.
 
-DigitorEngine does **not**:
+The engine catalog and runtime contain no:
 
-- identify free or paid users;
-- validate subscriptions or purchases;
-- contact Google Play, App Store, Stripe or a licensing server;
-- decide whether a paid plugin may preview or export;
-- show upgrade UI.
+- `tier` field;
+- `product_id` field;
+- subscription or purchase verifier;
+- preview/export authorization callback;
+- upgrade-dialog logic.
 
-The catalog `tier` and `product_id` fields are metadata for the app. For each browse, import, preview, export or remove operation, the app returns an authorization decision through `ConsumerPluginAuthorize`. When the app allows the operation, the engine continues. When the app denies it, the engine stops before invoking the apply/export callback and returns the app-provided diagnostic.
+The Digitor app owns all commercial metadata and policy outside DigitorEngine.
 
-Example Digitor app policy:
+## Requested application policy
+
+The app may implement this behavior:
 
 ```text
-Free plugin + any user:
-  import = allow
-  preview = allow
-  export = allow
+Free user + commercially paid plugin:
+  import plugin
+  send full preview requests to engine
+  show a small upgrade dialog in app UI
+  do not send an export request to engine
 
-Paid plugin + free user:
-  import = allow
-  preview = allow
-  export = deny ("upgrade required")
-
-Paid plugin + subscribed user:
-  import = allow
-  preview = allow
-  export = allow
+Subscribed user:
+  send preview requests to engine
+  send export requests to engine
 ```
+
+From the engine's perspective these are ordinary plugin requests. If the app sends a valid preview or export request, the engine processes it normally. If the app sends no export request, the engine performs no export work.
+
+The small preview upgrade dialog is an app overlay. It is not rendered by DigitorEngine and does not modify the plugin output.
 
 ## Runtime flow
 
@@ -44,11 +45,27 @@ Approved website / GitHub catalog
   -> SHA-256 verification
   -> atomic package installation
   -> runtime registration
-  -> consumer app authorization
-  -> preview or export apply callback
+  -> app submits preview/export request
+  -> engine processes request normally
 ```
 
-The engine still enforces technical and security requirements: trusted catalog signatures, package hashes, engine/backend compatibility, parameter ranges, revocation, exact installed version pinning, package limits and prohibition of downloaded native executables.
+The engine continues to enforce only technical and security requirements:
+
+- trusted publisher signatures;
+- package hashes;
+- engine/backend compatibility;
+- parameter ranges;
+- revocation;
+- exact installed-version pinning;
+- package size/path limits;
+- no downloaded native DLL/SO/dylib execution;
+- no silent backend or CPU fallback after backend selection.
+
+## Catalog schema v2
+
+Schema v2 intentionally excludes all commercial fields. A catalog entry contains identity, version, kind, publisher trust, parameter declarations and backend artifacts only.
+
+Commercial labels, prices, purchase IDs and subscription requirements belong in the Digitor app's own marketplace/catalog model and may reference the engine plugin ID.
 
 ## Package layout
 
@@ -75,10 +92,11 @@ Create shader + declarative manifest
   -> build backend artifacts
   -> sign package/catalog entry
   -> upload to approved website or GitHub Release
-  -> update catalog
+  -> update engine plugin catalog
+  -> update app commercial metadata when needed
   -> Digitor app discovers/imports package
-  -> app authorizes preview/export
+  -> app decides which requests to submit
   -> engine applies plugin
 ```
 
-No engine source change or app release is required for a normal plugin that stays within the generic single/multi-pass runtime contract.
+No engine source change is required for a normal plugin that stays within the generic single/multi-pass runtime contract.

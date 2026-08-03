@@ -61,11 +61,9 @@ std::string canonical_remote_plugin_payload(
     const RemotePluginCatalogEntry& entry) {
   std::ostringstream out;
   out.imbue(std::locale::classic());
-  out << "digitor-plugin-v1\n" << entry.id << '\n' << entry.version << '\n'
+  out << "digitor-plugin-v2\n" << entry.id << '\n' << entry.version << '\n'
       << entry.minimum_engine_version << '\n'
-      << static_cast<std::uint32_t>(entry.kind) << '\n'
-      << static_cast<std::uint32_t>(entry.tier) << '\n'
-      << entry.product_id << '\n';
+      << static_cast<std::uint32_t>(entry.kind) << '\n';
   for (const auto& parameter : entry.parameters) {
     out << parameter.id << '|' << parameter.minimum << '|'
         << parameter.maximum << '|' << parameter.default_value << '|'
@@ -86,11 +84,6 @@ bool validate_remote_plugin_catalog_entry(
       !valid_token(entry.minimum_engine_version) ||
       !valid_token(entry.publisher_key_id) || entry.display_name.empty()) {
     diagnostic = "remote plugin identity metadata is invalid";
-    return false;
-  }
-  if (entry.tier == RemotePluginTier::paid &&
-      !valid_token(entry.product_id)) {
-    diagnostic = "paid remote plugin requires a valid product id";
     return false;
   }
   if (entry.signature.empty() || entry.signature.size() > 1024) {
@@ -130,7 +123,7 @@ RemotePluginMarketplace::RemotePluginMarketplace(
 DigitorResult RemotePluginMarketplace::load_catalog(
     RemotePluginCatalog catalog, std::string* diagnostic) {
   std::string local;
-  if (catalog.schema_version != 1 || catalog.catalog_id.empty() ||
+  if (catalog.schema_version != 2 || catalog.catalog_id.empty() ||
       catalog.plugins.size() > 4096) {
     local = "remote plugin catalog header is invalid";
     if (diagnostic) *diagnostic = local;
@@ -225,7 +218,6 @@ RemotePluginOperationResult RemotePluginMarketplace::install_impl(
   record.package_path = std::move(installed_path);
   record.sha256 = artifact->sha256;
   record.kind = entry.kind;
-  record.tier = entry.tier;
   record.state = RemotePluginInstallState::installed;
   installed_[entry.id] = record;
 

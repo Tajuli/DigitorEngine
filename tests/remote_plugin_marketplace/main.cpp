@@ -12,8 +12,7 @@ int fail(const char* message) {
 }
 
 digitor::RemotePluginCatalogEntry make_entry(
-    std::string id, digitor::RemotePluginKind kind,
-    digitor::RemotePluginTier tier, std::string product = {}) {
+    std::string id, digitor::RemotePluginKind kind) {
   using namespace digitor;
   RemotePluginCatalogEntry entry{};
   entry.id = std::move(id);
@@ -21,8 +20,6 @@ digitor::RemotePluginCatalogEntry make_entry(
   entry.version = "1.0.0";
   entry.minimum_engine_version = "5.0.0";
   entry.kind = kind;
-  entry.tier = tier;
-  entry.product_id = std::move(product);
   entry.publisher_key_id = "digitor-official";
   entry.signature = "valid-signature";
   entry.parameters.push_back({"amount", "Amount", 0.0, 1.0, 0.5, true});
@@ -39,8 +36,13 @@ int main() {
   RemotePluginMarketplaceBindings bindings{};
   bindings.engine_version = "5.1.0";
   bindings.backend = RemotePluginBackend::windows_d3d12;
-  bindings.verify_signature = [](auto, auto, auto signature, std::string& d) {
-    if (signature != "valid-signature") { d = "signature rejected"; return false; }
+  bindings.verify_signature = [](auto, auto payload, auto signature,
+                                  std::string& diagnostic) {
+    if (payload.find("digitor-plugin-v2") == std::string_view::npos ||
+        signature != "valid-signature") {
+      diagnostic = "signature rejected";
+      return false;
+    }
     return true;
   };
   bindings.download = [](auto, std::vector<std::byte>& bytes, std::string&) {
@@ -59,38 +61,33 @@ int main() {
   RemotePluginMarketplace marketplace(bindings);
   RemotePluginCatalog catalog{};
   catalog.catalog_id = "digitor-official-stable";
-  catalog.plugins.push_back(make_entry("filter.remote_free",
-                                       RemotePluginKind::filter,
-                                       RemotePluginTier::free));
-  catalog.plugins.push_back(make_entry("effect.remote_paid",
-                                       RemotePluginKind::effect,
-                                       RemotePluginTier::paid,
-                                       "effect.remote_paid.lifetime"));
+  catalog.plugins.push_back(make_entry("filter.remote_a",
+                                       RemotePluginKind::filter));
+  catalog.plugins.push_back(make_entry("effect.remote_b",
+                                       RemotePluginKind::effect));
   std::string diagnostic;
   if (marketplace.load_catalog(catalog, &diagnostic) != DIGITOR_RESULT_OK)
     return fail("catalog load failed");
-  if (!marketplace.install("filter.remote_free"))
-    return fail("free filter install failed");
+  if (!marketplace.install("filter.remote_a"))
+    return fail("filter install failed");
+  if (!marketplace.install("effect.remote_b"))
+    return fail("effect install failed");
   if (!registered || marketplace.available(RemotePluginKind::filter).size() != 1)
-    return fail("free filter was not registered");
-  // Tier is catalog metadata only. The consumer app decides whether this call
-  // is made; the engine performs no subscription or purchase verification.
-  if (!marketplace.install("effect.remote_paid"))
-    return fail("app-authorized paid effect install failed");
-  if (marketplace.uninstall("effect.remote_paid", &diagnostic) != DIGITOR_RESULT_OK)
-    return fail("paid effect uninstall failed");
+    return fail("plugin was not registered");
+  if (marketplace.uninstall("effect.remote_b", &diagnostic) != DIGITOR_RESULT_OK)
+    return fail("effect uninstall failed");
 
   auto revoked = catalog;
   revoked.plugins[0].revoked = true;
   if (marketplace.load_catalog(revoked, &diagnostic) != DIGITOR_RESULT_OK)
     return fail("revocation catalog failed");
-  const auto record = marketplace.installed("filter.remote_free");
+  const auto record = marketplace.installed("filter.remote_a");
   if (!record || record->state != RemotePluginInstallState::revoked)
     return fail("installed plugin was not marked revoked");
 
   std::cout << "QUALIFICATION=PASS\n";
-  std::cout << "APP_AUTHORITY=PASS\n";
-  std::cout << "ENGINE_ENTITLEMENT_CHECK=NONE\n";
+  std::cout << "CATALOG_SCHEMA=2\n";
+  std::cout << "COMMERCIAL_POLICY_FIELDS=NONE\n";
   std::cout << "SIGNATURE_HASH_REVOCATION=PASS\n";
   std::cout << "ENGINE_SOURCE_EDIT_FOR_NEW_PLUGIN=NOT_REQUIRED\n";
   return 0;
