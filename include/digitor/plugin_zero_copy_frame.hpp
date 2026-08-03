@@ -79,14 +79,6 @@ struct PluginZeroCopyBindings final {
 
 class PluginZeroCopyFrameRuntime final {
  public:
-  explicit PluginZeroCopyFrameRuntime(PluginZeroCopyBindings bindings);
-
-  [[nodiscard]] DigitorResult process(
-      const PluginZeroCopyRequest& request,
-      std::string* diagnostic = nullptr) noexcept;
-  [[nodiscard]] PluginZeroCopyTelemetry telemetry() const;
-
- private:
   struct ParityRecord final {
     std::string stack_digest;
     std::string plugin_id;
@@ -98,6 +90,14 @@ class PluginZeroCopyFrameRuntime final {
     PluginAlphaMode alpha{PluginAlphaMode::straight};
   };
 
+  explicit PluginZeroCopyFrameRuntime(PluginZeroCopyBindings bindings);
+
+  [[nodiscard]] DigitorResult process(
+      const PluginZeroCopyRequest& request,
+      std::string* diagnostic = nullptr) noexcept;
+  [[nodiscard]] PluginZeroCopyTelemetry telemetry() const;
+
+ private:
   bool validate_request(const PluginZeroCopyRequest&,
                         std::string& diagnostic) const noexcept;
   bool validate_parity(const PluginZeroCopyRequest&,
