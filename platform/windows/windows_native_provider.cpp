@@ -15,6 +15,13 @@ NativeImplementationEvidence evidence(std::string identity) {
   return out;
 }
 
+bool timeline_host_valid(const ProductionTimelineGpuHost& host) {
+  return host.backend != DIGITOR_RENDERER_CPU && host.context_identity != nullptr &&
+         host.working_format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+         !host.device_identity.empty() && host.create_target &&
+         host.execute_effects && host.composite_layer && host.frame_evictable;
+}
+
 }  // namespace
 
 WindowsNativeProviderValidation validate_windows_native_provider_inputs(
@@ -28,7 +35,7 @@ WindowsNativeProviderValidation validate_windows_native_provider_inputs(
     return {DIGITOR_RESULT_UNSUPPORTED,
             "Windows provider requires D3D12 or Vulkan timeline backend"};
   }
-  if (!inputs.timeline.valid()) {
+  if (!timeline_host_valid(inputs.timeline)) {
     return {DIGITOR_RESULT_NOT_INITIALIZED,
             "Windows production timeline host is incomplete"};
   }
