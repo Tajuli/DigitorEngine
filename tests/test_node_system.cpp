@@ -1,9 +1,11 @@
 #include "digitor/production_node_graph.hpp"
 #include "digitor/native_node_backend_runtime.hpp"
 #include "digitor/native_node_pipeline_runtime.hpp"
+#include "digitor/filter.hpp"
 
 #include <cassert>
 #include <cmath>
+#include <set>
 #include <vector>
 
 namespace {
@@ -13,6 +15,56 @@ bool near(float a,float b,float e=1.0e-6f){return std::abs(a-b)<=e;}
 void test_node_system() {
   using namespace digitor;
   const std::vector<Color> source{{1,0,0,1},{0,1,0,1},{1,0,0,1},{0,1,0,1}};
+
+  // Clean-room short-form-editor-style filter library: stable IDs, categories,
+  // intensity mixing, stacking, serialization, alpha preservation, and
+  // CPU/GPU command-path parity.
+  FilterRegistry filters;
+  assert(filters.presets().size() >= 28);
+  std::set<std::string> filter_ids;
+  for (const auto& preset : filters.presets()) {
+    assert(!preset.id.empty() && !preset.name.empty());
+    assert(filter_ids.insert(preset.id).second);
+  }
+  assert(filters.find("cinema_warm"));
+  assert(filters.find("teal_amber"));
+  assert(filters.find("skin_glow"));
+  assert(filters.find("neon_city"));
+  assert(!filters.category(FilterCategory::cinematic).empty());
+  assert(!filters.category(FilterCategory::portrait).empty());
+
+  const Color filter_input{0.25f,0.5f,0.75f,0.37f};
+  const auto* warm_filter=filters.find("cinema_warm");
+  assert(warm_filter);
+  const auto bypassed=apply_filter(filter_input,*warm_filter,0.0f);
+  assert(near(bypassed.r,filter_input.r)&&near(bypassed.g,filter_input.g)&&near(bypassed.b,filter_input.b));
+  const auto filtered=apply_filter(filter_input,*warm_filter,1.0f);
+  assert(!near(filtered.r,filter_input.r)||!near(filtered.g,filter_input.g)||!near(filtered.b,filter_input.b));
+  assert(near(filtered.a,filter_input.a));
+
+  FilterStack filter_stack;
+  assert(filter_stack.add({"cinema_warm",0.65f,true}));
+  assert(filter_stack.add({"soft_fade",0.25f,true}));
+  assert(filter_stack.add({"mono_soft",0.0f,true}));
+  const auto serialized_filters=filter_stack.serialize();
+  const auto restored_filters=FilterStack::deserialize(serialized_filters);
+  assert(restored_filters&&restored_filters->entries().size()==3);
+  std::array<Color,2> filter_source{{filter_input,{0.8f,0.2f,0.1f,0.8f}}};
+  std::array<Color,2> cpu_filter_output{},gpu_filter_output{};
+  apply_filter_stack_cpu(filter_source.data(),cpu_filter_output.data(),filter_source.size(),filters,*restored_filters);
+  CommandBuffer filter_commands;
+  CommandEncoder filter_encoder(filter_commands);
+  apply_filter_stack_gpu(filter_encoder,filter_source.data(),gpu_filter_output.data(),filter_source.size(),filters,*restored_filters);
+  filter_encoder.finish();
+  CommandQueue filter_queue;
+  filter_queue.submit(filter_commands);
+  for(std::size_t i=0;i<filter_source.size();++i){
+    assert(near(cpu_filter_output[i].r,gpu_filter_output[i].r));
+    assert(near(cpu_filter_output[i].g,gpu_filter_output[i].g));
+    assert(near(cpu_filter_output[i].b,gpu_filter_output[i].b));
+    assert(near(cpu_filter_output[i].a,filter_source[i].a));
+  }
+  assert(!FilterStack::deserialize("invalid"));
 
   PrimaryWheelsDescriptor wheels_desc;
   wheels_desc.offset={0.4f,0.0f,0.0f};
