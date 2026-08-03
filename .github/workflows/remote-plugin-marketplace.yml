@@ -1,0 +1,48 @@
+name: Remote Filter Effects Marketplace
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/remote_plugin_marketplace.hpp'
+      - 'include/digitor/consumer_plugin_runtime.hpp'
+      - 'src/plugin/remote_plugin_marketplace.cpp'
+      - 'src/plugin/consumer_plugin_runtime.cpp'
+      - 'tests/remote_plugin_marketplace/**'
+      - 'docs/remote-plugin-marketplace-v1.md'
+      - '.github/workflows/remote-plugin-marketplace.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/remote_plugin_marketplace -B build/remote-plugin-marketplace -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/remote-plugin-marketplace --config Release --parallel 2
+      - name: Qualify marketplace on Unix
+        if: runner.os != 'Windows'
+        run: build/remote-plugin-marketplace/digitor_remote_plugin_marketplace_qualification | tee remote-plugin-marketplace.log
+      - name: Qualify marketplace on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/remote-plugin-marketplace/Release/digitor_remote_plugin_marketplace_qualification.exe | Tee-Object -FilePath remote-plugin-marketplace.log
+      - name: Qualify consumer authorization on Unix
+        if: runner.os != 'Windows'
+        run: build/remote-plugin-marketplace/digitor_consumer_plugin_runtime_qualification | tee consumer-plugin-runtime.log
+      - name: Qualify consumer authorization on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/remote-plugin-marketplace/Release/digitor_consumer_plugin_runtime_qualification.exe | Tee-Object -FilePath consumer-plugin-runtime.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-plugin-marketplace-${{ runner.os }}
+          path: |
+            remote-plugin-marketplace.log
+            consumer-plugin-runtime.log
+          if-no-files-found: error
