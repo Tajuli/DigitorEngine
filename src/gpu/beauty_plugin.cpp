@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 namespace digitor {
 namespace {
