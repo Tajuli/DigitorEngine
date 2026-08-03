@@ -1,0 +1,37 @@
+name: Plugin Zero-Copy Frame Contract
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_zero_copy_frame.hpp'
+      - 'src/plugin/plugin_zero_copy_frame.cpp'
+      - 'tests/plugin_zero_copy_frame/**'
+      - 'docs/plugin-zero-copy-frame-v1.md'
+      - '.github/workflows/plugin-zero-copy-frame.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_zero_copy_frame -B build/plugin-zero-copy-frame -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-zero-copy-frame --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-zero-copy-frame/digitor_plugin_zero_copy_frame_qualification | tee plugin-zero-copy-frame.log
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-zero-copy-frame/Release/digitor_plugin_zero_copy_frame_qualification.exe | Tee-Object -FilePath plugin-zero-copy-frame.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zero-copy-frame-${{ runner.os }}
+          path: plugin-zero-copy-frame.log
+          if-no-files-found: error
