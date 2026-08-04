@@ -1,0 +1,1 @@
+This qualification verifies one app-facing dispatch façade for filter, effect and transition packages, strict single-input versus two-input routing, preview/export surface preservation, and failure when a required runtime binding is unavailable.
