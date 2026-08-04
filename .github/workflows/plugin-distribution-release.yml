@@ -1,0 +1,32 @@
+name: Plugin Distribution Release Pipeline
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_distribution_release.hpp'
+      - 'src/plugin/plugin_distribution_release.cpp'
+      - 'tests/plugin_distribution_release/**'
+      - '.github/workflows/plugin-distribution-release.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_distribution_release -B build/plugin-distribution-release -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-distribution-release --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-distribution-release/digitor_plugin_distribution_release_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-distribution-release/Release/digitor_plugin_distribution_release_qualification.exe
