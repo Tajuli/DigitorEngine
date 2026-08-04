@@ -1,0 +1,36 @@
+name: Imported Plugin Physical Qualification Contract
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/imported_plugin_physical_qualification.hpp'
+      - 'src/plugin/imported_plugin_physical_qualification.cpp'
+      - 'tests/imported_plugin_physical_qualification/**'
+      - '.github/workflows/imported-plugin-physical-qualification.yml'
+  workflow_dispatch:
+
+jobs:
+  contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/imported_plugin_physical_qualification -B build/imported-plugin-physical-qualification -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/imported-plugin-physical-qualification --config Release --parallel 2
+      - name: Verify contract on Unix
+        if: runner.os != 'Windows'
+        run: build/imported-plugin-physical-qualification/digitor_imported_plugin_physical_qualification | tee imported-plugin-physical-qualification.log
+      - name: Verify contract on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/imported-plugin-physical-qualification/Release/digitor_imported_plugin_physical_qualification.exe | Tee-Object -FilePath imported-plugin-physical-qualification.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imported-plugin-physical-contract-${{ runner.os }}
+          path: imported-plugin-physical-qualification.log
+          if-no-files-found: error
