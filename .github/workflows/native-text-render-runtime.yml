@@ -1,0 +1,26 @@
+name: Native Text Render Runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/native_text_render_runtime -B build/native-text-render -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/native-text-render --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/native-text-render/digitor_native_text_render_runtime
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/native-text-render/Release/digitor_native_text_render_runtime.exe
