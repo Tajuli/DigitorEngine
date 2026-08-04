@@ -1,6 +1,7 @@
 #include "digitor/plugin_catalog_metadata.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <set>
 #include <tuple>
