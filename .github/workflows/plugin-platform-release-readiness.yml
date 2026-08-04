@@ -1,0 +1,27 @@
+name: Plugin Platform Release Readiness
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_platform_release_readiness.hpp'
+      - 'src/plugin/plugin_platform_release_readiness.cpp'
+      - 'tests/plugin_platform_release_readiness/**'
+      - '.github/workflows/plugin-platform-release-readiness.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_platform_release_readiness -B build/plugin-platform-release-readiness -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-platform-release-readiness --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-platform-release-readiness/digitor_plugin_platform_release_readiness
+      - if: runner.os == 'Windows'
+        run: build/plugin-platform-release-readiness/Release/digitor_plugin_platform_release_readiness.exe
