@@ -1,0 +1,1 @@
+This qualification verifies signed package validation, path traversal and expansion-bomb rejection, executable payload blocking, revocation enforcement, staged activation and rollback after activation failure.
