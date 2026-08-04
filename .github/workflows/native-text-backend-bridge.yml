@@ -1,0 +1,30 @@
+name: Native Text Backend Bridge
+
+on:
+  pull_request:
+    paths:
+      - "include/digitor/native_text_backend_bridge.hpp"
+      - "src/text/native_text_backend_bridge.cpp"
+      - "src/text/native_text_render_runtime.cpp"
+      - "tests/native_text_backend_bridge/**"
+      - ".github/workflows/native-text-backend-bridge.yml"
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/native_text_backend_bridge -B build/native-text-backend -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/native-text-backend --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/native-text-backend/digitor_native_text_backend_bridge
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/native-text-backend/Release/digitor_native_text_backend_bridge.exe
