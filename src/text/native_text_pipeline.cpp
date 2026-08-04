@@ -14,18 +14,36 @@ std::vector<std::uint32_t> decode_utf8(const std::string& value) {
   for (std::size_t i = 0; i < value.size();) {
     const auto c = static_cast<unsigned char>(value[i]);
     std::uint32_t cp{};
+    std::uint32_t minimum{};
     std::size_t n{};
-    if (c < 0x80u) { cp = c; n = 1; }
-    else if ((c & 0xe0u) == 0xc0u) { cp = c & 0x1fu; n = 2; }
-    else if ((c & 0xf0u) == 0xe0u) { cp = c & 0x0fu; n = 3; }
-    else if ((c & 0xf8u) == 0xf0u) { cp = c & 0x07u; n = 4; }
-    else { throw std::invalid_argument("invalid UTF-8 lead byte"); }
+    if (c < 0x80u) {
+      cp = c;
+      minimum = 0;
+      n = 1;
+    } else if ((c & 0xe0u) == 0xc0u) {
+      cp = c & 0x1fu;
+      minimum = 0x80u;
+      n = 2;
+    } else if ((c & 0xf0u) == 0xe0u) {
+      cp = c & 0x0fu;
+      minimum = 0x800u;
+      n = 3;
+    } else if ((c & 0xf8u) == 0xf0u) {
+      cp = c & 0x07u;
+      minimum = 0x10000u;
+      n = 4;
+    } else {
+      throw std::invalid_argument("invalid UTF-8 lead byte");
+    }
     if (i + n > value.size()) throw std::invalid_argument("truncated UTF-8");
     for (std::size_t j = 1; j < n; ++j) {
       const auto cc = static_cast<unsigned char>(value[i + j]);
       if ((cc & 0xc0u) != 0x80u) throw std::invalid_argument("invalid UTF-8 continuation");
       cp = (cp << 6u) | (cc & 0x3fu);
     }
+    if (cp < minimum) throw std::invalid_argument("overlong UTF-8 sequence");
+    if (cp >= 0xd800u && cp <= 0xdfffu) throw std::invalid_argument("UTF-8 surrogate code point");
+    if (cp > 0x10ffffu) throw std::invalid_argument("UTF-8 code point out of range");
     out.push_back(cp);
     i += n;
   }
@@ -72,7 +90,7 @@ struct GlyphKeyHash {
 }  // namespace
 
 struct NativeTextPipeline::Impl {
-  explicit Impl(std::uint32_t atlas_width, std::uint32_t atlas_height)
+  Impl(std::uint32_t atlas_width, std::uint32_t atlas_height)
       : width(atlas_width), height(atlas_height) {}
 
   std::uint32_t width;
@@ -100,9 +118,12 @@ struct NativeTextPipeline::Impl {
       ++generation;
     }
     AtlasEntry entry;
-    entry.x = cursor_x; entry.y = cursor_y;
-    entry.width = bitmap.width; entry.height = bitmap.height;
-    entry.u0 = float(entry.x) / float(width); entry.v0 = float(entry.y) / float(height);
+    entry.x = cursor_x;
+    entry.y = cursor_y;
+    entry.width = bitmap.width;
+    entry.height = bitmap.height;
+    entry.u0 = float(entry.x) / float(width);
+    entry.v0 = float(entry.y) / float(height);
     entry.u1 = float(entry.x + entry.width) / float(width);
     entry.v1 = float(entry.y + entry.height) / float(height);
     cursor_x += bitmap.width + 1u;
@@ -178,7 +199,12 @@ TextDrawPacket NativeTextPipeline::prepare(const ShapingRequest& request, const 
 
 std::uint32_t NativeTextPipeline::atlas_generation() const noexcept { return impl_->generation; }
 std::size_t NativeTextPipeline::cached_glyphs() const noexcept { return impl_->cache.size(); }
-void NativeTextPipeline::clear() { impl_->cache.clear(); ++impl_->generation; impl_->cursor_x = impl_->cursor_y = 1; impl_->row_height = 0; }
+void NativeTextPipeline::clear() {
+  impl_->cache.clear();
+  ++impl_->generation;
+  impl_->cursor_x = impl_->cursor_y = 1;
+  impl_->row_height = 0;
+}
 
 bool native_text_dependencies_available() noexcept {
 #if defined(DIGITOR_HAS_FREETYPE) && defined(DIGITOR_HAS_HARFBUZZ)
