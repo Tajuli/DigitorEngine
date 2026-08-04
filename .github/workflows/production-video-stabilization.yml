@@ -1,0 +1,31 @@
+name: Production Video Stabilization
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_video_stabilization.hpp'
+      - 'src/gpu/production_video_stabilization.cpp'
+      - 'tests/production_video_stabilization/**'
+      - '.github/workflows/production-video-stabilization.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_video_stabilization -B build/stabilization -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/stabilization --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/stabilization/digitor_production_video_stabilization
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/stabilization/Release/digitor_production_video_stabilization.exe
