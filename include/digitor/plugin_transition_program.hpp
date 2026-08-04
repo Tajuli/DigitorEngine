@@ -10,7 +10,7 @@ namespace digitor {
 struct PluginTransitionProgramBinding final {
   const PluginGpuProgramRegistry* registry{};
   RemotePluginBackend selected_backend{RemotePluginBackend::windows_d3d12};
-  PluginGpuRecordPass record_pass;
+  PluginTransitionRecord record;
 };
 
 class PluginTransitionProgramRuntime final {
