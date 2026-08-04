@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/digitor.h"
+#include "digitor/plugin_parameter_schema.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +38,7 @@ struct RemotePluginParameter final {
   double maximum{1.0};
   double default_value{};
   bool keyframeable{true};
+  PluginParameterUiSchema ui;
 };
 
 struct RemotePluginArtifact final {
