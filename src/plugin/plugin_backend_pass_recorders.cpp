@@ -19,9 +19,7 @@ bool valid_dispatch(const PluginNativeDispatch& value,
     diagnostic = "plugin backend native dispatch identity or geometry is invalid";
     return false;
   }
-  if (value.input.backend != bindings.selected_backend ||
-      value.output.backend != bindings.selected_backend ||
-      value.input.format != value.output.format ||
+  if (value.input.format != value.output.format ||
       value.input.width != value.output.width ||
       value.input.height != value.output.height ||
       value.input.synchronization_handle == 0 ||
