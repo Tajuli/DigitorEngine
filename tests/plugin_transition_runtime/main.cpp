@@ -12,11 +12,14 @@ int fail(const char* message) {
 digitor::PluginGpuFrame frame(std::uint64_t texture) {
   digitor::PluginGpuFrame value{};
   value.backend = digitor::RemotePluginBackend::windows_d3d12;
-  value.device_identity = 77;
   value.native_texture_handle = texture;
   value.width = 1920;
   value.height = 1080;
   value.format = digitor::PluginPixelFormat::rgba16_float;
+  value.primaries = digitor::PluginColorPrimaries::bt2020;
+  value.transfer = digitor::PluginTransferFunction::pq;
+  value.range = digitor::PluginColorRange::full;
+  value.alpha = digitor::PluginAlphaMode::straight;
   return value;
 }
 }  // namespace
@@ -73,6 +76,11 @@ int main() {
   request.incoming.backend = RemotePluginBackend::windows_vulkan;
   if (runtime.dispatch(request, &diagnostic) == DIGITOR_RESULT_OK)
     return fail("mixed backend transition was accepted");
+
+  request.incoming = frame(11);
+  request.incoming.transfer = PluginTransferFunction::hlg;
+  if (runtime.dispatch(request, &diagnostic) == DIGITOR_RESULT_OK)
+    return fail("mixed color contract transition was accepted");
 
   std::cout << "PLUGIN_TRANSITION_RUNTIME_QUALIFIED=1\n";
   std::cout << "CPU_READBACKS=0\nCPU_UPLOADS=0\nFALLBACK_DISPATCHES=0\n";
