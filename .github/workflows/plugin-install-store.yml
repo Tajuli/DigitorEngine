@@ -1,0 +1,32 @@
+name: Plugin Installation Persistence
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_install_store.hpp'
+      - 'src/plugin/plugin_install_store.cpp'
+      - 'tests/plugin_install_store/**'
+      - '.github/workflows/plugin-install-store.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_install_store -B build/plugin-install-store -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-install-store --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-install-store/digitor_plugin_install_store_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-install-store/Release/digitor_plugin_install_store_qualification.exe
