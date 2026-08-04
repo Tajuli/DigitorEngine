@@ -1,0 +1,33 @@
+name: Text Project Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/text_project_runtime.hpp'
+      - 'include/digitor/text_project_runtime_c.h'
+      - 'src/editor/text_project_runtime.cpp'
+      - 'src/ffi/text_project_runtime_c_api.cpp'
+      - 'tests/text_project_runtime/**'
+      - '.github/workflows/text-project-runtime.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/text_project_runtime -B build/text-project-runtime -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/text-project-runtime --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/text-project-runtime/digitor_text_project_runtime
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/text-project-runtime/Release/digitor_text_project_runtime.exe
