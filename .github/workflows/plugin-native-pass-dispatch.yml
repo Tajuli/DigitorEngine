@@ -1,0 +1,36 @@
+name: Plugin Native Pass Dispatch
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_native_pass_dispatch.hpp'
+      - 'src/plugin/plugin_native_pass_dispatch.cpp'
+      - 'tests/plugin_native_pass_dispatch/**'
+      - '.github/workflows/plugin-native-pass-dispatch.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_native_pass_dispatch -B build/plugin-native-pass-dispatch -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-native-pass-dispatch --config Release --parallel 2
+      - name: Qualify on Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-native-pass-dispatch/digitor_plugin_native_pass_dispatch_qualification | tee plugin-native-pass-dispatch.log
+      - name: Qualify on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-native-pass-dispatch/Release/digitor_plugin_native_pass_dispatch_qualification.exe | Tee-Object -FilePath plugin-native-pass-dispatch.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-native-pass-dispatch-${{ runner.os }}
+          path: plugin-native-pass-dispatch.log
+          if-no-files-found: error
