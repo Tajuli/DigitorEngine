@@ -13,7 +13,7 @@
 
 namespace digitor {
 
-enum class RemotePluginKind : std::uint32_t { filter, effect };
+enum class RemotePluginKind : std::uint32_t { filter, effect, transition };
 enum class RemotePluginBackend : std::uint32_t {
   windows_d3d12,
   windows_vulkan,
