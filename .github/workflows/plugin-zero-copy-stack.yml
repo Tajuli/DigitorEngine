@@ -1,0 +1,45 @@
+name: Plugin Zero-Copy Stack Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_zero_copy_frame.hpp'
+      - 'include/digitor/plugin_zero_copy_stack.hpp'
+      - 'src/plugin/plugin_zero_copy_frame.cpp'
+      - 'src/plugin/plugin_zero_copy_stack.cpp'
+      - 'tests/plugin_zero_copy_frame/**'
+      - 'tests/plugin_zero_copy_stack/**'
+      - '.github/workflows/plugin-zero-copy-stack.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure stack qualification
+        run: cmake -S tests/plugin_zero_copy_stack -B build/plugin-zero-copy-stack -DCMAKE_BUILD_TYPE=Release
+      - name: Build stack qualification
+        run: cmake --build build/plugin-zero-copy-stack --config Release --parallel 2
+      - name: Qualify stack on Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-zero-copy-stack/digitor_plugin_zero_copy_stack_qualification
+      - name: Qualify stack on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-zero-copy-stack/Release/digitor_plugin_zero_copy_stack_qualification.exe
+      - name: Configure frame regression
+        run: cmake -S tests/plugin_zero_copy_frame -B build/plugin-zero-copy-frame -DCMAKE_BUILD_TYPE=Release
+      - name: Build frame regression
+        run: cmake --build build/plugin-zero-copy-frame --config Release --parallel 2
+      - name: Qualify frame regression on Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-zero-copy-frame/digitor_plugin_zero_copy_frame_qualification
+      - name: Qualify frame regression on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-zero-copy-frame/Release/digitor_plugin_zero_copy_frame_qualification.exe

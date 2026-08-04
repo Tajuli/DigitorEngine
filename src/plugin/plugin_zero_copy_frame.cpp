@@ -12,6 +12,11 @@ bool same_encoding(const PluginGpuFrame& a, const PluginGpuFrame& b) noexcept {
          a.alpha == b.alpha && a.timestamp_us == b.timestamp_us;
 }
 
+std::string parity_key(const PluginZeroCopyRequest& request) {
+  return std::to_string(request.output.timestamp_us) + "\n" +
+         request.instance.instance_id;
+}
+
 PluginZeroCopyFrameRuntime::ParityRecord make_record(
     const PluginZeroCopyRequest& request) {
   PluginZeroCopyFrameRuntime::ParityRecord out{};
@@ -43,7 +48,8 @@ PluginZeroCopyFrameRuntime::PluginZeroCopyFrameRuntime(
 bool PluginZeroCopyFrameRuntime::validate_request(
     const PluginZeroCopyRequest& request,
     std::string& diagnostic) const noexcept {
-  if (request.instance.plugin_id.empty() ||
+  if (request.instance.instance_id.empty() ||
+      request.instance.plugin_id.empty() ||
       request.instance.plugin_version.empty() ||
       request.project_or_clip_id.empty() || request.visual_stack_digest.empty()) {
     diagnostic = "plugin zero-copy request identity is incomplete";
@@ -72,12 +78,13 @@ bool PluginZeroCopyFrameRuntime::validate_parity(
     const PluginZeroCopyRequest& request,
     std::string& diagnostic) noexcept {
   const auto record = make_record(request);
+  const auto key = parity_key(request);
   auto& own = request.surface == ConsumerPluginSurface::preview
       ? preview_records_ : export_records_;
   auto& other = request.surface == ConsumerPluginSurface::preview
       ? export_records_ : preview_records_;
-  own[request.output.timestamp_us] = record;
-  const auto it = other.find(request.output.timestamp_us);
+  own[key] = record;
+  const auto it = other.find(key);
   if (it != other.end() && !same_record(record, it->second)) {
     ++telemetry_.parity_failures;
     diagnostic = "plugin preview/export stack or color encoding mismatch";
