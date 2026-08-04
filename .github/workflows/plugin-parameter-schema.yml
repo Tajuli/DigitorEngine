@@ -1,0 +1,34 @@
+name: Typed Plugin Parameter Schema
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_parameter_schema.hpp'
+      - 'include/digitor/remote_plugin_marketplace.hpp'
+      - 'src/plugin/plugin_parameter_schema.cpp'
+      - 'src/plugin/remote_plugin_marketplace.cpp'
+      - 'tests/plugin_parameter_schema/**'
+      - '.github/workflows/plugin-parameter-schema.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_parameter_schema -B build/plugin-parameter-schema -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-parameter-schema --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-parameter-schema/digitor_plugin_parameter_schema_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-parameter-schema/Release/digitor_plugin_parameter_schema_qualification.exe
