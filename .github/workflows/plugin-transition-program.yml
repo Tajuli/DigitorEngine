@@ -1,0 +1,32 @@
+name: Plugin Transition Program
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_transition_program.hpp'
+      - 'src/plugin/plugin_transition_program.cpp'
+      - 'tests/plugin_transition_program/**'
+      - '.github/workflows/plugin-transition-program.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_transition_program -B build/plugin-transition-program -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-transition-program --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-transition-program/digitor_plugin_transition_program_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-transition-program/Release/digitor_plugin_transition_program_qualification.exe

@@ -36,17 +36,26 @@ bool valid_program(const PluginGpuProgram& program,
       return false;
     }
     bool input = false;
+    bool outgoing = false;
+    bool incoming = false;
     bool output = false;
+    bool progress = false;
     for (const auto& binding : pass.bindings) {
       if (binding.name.empty()) {
         diagnostic = "plugin GPU binding name is missing";
         return false;
       }
       input = input || (!binding.writable && binding.name == "input");
+      outgoing = outgoing || (!binding.writable && binding.name == "outgoing");
+      incoming = incoming || (!binding.writable && binding.name == "incoming");
       output = output || (binding.writable && binding.name == "output");
+      progress = progress || (!binding.writable && binding.name == "progress");
     }
-    if (!input || !output) {
-      diagnostic = "plugin GPU pass requires input SRV and output UAV bindings";
+    const bool single_input_contract = input && output;
+    const bool transition_contract = outgoing && incoming && output && progress;
+    if (!single_input_contract && !transition_contract) {
+      diagnostic =
+          "plugin GPU pass requires either input/output or outgoing/incoming/output/progress bindings";
       return false;
     }
   }
