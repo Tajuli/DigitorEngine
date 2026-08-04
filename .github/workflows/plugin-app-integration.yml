@@ -1,0 +1,28 @@
+name: Plugin Platform App Integration
+on:
+  pull_request:
+    paths:
+      - include/digitor/plugin_app_integration_c.h
+      - src/plugin/plugin_app_integration_c.cpp
+      - tests/plugin_app_integration/**
+      - docs/plugin-platform-app-integration-v1.md
+      - examples/plugin_app_integration_host.c
+      - .github/workflows/plugin-app-integration.yml
+  workflow_dispatch:
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_app_integration -B build/plugin-app-integration -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-app-integration --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-app-integration/digitor_plugin_app_integration_qualification
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-app-integration/Release/digitor_plugin_app_integration_qualification.exe
