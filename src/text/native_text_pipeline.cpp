@@ -72,6 +72,9 @@ struct GlyphKeyHash {
 }  // namespace
 
 struct NativeTextPipeline::Impl {
+  explicit Impl(std::uint32_t atlas_width, std::uint32_t atlas_height)
+      : width(atlas_width), height(atlas_height) {}
+
   std::uint32_t width;
   std::uint32_t height;
   std::uint32_t cursor_x{1};
@@ -110,7 +113,7 @@ struct NativeTextPipeline::Impl {
 };
 
 NativeTextPipeline::NativeTextPipeline(std::uint32_t atlas_width, std::uint32_t atlas_height)
-    : impl_(new Impl{atlas_width, atlas_height}) {
+    : impl_(new Impl(atlas_width, atlas_height)) {
   if (atlas_width < 32u || atlas_height < 32u) throw std::invalid_argument("atlas too small");
 }
 
