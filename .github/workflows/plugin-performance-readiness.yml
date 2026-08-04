@@ -1,0 +1,24 @@
+name: Plugin Performance Readiness
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_performance_readiness -B build/plugin-performance-readiness -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-performance-readiness --config Release --parallel 2
+      - name: Run Unix qualification
+        if: runner.os != 'Windows'
+        run: build/plugin-performance-readiness/digitor_plugin_performance_readiness
+      - name: Run Windows qualification
+        if: runner.os == 'Windows'
+        run: build/plugin-performance-readiness/Release/digitor_plugin_performance_readiness.exe
