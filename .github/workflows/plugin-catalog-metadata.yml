@@ -1,0 +1,32 @@
+name: Plugin Catalog Metadata Compatibility
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_catalog_metadata.hpp'
+      - 'src/plugin/plugin_catalog_metadata.cpp'
+      - 'tests/plugin_catalog_metadata/**'
+      - '.github/workflows/plugin-catalog-metadata.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_catalog_metadata -B build/plugin-catalog-metadata -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-catalog-metadata --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-catalog-metadata/digitor_plugin_catalog_metadata_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-catalog-metadata/Release/digitor_plugin_catalog_metadata_qualification.exe
