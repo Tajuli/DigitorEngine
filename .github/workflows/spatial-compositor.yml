@@ -1,0 +1,30 @@
+name: Production Spatial Compositor
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/spatial_compositor*'
+      - 'src/editor/spatial_compositor.cpp'
+      - 'src/ffi/spatial_compositor_c_api.cpp'
+      - 'tests/spatial_compositor/**'
+      - '.github/workflows/spatial-compositor.yml'
+  push:
+    branches: [main]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/spatial_compositor -B build/spatial-compositor -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/spatial-compositor --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/spatial-compositor/digitor_spatial_compositor
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/spatial-compositor/Release/digitor_spatial_compositor.exe
