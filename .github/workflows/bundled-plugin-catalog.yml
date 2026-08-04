@@ -1,0 +1,32 @@
+name: Bundled Plugin Catalog
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/bundled_plugin_catalog.hpp'
+      - 'include/digitor/remote_plugin_marketplace.hpp'
+      - 'src/plugin/remote_plugin_marketplace.cpp'
+      - 'tests/bundled_plugin_catalog/**'
+      - '.github/workflows/bundled-plugin-catalog.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/bundled_plugin_catalog -B build/bundled-plugin-catalog -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/bundled-plugin-catalog --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/bundled-plugin-catalog/digitor_bundled_plugin_catalog_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/bundled-plugin-catalog/Release/digitor_bundled_plugin_catalog_qualification.exe
