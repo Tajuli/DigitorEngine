@@ -60,7 +60,7 @@ int main() {
     return fail("FP16 requirement was not enforced");
 
   host.supports_fp16 = true;
-  host.backend = RemotePluginBackend::android_opengl_es;
+  host.backend = RemotePluginBackend::android_gles;
   if (evaluate_plugin_catalog_compatibility(metadata, host, diagnostic) !=
       PluginCatalogCompatibility::backend_unavailable)
     return fail("backend requirement was not enforced");
