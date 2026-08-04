@@ -1,0 +1,36 @@
+name: Code-free Transition Plugin
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/remote_plugin_marketplace.hpp'
+      - 'include/digitor/plugin_transition_program.hpp'
+      - 'src/plugin/remote_plugin_marketplace.cpp'
+      - 'src/plugin/plugin_gpu_program.cpp'
+      - 'src/plugin/plugin_transition_runtime.cpp'
+      - 'src/plugin/plugin_transition_program.cpp'
+      - 'tests/code_free_transition_plugin/**'
+      - '.github/workflows/code-free-transition-plugin.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/code_free_transition_plugin -B build/code-free-transition-plugin -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/code-free-transition-plugin --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/code-free-transition-plugin/digitor_code_free_transition_plugin_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/code-free-transition-plugin/Release/digitor_code_free_transition_plugin_qualification.exe
