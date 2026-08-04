@@ -1,0 +1,31 @@
+name: Plugin Golden-Frame Real-Media Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_golden_frame_qualification.hpp'
+      - 'src/plugin/plugin_golden_frame_qualification.cpp'
+      - 'tests/plugin_golden_frame_real_media/**'
+      - '.github/workflows/plugin-golden-frame-real-media.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_golden_frame_real_media -B build/plugin-golden-frame-real-media -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-golden-frame-real-media --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-golden-frame-real-media/digitor_plugin_golden_frame_real_media
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        run: build/plugin-golden-frame-real-media/Release/digitor_plugin_golden_frame_real_media.exe
