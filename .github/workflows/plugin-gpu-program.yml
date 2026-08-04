@@ -1,0 +1,31 @@
+name: Plugin GPU Program Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_gpu_program.hpp'
+      - 'src/plugin/plugin_gpu_program.cpp'
+      - 'tests/plugin_gpu_program/**'
+      - '.github/workflows/plugin-gpu-program.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_gpu_program -B build/plugin-gpu-program -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-gpu-program --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-gpu-program/digitor_plugin_gpu_program_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-gpu-program/Release/digitor_plugin_gpu_program_qualification.exe
