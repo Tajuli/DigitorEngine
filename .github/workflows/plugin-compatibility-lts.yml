@@ -1,0 +1,34 @@
+name: Plugin ABI Compatibility LTS
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_compatibility_lts.hpp'
+      - 'src/plugin/plugin_compatibility_lts.cpp'
+      - 'tests/plugin_compatibility_lts/**'
+      - '.github/workflows/plugin-compatibility-lts.yml'
+  push:
+    paths:
+      - 'include/digitor/plugin_compatibility_lts.hpp'
+      - 'src/plugin/plugin_compatibility_lts.cpp'
+      - 'tests/plugin_compatibility_lts/**'
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_compatibility_lts -B build/plugin-compatibility-lts -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-compatibility-lts --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-compatibility-lts/digitor_plugin_compatibility_lts
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        run: build/plugin-compatibility-lts/Release/digitor_plugin_compatibility_lts.exe
