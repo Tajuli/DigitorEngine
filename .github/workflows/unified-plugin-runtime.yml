@@ -1,0 +1,32 @@
+name: Unified Plugin Runtime
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/unified_plugin_runtime.hpp'
+      - 'src/plugin/unified_plugin_runtime.cpp'
+      - 'tests/unified_plugin_runtime/**'
+      - '.github/workflows/unified-plugin-runtime.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/unified_plugin_runtime -B build/unified-plugin-runtime -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/unified-plugin-runtime --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/unified-plugin-runtime/digitor_unified_plugin_runtime_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/unified-plugin-runtime/Release/digitor_unified_plugin_runtime_qualification.exe
