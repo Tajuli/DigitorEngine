@@ -1,0 +1,32 @@
+name: Plugin Package Security
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_package_security.hpp'
+      - 'src/plugin/plugin_package_security.cpp'
+      - 'tests/plugin_package_security/**'
+      - '.github/workflows/plugin-package-security.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_package_security -B build/plugin-package-security -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-package-security --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-package-security/digitor_plugin_package_security_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-package-security/Release/digitor_plugin_package_security_qualification.exe
