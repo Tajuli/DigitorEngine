@@ -67,7 +67,8 @@ std::string canonical_remote_plugin_payload(
   for (const auto& parameter : entry.parameters) {
     out << parameter.id << '|' << parameter.minimum << '|'
         << parameter.maximum << '|' << parameter.default_value << '|'
-        << parameter.keyframeable << '\n';
+        << parameter.keyframeable << '|'
+        << canonical_plugin_parameter_ui_schema(parameter.ui) << '\n';
   }
   for (const auto& artifact : entry.artifacts) {
     out << static_cast<std::uint32_t>(artifact.backend) << '|'
@@ -99,8 +100,9 @@ bool validate_remote_plugin_catalog_entry(
     if (!valid_token(parameter.id) || parameter.label.empty() ||
         parameter.minimum > parameter.maximum ||
         parameter.default_value < parameter.minimum ||
-        parameter.default_value > parameter.maximum) {
-      diagnostic = "remote plugin parameter schema is invalid";
+        parameter.default_value > parameter.maximum ||
+        !validate_plugin_parameter_ui_schema(parameter.ui, diagnostic)) {
+      if (diagnostic.empty()) diagnostic = "remote plugin parameter schema is invalid";
       return false;
     }
   }
