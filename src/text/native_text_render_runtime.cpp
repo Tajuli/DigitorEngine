@@ -1,7 +1,6 @@
 #include "digitor/native_text_render_runtime.hpp"
 
-#include <cstring>
-#include <stdexcept>
+#include <utility>
 
 namespace digitor {
 namespace {
