@@ -1,0 +1,32 @@
+name: Editor Visual Feature Contract
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/editor_visual_features.hpp'
+      - 'src/editor/editor_visual_features.cpp'
+      - 'tests/editor_visual_features/**'
+      - 'docs/editor-visual-feature-contract-v1.md'
+      - '.github/workflows/editor-visual-feature-contract.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/editor_visual_features -B build/editor-visual-features -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/editor-visual-features --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/editor-visual-features/digitor_editor_visual_features
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        run: build/editor-visual-features/Release/digitor_editor_visual_features.exe
