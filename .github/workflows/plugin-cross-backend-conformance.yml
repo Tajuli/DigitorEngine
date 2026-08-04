@@ -1,0 +1,31 @@
+name: Plugin Cross-Backend Conformance
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_cross_backend_conformance.hpp'
+      - 'src/plugin/plugin_cross_backend_conformance.cpp'
+      - 'tests/plugin_cross_backend_conformance/**'
+      - '.github/workflows/plugin-cross-backend-conformance.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_cross_backend_conformance -B build/plugin-cross-backend -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-cross-backend --config Release --parallel 2
+      - name: Run Unix qualification
+        if: runner.os != 'Windows'
+        run: build/plugin-cross-backend/digitor_plugin_cross_backend_conformance
+      - name: Run Windows qualification
+        if: runner.os == 'Windows'
+        run: build/plugin-cross-backend/Release/digitor_plugin_cross_backend_conformance.exe
