@@ -9,20 +9,14 @@ int fail(const char* message) {
   return 1;
 }
 
-digitor::PluginGpuFrame frame(std::uint64_t texture) {
-  digitor::PluginGpuFrame value{};
-  value.backend = digitor::RemotePluginBackend::windows_d3d12;
-  value.native_texture_handle = texture;
+digitor::PluginNativeTextureBinding texture(std::uint64_t handle) {
+  digitor::PluginNativeTextureBinding value{};
+  value.native_texture_handle = handle;
   value.synchronization_handle = 700;
-  value.synchronization_value = texture;
+  value.synchronization_value = handle;
   value.width = 3840;
   value.height = 2160;
   value.format = digitor::PluginPixelFormat::rgba16_float;
-  value.primaries = digitor::PluginColorPrimaries::bt2020;
-  value.transfer = digitor::PluginTransferFunction::pq;
-  value.range = digitor::PluginColorRange::full;
-  value.alpha = digitor::PluginAlphaMode::straight;
-  value.timestamp_us = 1000;
   return value;
 }
 }  // namespace
@@ -38,8 +32,8 @@ int main() {
   dispatch.pipeline.format = PluginGpuProgramFormat::rgba16_float;
   dispatch.pipeline.native_pipeline_handle = 9001;
   dispatch.pipeline.device_identity = 42;
-  dispatch.input = frame(100);
-  dispatch.output = frame(101);
+  dispatch.input = texture(100);
+  dispatch.output = texture(101);
   dispatch.group_count_x = 480;
   dispatch.group_count_y = 270;
   dispatch.group_count_z = 1;
