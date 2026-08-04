@@ -1,0 +1,31 @@
+name: Plugin Runtime Safety
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_runtime_safety.hpp'
+      - 'src/plugin/plugin_runtime_safety.cpp'
+      - 'tests/plugin_runtime_safety/**'
+      - '.github/workflows/plugin-runtime-safety.yml'
+  push:
+    paths:
+      - 'include/digitor/plugin_runtime_safety.hpp'
+      - 'src/plugin/plugin_runtime_safety.cpp'
+      - 'tests/plugin_runtime_safety/**'
+      - '.github/workflows/plugin-runtime-safety.yml'
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_runtime_safety -B build/plugin-runtime-safety -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-runtime-safety --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-runtime-safety/digitor_plugin_runtime_safety_qualification
+      - if: runner.os == 'Windows'
+        run: build/plugin-runtime-safety/Release/digitor_plugin_runtime_safety_qualification.exe
