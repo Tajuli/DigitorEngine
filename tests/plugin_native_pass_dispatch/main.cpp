@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -38,12 +39,13 @@ int main() {
   loader_bindings.device_identity = 42;
   loader_bindings.read_asset = [](auto, auto, std::vector<std::byte>& bytes,
                                   std::string& diagnostic) {
-    bytes = {std::byte{'D'}, std::byte{'X'}, std::byte{'I'}, std::byte{'L'}};
+    bytes = {std::byte{0x44}, std::byte{0x58},
+             std::byte{0x49}, std::byte{0x4c}};
     diagnostic.clear();
     return true;
   };
   loader_bindings.create_pipeline = [](const PluginBackendAsset& asset,
-                                       const PluginGpuProgram& program,
+                                       const PluginGpuProgram&,
                                        PluginBackendPipeline& pipeline,
                                        std::string& diagnostic) {
     pipeline.package_identity = asset.package_identity;
@@ -109,9 +111,9 @@ int main() {
       captured.parameters["amount"] != 0.75)
     return fail("native binding payload mismatch");
 
-  auto wrong_device = pass;
-  wrong_device.program.package_identity = "sha256:other";
-  if (dispatcher.record(wrong_device, &diagnostic) == DIGITOR_RESULT_OK)
+  auto wrong_identity = pass;
+  wrong_identity.program.package_identity = "sha256:other";
+  if (dispatcher.record(wrong_identity, &diagnostic) == DIGITOR_RESULT_OK)
     return fail("mismatched package identity was accepted");
 
   const auto telemetry = dispatcher.telemetry();
