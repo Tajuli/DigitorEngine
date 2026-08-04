@@ -1,0 +1,24 @@
+name: Production Chroma Key
+on:
+  pull_request:
+  push:
+    branches: [agent/production-chroma-key-v1]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_chroma_key -B build/chroma -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/chroma --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/chroma/digitor_production_chroma_key
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/chroma/Release/digitor_production_chroma_key.exe
