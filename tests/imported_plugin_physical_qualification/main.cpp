@@ -11,11 +11,21 @@ int main() {
       RemotePluginBackend::windows_d3d12,
       PluginPixelFormat::rgba16_float, true, false);
 
+  ImportedPluginFrameEvidence preview_frame{};
+  preview_frame.preview = true;
+  preview_frame.compared_pixels = 4096;
+  preview_frame.squared_error_sum = 0.00000001;
+  preview_frame.max_absolute_error = 0.0001;
+  preview_frame.alpha_mismatches = 0;
+  preview_frame.visual_stack_digest = "stack:v1";
+  preview_frame.package_identity = "sha256:glow-v1";
+
+  auto export_frame = preview_frame;
+  export_frame.preview = false;
+
   for (int i = 0; i < 300; ++i) {
-    runner.record_frame({true, "sha256:glow-v1", "stack:v1",
-                         4096, 0.00000001, 0.0001, 0});
-    runner.record_frame({false, "sha256:glow-v1", "stack:v1",
-                         4096, 0.00000001, 0.0001, 0});
+    runner.record_frame(preview_frame);
+    runner.record_frame(export_frame);
   }
   for (int i = 0; i < 18000; ++i) runner.record_soak_frame();
   runner.record_device_loss_recovery(true);
