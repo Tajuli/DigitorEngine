@@ -1,0 +1,14 @@
+name: Plugin Platform Production Conformance
+on: [pull_request, push]
+jobs:
+  qualify:
+    strategy: { matrix: { os: [ubuntu-latest, windows-latest, macos-latest] } }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_platform_production -B build/plugin-platform-production -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-platform-production --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-platform-production/digitor_plugin_platform_production_conformance
+      - if: runner.os == 'Windows'
+        run: build/plugin-platform-production/Release/digitor_plugin_platform_production_conformance.exe
