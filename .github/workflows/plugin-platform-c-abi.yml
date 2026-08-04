@@ -1,0 +1,24 @@
+name: Plugin Platform C ABI
+on:
+  pull_request:
+    paths:
+      - include/digitor/plugin_platform_c.h
+      - src/plugin/plugin_platform_c.cpp
+      - tests/plugin_platform_c_abi/**
+      - .github/workflows/plugin-platform-c-abi.yml
+  workflow_dispatch:
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_platform_c_abi -B build/plugin-platform-c-abi -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-platform-c-abi --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-platform-c-abi/digitor_plugin_platform_c_abi_qualification
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-platform-c-abi/Release/digitor_plugin_platform_c_abi_qualification.exe
