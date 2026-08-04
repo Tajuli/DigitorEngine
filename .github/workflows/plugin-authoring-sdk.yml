@@ -1,0 +1,33 @@
+name: Plugin Authoring SDK Toolchain
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_authoring_sdk.hpp'
+      - 'src/plugin/plugin_authoring_sdk.cpp'
+      - 'tools/digitor_plugin_author/**'
+      - 'tests/plugin_authoring_sdk/**'
+      - '.github/workflows/plugin-authoring-sdk.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_authoring_sdk -B build/plugin-authoring-sdk -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-authoring-sdk --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: |
+          build/plugin-authoring-sdk/digitor_plugin_authoring_sdk_qualification
+          build/plugin-authoring-sdk/digitor_plugin_author --self-test
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          build/plugin-authoring-sdk/Release/digitor_plugin_authoring_sdk_qualification.exe
+          build/plugin-authoring-sdk/Release/digitor_plugin_author.exe --self-test
