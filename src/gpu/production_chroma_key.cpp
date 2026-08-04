@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace digitor {
 namespace {
@@ -89,12 +88,25 @@ extern "C" std::uint32_t digitor_chroma_key_rgba32f(const float* in, float* out,
                                                      std::uint32_t h, const DigitorChromaKeySettings* c,
                                                      std::uint64_t* digest) {
   if (!in || !out || !c || !digest || w == 0u || h == 0u) return 1u;
-  digitor::ChromaFrame input{w, h, {}}; input.pixels.resize(std::size_t(w) * h);
-  std::memcpy(input.pixels.data(), in, input.pixels.size() * sizeof(digitor::ChromaPixel));
+  const std::size_t pixel_count = std::size_t(w) * h;
+  digitor::ChromaFrame input{w, h, {}};
+  input.pixels.resize(pixel_count);
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    const std::size_t base = i * 4u;
+    input.pixels[i] = {in[base], in[base + 1u], in[base + 2u], in[base + 3u]};
+  }
   digitor::ChromaKeySettings s; s.key_mode = static_cast<digitor::ChromaKeyColor>(c->key_mode);
   s.key_r=c->key_r; s.key_g=c->key_g; s.key_b=c->key_b; s.similarity=c->similarity; s.softness=c->softness;
   s.edge_shrink=c->edge_shrink; s.edge_blur=c->edge_blur; s.despill=c->despill; s.spill_balance=c->spill_balance;
   s.invert_matte=c->invert_matte != 0u; digitor::ChromaFrame output;
   const auto r = digitor::apply_chroma_key_reference(input, output, s); if (r.status != digitor::ChromaStatus::ready) return 2u;
-  std::memcpy(out, output.pixels.data(), output.pixels.size() * sizeof(digitor::ChromaPixel)); *digest = r.digest; return 0u;
+  for (std::size_t i = 0; i < pixel_count; ++i) {
+    const std::size_t base = i * 4u;
+    out[base] = output.pixels[i].r;
+    out[base + 1u] = output.pixels[i].g;
+    out[base + 2u] = output.pixels[i].b;
+    out[base + 3u] = output.pixels[i].a;
+  }
+  *digest = r.digest;
+  return 0u;
 }
