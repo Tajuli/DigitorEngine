@@ -1,0 +1,31 @@
+name: Native Text Pipeline
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/native_text_pipeline.hpp'
+      - 'src/text/native_text_pipeline.cpp'
+      - 'tests/native_text_pipeline/**'
+      - '.github/workflows/native-text-pipeline.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/native_text_pipeline -B build/native-text -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/native-text --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/native-text/digitor_native_text_pipeline
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/native-text/Release/digitor_native_text_pipeline.exe
