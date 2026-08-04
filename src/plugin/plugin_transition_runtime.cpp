@@ -7,14 +7,16 @@ namespace digitor {
 namespace {
 
 bool valid_frame(const PluginGpuFrame& frame) noexcept {
-  return frame.native_texture_handle != 0 && frame.width != 0 && frame.height != 0 &&
-         frame.device_identity != 0;
+  return frame.native_texture_handle != 0 && frame.width != 0 &&
+         frame.height != 0;
 }
 
 bool same_surface_contract(const PluginGpuFrame& a,
                            const PluginGpuFrame& b) noexcept {
-  return a.backend == b.backend && a.device_identity == b.device_identity &&
-         a.width == b.width && a.height == b.height && a.format == b.format;
+  return a.backend == b.backend && a.width == b.width &&
+         a.height == b.height && a.format == b.format &&
+         a.primaries == b.primaries && a.transfer == b.transfer &&
+         a.range == b.range && a.alpha == b.alpha;
 }
 
 }  // namespace
@@ -48,11 +50,14 @@ bool validate_plugin_transition_request(
   }
   if (!same_surface_contract(request.outgoing, request.incoming) ||
       !same_surface_contract(request.outgoing, request.output)) {
-    diagnostic = "transition surfaces differ in device, dimensions or format";
+    diagnostic =
+        "transition surfaces differ in dimensions, format or color contract";
     return false;
   }
-  if (request.output.native_texture_handle == request.outgoing.native_texture_handle ||
-      request.output.native_texture_handle == request.incoming.native_texture_handle) {
+  if (request.output.native_texture_handle ==
+          request.outgoing.native_texture_handle ||
+      request.output.native_texture_handle ==
+          request.incoming.native_texture_handle) {
     diagnostic = "transition output must not alias either input texture";
     return false;
   }
@@ -91,8 +96,11 @@ DigitorResult PluginTransitionRuntime::dispatch(
   dispatch.request = request;
   const auto result = bindings_.record(dispatch, local);
   if (result != DIGITOR_RESULT_OK) {
-    if (diagnostic) *diagnostic = local.empty()
-        ? "transition GPU recording failed without fallback" : local;
+    if (diagnostic) {
+      *diagnostic = local.empty()
+          ? "transition GPU recording failed without fallback"
+          : local;
+    }
     return result;
   }
   if (diagnostic) diagnostic->clear();
