@@ -1,0 +1,36 @@
+name: Plugin Backend Package Loader
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_backend_package_loader.hpp'
+      - 'src/plugin/plugin_backend_package_loader.cpp'
+      - 'tests/plugin_backend_package_loader/**'
+      - '.github/workflows/plugin-backend-package-loader.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_backend_package_loader -B build/plugin-backend-package-loader -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-backend-package-loader --config Release --parallel 2
+      - name: Qualify on Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-backend-package-loader/digitor_plugin_backend_package_loader_qualification | tee plugin-backend-package-loader.log
+      - name: Qualify on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-backend-package-loader/Release/digitor_plugin_backend_package_loader_qualification.exe | Tee-Object -FilePath plugin-backend-package-loader.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-backend-package-loader-${{ runner.os }}
+          path: plugin-backend-package-loader.log
+          if-no-files-found: error
