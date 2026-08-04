@@ -1,5 +1,6 @@
 #pragma once
 
+#include "digitor/plugin_zero_copy_frame.hpp"
 #include "digitor/remote_plugin_marketplace.hpp"
 
 #include <cstdint>
