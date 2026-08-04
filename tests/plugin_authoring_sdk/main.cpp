@@ -1,4 +1,5 @@
 #include "digitor/plugin_authoring_sdk.hpp"
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
