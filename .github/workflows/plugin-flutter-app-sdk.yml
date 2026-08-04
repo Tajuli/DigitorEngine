@@ -1,0 +1,14 @@
+name: Plugin Flutter App SDK
+on: [pull_request, push]
+jobs:
+  qualify:
+    strategy: { matrix: { os: [ubuntu-latest, windows-latest, macos-latest] } }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_flutter_app_sdk -B build/plugin-flutter-app-sdk -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-flutter-app-sdk --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-flutter-app-sdk/digitor_plugin_flutter_app_sdk_qualification
+      - if: runner.os == 'Windows'
+        run: build/plugin-flutter-app-sdk/Release/digitor_plugin_flutter_app_sdk_qualification.exe
