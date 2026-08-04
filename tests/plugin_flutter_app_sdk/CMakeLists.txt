@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(digitor_plugin_flutter_app_sdk LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+add_executable(digitor_plugin_flutter_app_sdk_qualification main.c ../../src/plugin/plugin_flutter_app_sdk.cpp)
+target_include_directories(digitor_plugin_flutter_app_sdk_qualification PRIVATE ../../include)
