@@ -1,0 +1,31 @@
+name: Plugin Marketplace Sync Cache Offline
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_marketplace_sync.hpp'
+      - 'src/plugin/plugin_marketplace_sync.cpp'
+      - 'tests/plugin_marketplace_sync/**'
+      - '.github/workflows/plugin-marketplace-sync.yml'
+  push:
+    paths:
+      - 'include/digitor/plugin_marketplace_sync.hpp'
+      - 'src/plugin/plugin_marketplace_sync.cpp'
+      - 'tests/plugin_marketplace_sync/**'
+      - '.github/workflows/plugin-marketplace-sync.yml'
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/plugin_marketplace_sync -B build/plugin-marketplace-sync -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/plugin-marketplace-sync --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: build/plugin-marketplace-sync/digitor_plugin_marketplace_sync_qualification
+      - if: runner.os == 'Windows'
+        run: build/plugin-marketplace-sync/Release/digitor_plugin_marketplace_sync_qualification.exe
