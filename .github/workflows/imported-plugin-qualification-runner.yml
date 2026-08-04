@@ -1,0 +1,37 @@
+name: Imported Plugin Qualification Runner
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/imported_plugin_qualification_runner.hpp'
+      - 'src/plugin/imported_plugin_qualification_runner.cpp'
+      - 'tests/imported_plugin_qualification_runner/**'
+      - '.github/workflows/imported-plugin-qualification-runner.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/imported_plugin_qualification_runner -B build/imported-plugin-qualification-runner -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/imported-plugin-qualification-runner --config Release --parallel 2
+      - name: Qualify on Unix
+        if: runner.os != 'Windows'
+        run: build/imported-plugin-qualification-runner/digitor_imported_plugin_qualification_runner_qualification | tee imported-plugin-qualification-runner.log
+      - name: Qualify on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/imported-plugin-qualification-runner/Release/digitor_imported_plugin_qualification_runner_qualification.exe | Tee-Object -FilePath imported-plugin-qualification-runner.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imported-plugin-qualification-runner-${{ runner.os }}
+          path: imported-plugin-qualification-runner.log
+          if-no-files-found: error
