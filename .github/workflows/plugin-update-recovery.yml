@@ -1,0 +1,32 @@
+name: Plugin Update Migration Recovery
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_update_recovery.hpp'
+      - 'src/plugin/plugin_update_recovery.cpp'
+      - 'tests/plugin_update_recovery/**'
+      - '.github/workflows/plugin-update-recovery.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_update_recovery -B build/plugin-update-recovery -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-update-recovery --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-update-recovery/digitor_plugin_update_recovery_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-update-recovery/Release/digitor_plugin_update_recovery_qualification.exe
