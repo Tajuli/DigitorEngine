@@ -1,0 +1,32 @@
+name: Plugin Preview Export Parity
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/plugin_preview_export_parity.hpp'
+      - 'src/plugin/plugin_preview_export_parity.cpp'
+      - 'tests/plugin_preview_export_parity/**'
+      - '.github/workflows/plugin-preview-export-parity.yml'
+  workflow_dispatch:
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/plugin_preview_export_parity -B build/plugin-preview-export-parity -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/plugin-preview-export-parity --config Release --parallel 2
+      - name: Qualify Unix
+        if: runner.os != 'Windows'
+        run: build/plugin-preview-export-parity/digitor_plugin_preview_export_parity_qualification
+      - name: Qualify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: build/plugin-preview-export-parity/Release/digitor_plugin_preview_export_parity_qualification.exe

@@ -1,0 +1,1 @@
+Digitor app should construct the same canonical plugin invocation for preview and authorized export: exact plugin ID, version, package SHA-256, typed parameters, timeline time, transition progress and color metadata. The parity qualifier is a regression guard and does not execute or replace the existing render pipeline.
