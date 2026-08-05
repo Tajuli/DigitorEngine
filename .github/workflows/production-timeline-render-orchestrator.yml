@@ -1,0 +1,31 @@
+name: Production Timeline Render Orchestrator
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_timeline_render_orchestrator.hpp'
+      - 'src/timeline/production_timeline_render_orchestrator.cpp'
+      - 'tests/production_timeline_render_orchestrator/**'
+      - '.github/workflows/production-timeline-render-orchestrator.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_timeline_render_orchestrator -B build/timeline-orchestrator -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/timeline-orchestrator --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/timeline-orchestrator/digitor_production_timeline_render_orchestrator
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\timeline-orchestrator\Release\digitor_production_timeline_render_orchestrator.exe
