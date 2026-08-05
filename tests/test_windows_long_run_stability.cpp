@@ -9,6 +9,9 @@
 #include "digitor/media.hpp"
 #include "gpu/execution_provenance.hpp"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <psapi.h>
 
