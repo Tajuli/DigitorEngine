@@ -1,0 +1,4 @@
+#include "digitor/production_motion_blur.hpp"
+#include <cassert>
+#include <vector>
+int main(){ using namespace digitor; MotionBlurFrame in{3,1,{{1,0,0,1},{0,1,0,1},{0,0,1,1}}}; std::vector<MotionVector> mv(3,{2,0,1}); MotionBlurSettings s; s.samples=5; MotionBlurFrame a,b; auto ra=apply_motion_blur_reference(in,mv,a,s); auto rb=apply_motion_blur_reference(in,mv,b,s); assert(ra.status==MotionBlurStatus::ready); assert(ra.digest==rb.digest); assert(a.pixels[1].r>0.0f&&a.pixels[1].b>0.0f); MotionBlurDispatchPacket p; p.backend=MotionBlurBackend::vulkan;p.width=3;p.height=1;p.input_handle=1;p.motion_handle=2;p.output_handle=3;p.command_handle=4;p.settings=s; assert(dispatch_motion_blur_gpu(p,{}).status==MotionBlurStatus::backend_unavailable); assert(dispatch_motion_blur_gpu(p,[](const auto&){return true;}).status==MotionBlurStatus::ready); p.command_handle=0; assert(dispatch_motion_blur_gpu(p,[](const auto&){return true;}).status==MotionBlurStatus::invalid); }
