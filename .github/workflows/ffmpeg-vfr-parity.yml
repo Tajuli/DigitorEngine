@@ -2,8 +2,24 @@ name: FFmpeg VFR Preview Export Parity
 
 on:
   pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/media.hpp'
+      - 'src/media/**'
+      - 'src/render/**'
+      - 'tests/test_ffmpeg_vfr_parity.cpp'
+      - '.github/workflows/ffmpeg-vfr-parity.yml'
   push:
     branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/media.hpp'
+      - 'src/media/**'
+      - 'src/render/**'
+      - 'tests/test_ffmpeg_vfr_parity.cpp'
+      - '.github/workflows/ffmpeg-vfr-parity.yml'
 
 jobs:
   vfr-parity:
