@@ -1,0 +1,31 @@
+name: Production Keyframe Automation
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_keyframe_automation.hpp'
+      - 'src/timeline/production_keyframe_automation.cpp'
+      - 'tests/production_keyframe_automation/**'
+      - '.github/workflows/production-keyframe-automation.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_keyframe_automation -B build/keyframe-automation -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/keyframe-automation --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/keyframe-automation/digitor_production_keyframe_automation
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\keyframe-automation\Release\digitor_production_keyframe_automation.exe
