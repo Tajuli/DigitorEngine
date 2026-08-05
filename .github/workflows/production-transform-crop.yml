@@ -1,0 +1,25 @@
+name: Production Transform Crop
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_transform_crop.hpp'
+      - 'src/gpu/production_transform_crop.cpp'
+      - 'tests/production_transform_crop/**'
+      - '.github/workflows/production-transform-crop.yml'
+  push:
+    branches: [main]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/production_transform_crop -B build/transform-crop -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/transform-crop --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: ./build/transform-crop/digitor_production_transform_crop
+      - if: runner.os == 'Windows'
+        run: .\build\transform-crop\Release\digitor_production_transform_crop.exe
