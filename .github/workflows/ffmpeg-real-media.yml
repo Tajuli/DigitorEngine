@@ -2,8 +2,22 @@ name: FFmpeg Real-Media Qualification
 
 on:
   pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/media.hpp'
+      - 'src/media/**'
+      - 'tests/test_ffmpeg_real_media.cpp'
+      - '.github/workflows/ffmpeg-real-media.yml'
   push:
     branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/media.hpp'
+      - 'src/media/**'
+      - 'tests/test_ffmpeg_real_media.cpp'
+      - '.github/workflows/ffmpeg-real-media.yml'
 
 jobs:
   decode-render:
