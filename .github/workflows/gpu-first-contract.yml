@@ -1,0 +1,17 @@
+name: GPU-first contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject fake GPU and silent CPU fallback paths
+        run: python3 tools/audit_gpu_first_contract.py
