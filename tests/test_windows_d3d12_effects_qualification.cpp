@@ -22,28 +22,37 @@ int fail(const std::string& message) {
   return 1;
 }
 
-ComPtr<IDXGIAdapter1> choose_adapter(IDXGIFactory6* factory, bool& hardware) {
+std::string narrow(const wchar_t* value) {
+  if (!value) return {};
+  std::string result;
+  while (*value) {
+    const wchar_t c = *value++;
+    result.push_back(c >= 0 && c <= 0x7f ? static_cast<char>(c) : '?');
+  }
+  return result;
+}
+
+ComPtr<IDXGIAdapter1> choose_hardware_adapter(IDXGIFactory6* factory,
+                                               DXGI_ADAPTER_DESC1& selected_desc) {
   ComPtr<IDXGIAdapter1> adapter;
-  hardware = false;
   for (UINT index = 0;
        factory->EnumAdapterByGpuPreference(index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
                                            IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND;
        ++index) {
     DXGI_ADAPTER_DESC1 desc{};
-    adapter->GetDesc1(&desc);
+    if (FAILED(adapter->GetDesc1(&desc))) {
+      adapter.Reset();
+      continue;
+    }
     if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
         SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
                                     __uuidof(ID3D12Device), nullptr))) {
-      hardware = true;
+      selected_desc = desc;
       return adapter;
     }
     adapter.Reset();
   }
-  ComPtr<IDXGIAdapter> warp;
-  if (SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp)))) {
-    warp.As(&adapter);
-  }
-  return adapter;
+  return {};
 }
 
 bool create_texture(ID3D12Device* device, DXGI_FORMAT format,
@@ -136,14 +145,20 @@ int main() {
   if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory) {
     return fail("DXGI factory creation failed");
   }
-  bool hardware = false;
-  auto adapter = choose_adapter(factory.Get(), hardware);
-  if (!adapter) return fail("no D3D12 hardware adapter or WARP adapter is available");
+
+  DXGI_ADAPTER_DESC1 adapter_desc{};
+  auto adapter = choose_hardware_adapter(factory.Get(), adapter_desc);
+  if (!adapter) {
+    return fail("no physical D3D12 hardware adapter is available; WARP is forbidden for production qualification");
+  }
+  if ((adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
+    return fail("selected adapter is software-rendered; physical GPU required");
+  }
 
   ComPtr<ID3D12Device> device;
   if (FAILED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
                                IID_PPV_ARGS(&device))) || !device) {
-    return fail("D3D12 device creation failed");
+    return fail("D3D12 hardware device creation failed");
   }
   D3D12_COMMAND_QUEUE_DESC queue_desc{};
   queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -192,9 +207,17 @@ int main() {
     if (telemetry.fallback_dispatches != 0) return fail("fallback dispatch telemetry is non-zero");
 
     std::cout << "D3D12_EFFECTS_QUALIFICATION=PASS\n";
-    std::cout << "ADAPTER_CLASS=" << (hardware ? "HARDWARE" : "WARP") << '\n';
+    std::cout << "ADAPTER_CLASS=HARDWARE\n";
+    std::cout << "ADAPTER_NAME=" << narrow(adapter_desc.Description) << '\n';
+    std::cout << "VENDOR_ID=" << adapter_desc.VendorId << '\n';
+    std::cout << "DEVICE_ID=" << adapter_desc.DeviceId << '\n';
+    std::cout << "DEDICATED_VIDEO_MEMORY=" << adapter_desc.DedicatedVideoMemory << '\n';
+    std::cout << "SHARED_SYSTEM_MEMORY=" << adapter_desc.SharedSystemMemory << '\n';
     std::cout << "BUILTIN_EFFECTS=" << registry.effects().size() << '\n';
     std::cout << "SUBMITTED_PASSES=" << telemetry.submitted_passes << '\n';
+    std::cout << "CPU_READBACKS=" << telemetry.cpu_readbacks << '\n';
+    std::cout << "CPU_REUPLOADS=" << telemetry.cpu_reuploads << '\n';
+    std::cout << "FALLBACK_DISPATCHES=" << telemetry.fallback_dispatches << '\n';
     return 0;
   } catch (const std::exception& error) {
     return fail(std::string("exception: ") + error.what());
