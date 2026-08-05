@@ -1,7 +1,9 @@
-# Production Video Transitions v1
+# Unified Transition Subsystem v1
 
-DigitorEngine owns deterministic transition rendering for cross dissolve, dip-to-color, directional wipe, and directional slide transitions.
+DigitorEngine exposes one transition subsystem for built-in and plugin transitions. The subsystem owns a shared descriptor registry, stable transition IDs, a common `PluginTransitionRequest` GPU surface contract, one dispatcher, and one preview/export policy.
 
-Preview and export call the same RGBA32F processing path and produce the same frame digest for identical inputs and settings. GPU callers submit validated Vulkan, Direct3D 12, Metal, or OpenGL ES dispatch packets; a missing GPU dispatcher returns an explicit backend-unavailable status and never silently selects CPU execution.
+Built-ins are registered as `builtin.cross-dissolve`, `builtin.dip-to-color`, `builtin.wipe`, and `builtin.slide`. Third-party transition descriptors use the same registry but cannot replace or collide with built-in IDs. Timeline and Flutter code select a transition by ID without creating a separate rendering path for plugins.
 
-The stable C ABI accepts packed RGBA32F frames for Flutter FFI integration. Timeline/UI code owns transition placement and controls, while pixel generation remains authoritative inside DigitorEngine.
+Built-in CPU reference rendering remains deterministic RGBA32F and produces identical preview/export digests. GPU execution for both provider kinds validates the same outgoing, incoming, and output texture contract. Missing recorders and backend failures are explicit; a selected GPU path never silently falls back to CPU.
+
+The C ABI exposes built-in transition enumeration and packed RGBA32F rendering. The unified qualification workflow builds both the existing code-free plugin runtime and the built-in/plugin dispatcher integration on Ubuntu, Windows, and macOS.
