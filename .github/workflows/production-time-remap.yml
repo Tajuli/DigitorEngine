@@ -1,0 +1,24 @@
+name: Production Time Remap
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_time_remap -B build/time-remap -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/time-remap --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/time-remap/digitor_production_time_remap
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/time-remap/Release/digitor_production_time_remap.exe
