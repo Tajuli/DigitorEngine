@@ -19,10 +19,23 @@ function Invoke-Logged {
     [Parameter(Mandatory)] [string]$Name,
     [Parameter(Mandatory)] [scriptblock]$Command
   )
+
   $log = Join-Path $ArtifactDir "$Name.log"
-  & $Command 2>&1 | Tee-Object -FilePath $log
-  if ($LASTEXITCODE -ne 0) {
-    throw "$Name failed with exit code $LASTEXITCODE. See $log"
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell can surface native stderr as NativeCommandError when
+    # ErrorActionPreference is Stop, even when the native process exits 0.
+    # Qualification must be governed by the actual native exit code, while
+    # still preserving warnings and diagnostics in the evidence log.
+    $ErrorActionPreference = 'Continue'
+    & $Command 2>&1 | Tee-Object -FilePath $log
+    $nativeExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  if ($nativeExitCode -ne 0) {
+    throw "$Name failed with exit code $nativeExitCode. See $log"
   }
 }
 
