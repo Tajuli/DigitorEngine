@@ -1,0 +1,33 @@
+name: GPU Execution Proof
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/gpu_execution_proof.hpp'
+      - 'src/gpu/gpu_execution_proof.cpp'
+      - 'src/gpu/gpu_execution_proof_c_api.cpp'
+      - 'tests/gpu_execution_proof/**'
+      - '.github/workflows/gpu-execution-proof.yml'
+      - 'docs/gpu-execution-proof-v1.md'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/gpu_execution_proof -B build/gpu-proof -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/gpu-proof --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/gpu-proof/digitor_gpu_execution_proof
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\gpu-proof\Release\digitor_gpu_execution_proof.exe
