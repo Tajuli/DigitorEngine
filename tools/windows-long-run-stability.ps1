@@ -73,7 +73,7 @@ try {
   Invoke-Logged 'run-stability' { & $exe $Fixture $Iterations }
   $runLog = Join-Path $ArtifactDir 'run-stability.log'
   foreach ($marker in @(
-    'SIMULATED_DEVICE_LOSS_FAIL_CLOSED=PASS',
+    'SIMULATED_GPU_FAILURE_FAIL_CLOSED=PASS',
     'BACKEND_RECREATION_RECOVERY=PASS',
     'REPEATED_SEEK_DECODE=PASS',
     'MEMORY_GROWTH_BOUNDED=PASS',
@@ -83,7 +83,7 @@ try {
     }
   }
 
-  'SIMULATED_DEVICE_LOSS_FAIL_CLOSED=PASS' | Add-Content $summary
+  'SIMULATED_GPU_FAILURE_FAIL_CLOSED=PASS' | Add-Content $summary
   'BACKEND_RECREATION_RECOVERY=PASS' | Add-Content $summary
   'REPEATED_SEEK_DECODE=PASS' | Add-Content $summary
   'MEMORY_GROWTH_BOUNDED=PASS' | Add-Content $summary
