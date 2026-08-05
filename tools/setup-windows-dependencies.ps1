@@ -7,8 +7,21 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Invoke-WebJson([string]$Uri) {
-  Invoke-RestMethod -Uri $Uri -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' }
+$Repository = 'BtbN/FFmpeg-Builds'
+$ReleaseApi = "https://api.github.com/repos/$Repository/releases/latest"
+$LatestDownloadBase = "https://github.com/$Repository/releases/download/latest"
+$PreferredNames = @(
+  'ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip',
+  'ffmpeg-master-latest-win64-gpl-shared.zip'
+)
+
+function Get-GitHubHeaders {
+  $headers = @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' }
+  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+    $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN"
+    $headers['X-GitHub-Api-Version'] = '2022-11-28'
+  }
+  return $headers
 }
 
 function Add-UserPath([string]$PathToAdd) {
@@ -22,44 +35,59 @@ function Add-UserPath([string]$PathToAdd) {
   }
 }
 
-$release = Invoke-WebJson 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest'
-$assets = @($release.assets)
-$preferred = @(
-  'ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip',
-  'ffmpeg-master-latest-win64-gpl-shared.zip'
-)
-$asset = $null
-foreach ($name in $preferred) {
-  $asset = $assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-  if ($asset) { break }
+function Resolve-Download {
+  try {
+    $release = Invoke-RestMethod -Uri $ReleaseApi -Headers (Get-GitHubHeaders)
+    $assets = @($release.assets)
+    foreach ($name in $PreferredNames) {
+      $asset = $assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+      if ($asset) {
+        $checksumAsset = $assets | Where-Object { $_.name -eq 'checksums.sha256' } | Select-Object -First 1
+        if (-not $checksumAsset) { throw 'BtbN checksums.sha256 asset was not found.' }
+        return [pscustomobject]@{
+          Name = $asset.name
+          ArchiveUrl = $asset.browser_download_url
+          ChecksumsUrl = $checksumAsset.browser_download_url
+          Resolution = 'GitHub API'
+        }
+      }
+    }
+    throw 'No preferred BtbN win64 GPL shared FFmpeg SDK asset was found.'
+  } catch {
+    Write-Warning "GitHub release API unavailable or rate-limited: $($_.Exception.Message)"
+    Write-Host 'Falling back to BtbN latest-release download aliases (no API request).'
+    return [pscustomobject]@{
+      Name = $PreferredNames[0]
+      ArchiveUrl = "$LatestDownloadBase/$($PreferredNames[0])"
+      ChecksumsUrl = "$LatestDownloadBase/checksums.sha256"
+      Resolution = 'latest release alias fallback'
+    }
+  }
 }
-if (-not $asset) {
-  $asset = $assets | Where-Object { $_.name -match '^ffmpeg-(n8\.0|master)-latest-win64-gpl-shared.*\.zip$' } | Select-Object -First 1
-}
-if (-not $asset) { throw 'No BtbN win64 GPL shared FFmpeg SDK asset was found in the latest release.' }
 
-$checksumAsset = $assets | Where-Object { $_.name -eq 'checksums.sha256' } | Select-Object -First 1
-if (-not $checksumAsset) { throw 'BtbN checksums.sha256 asset was not found.' }
-
+$download = Resolve-Download
 $temp = Join-Path $env:TEMP ('digitor-ffmpeg-' + [Guid]::NewGuid().ToString('N'))
-$zip = Join-Path $temp $asset.name
+$zip = Join-Path $temp $download.Name
 $checksums = Join-Path $temp 'checksums.sha256'
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 try {
-  Write-Host "Downloading $($asset.name)..."
-  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-  Invoke-WebRequest -Uri $checksumAsset.browser_download_url -OutFile $checksums
+  Write-Host "ASSET_RESOLUTION=$($download.Resolution)"
+  Write-Host "Downloading $($download.Name)..."
+  Invoke-WebRequest -Uri $download.ArchiveUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $zip
+  Invoke-WebRequest -Uri $download.ChecksumsUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $checksums
 
-  $expectedLine = Get-Content $checksums | Where-Object { $_ -match [regex]::Escape($asset.name) } | Select-Object -First 1
-  if (-not $expectedLine) { throw "Checksum entry missing for $($asset.name)" }
+  $expectedLine = Get-Content $checksums | Where-Object { $_ -match [regex]::Escape($download.Name) } | Select-Object -First 1
+  if (-not $expectedLine) { throw "Checksum entry missing for $($download.Name)" }
   $expected = ($expectedLine -split '\s+')[0].ToLowerInvariant()
   $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-  if ($actual -ne $expected) { throw "SHA256 mismatch for $($asset.name)" }
+  if ($actual -ne $expected) { throw "SHA256 mismatch for $($download.Name)" }
+  Write-Host "SHA256_VERIFIED=$actual"
 
   $extract = Join-Path $temp 'extract'
   Expand-Archive -Path $zip -DestinationPath $extract -Force
   $sdkRoot = Get-ChildItem $extract -Directory | Where-Object {
     (Test-Path (Join-Path $_.FullName 'bin\ffmpeg.exe')) -and
+    (Test-Path (Join-Path $_.FullName 'bin\ffprobe.exe')) -and
     (Test-Path (Join-Path $_.FullName 'include\libavcodec\avcodec.h')) -and
     (Test-Path (Join-Path $_.FullName 'lib\avcodec.lib'))
   } | Select-Object -First 1
