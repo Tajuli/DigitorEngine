@@ -11,6 +11,11 @@ namespace {
   return std::isfinite(value);
 }
 
+[[nodiscard]] bool valid_interpolation(KeyframeInterpolation value) noexcept {
+  return static_cast<std::uint32_t>(value) <=
+         static_cast<std::uint32_t>(KeyframeInterpolation::cubic_bezier);
+}
+
 [[nodiscard]] double smoothstep(double t) noexcept {
   return t * t * (3.0 - 2.0 * t);
 }
@@ -85,6 +90,7 @@ KeyframeStatus validate_keyframe_track(const KeyframeTrack& track) noexcept {
   for (std::size_t index = 0; index < track.keyframes.size(); ++index) {
     const auto& keyframe = track.keyframes[index];
     if (!finite(keyframe.time_seconds) || !finite(keyframe.value) ||
+        !valid_interpolation(keyframe.interpolation) ||
         keyframe.time_seconds < 0.0 ||
         (index > 0u && keyframe.time_seconds <= previous_time) ||
         !finite(keyframe.control_out_x) || !finite(keyframe.control_out_y) ||
