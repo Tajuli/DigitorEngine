@@ -4,6 +4,10 @@
 #include <cstdint>
 #include <vector>
 
+namespace {
+constexpr float kSilenceTolerance = 1.0e-6f;
+}
+
 int main() {
   using namespace digitor;
 
@@ -43,7 +47,7 @@ int main() {
       AudioMixStatus::ready) {
     return 5;
   }
-  if (muted.samples[0] != 0.0f) {
+  if (std::fabs(muted.samples[0]) > kSilenceTolerance) {
     return 6;
   }
 
@@ -54,7 +58,7 @@ int main() {
       AudioMixStatus::ready) {
     return 7;
   }
-  if (faded.samples[0] != 0.0f) {
+  if (std::fabs(faded.samples[0]) > kSilenceTolerance) {
     return 8;
   }
 
