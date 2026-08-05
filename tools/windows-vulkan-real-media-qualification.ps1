@@ -82,7 +82,7 @@ try {
     $cfr = Join-Path $FixtureDir 'digitor-cfr.mp4'
     $vfr = Join-Path $FixtureDir 'digitor-vfr.mp4'
     Invoke-Logged 'generate-cfr' {
-      ffmpeg -y -f lavfi -i 'testsrc2=size=1280x720:rate=30' -f lavfi -i 'sine=frequency=1000:sample_rate=48000' -t 4 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $cfr
+      ffmpeg -y -f lavfi -i 'testsrc2=size=320x180:rate=30' -f lavfi -i 'sine=frequency=1000:sample_rate=48000' -t 4 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $cfr
     }
     Invoke-Logged 'generate-vfr' {
       ffmpeg -y -f lavfi -i 'testsrc2=size=640x360:rate=30' -vf "select='not(mod(n,3))',setpts=N/(12*TB)" -vsync vfr -t 4 -c:v libx264 -pix_fmt yuv420p $vfr
