@@ -66,6 +66,13 @@ CaptureStatus ProductionEvidenceCapture::add_sample(
     return result_.status;
   }
 
+  if (config_.require_preview_export_parity &&
+      (sample.preview_digest == 0u ||
+       sample.preview_digest != sample.export_digest)) {
+    result_.status = CaptureStatus::failed;
+    return result_.status;
+  }
+
   frame_times_.push_back(sample.frame_time_ms);
   ++result_.accepted_frames;
   result_.dropped_frames += sample.dropped ? 1u : 0u;
