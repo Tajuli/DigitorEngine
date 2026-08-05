@@ -1,0 +1,33 @@
+name: Production Runtime Release Readiness
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_runtime_session.hpp'
+      - 'src/runtime/production_runtime_session.cpp'
+      - 'tests/production_runtime_session/**'
+      - 'docs/production-runtime-release-readiness-v1.md'
+      - 'docs/release-readiness-checklist.md'
+      - '.github/workflows/production-runtime-release-readiness.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_runtime_session -B build/runtime-session -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/runtime-session --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/runtime-session/digitor_production_runtime_session
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\runtime-session\Release\digitor_production_runtime_session.exe
