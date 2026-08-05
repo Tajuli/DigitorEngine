@@ -1,0 +1,26 @@
+name: Production Video Transitions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_transitions -B build/transitions -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/transitions --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/transitions/digitor_production_transitions
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\transitions\Release\digitor_production_transitions.exe
