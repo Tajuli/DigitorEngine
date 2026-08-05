@@ -1,0 +1,26 @@
+name: Production Release Candidate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_release_candidate -B build/release-candidate -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/release-candidate --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/release-candidate/digitor_production_release_candidate
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\release-candidate\Release\digitor_production_release_candidate.exe
