@@ -1,0 +1,31 @@
+name: Production Release Automation
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_release_automation.hpp'
+      - 'src/release/production_release_automation.cpp'
+      - 'tests/production_release_automation/**'
+      - 'docs/production-release-automation-v1.md'
+      - 'release/release-automation.schema.json'
+      - '.github/workflows/production-release-automation.yml'
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_release_automation -B build/release-automation -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/release-automation --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/release-automation/digitor_production_release_automation
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\release-automation\Release\digitor_production_release_automation.exe
