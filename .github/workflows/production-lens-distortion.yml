@@ -1,0 +1,24 @@
+name: Production Lens Distortion
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_lens_distortion -B build/lens -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/lens --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/lens/digitor_production_lens_distortion
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\lens\Release\digitor_production_lens_distortion.exe
