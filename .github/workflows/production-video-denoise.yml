@@ -1,0 +1,28 @@
+name: Production Video Denoise
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/video-denoise --config Release --parallel 2
+      - run: build/video-denoise/digitor_production_video_denoise
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/video-denoise --config Release --parallel 2
+      - run: build/video-denoise/Release/digitor_production_video_denoise.exe
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/video-denoise --config Release --parallel 2
+      - run: build/video-denoise/digitor_production_video_denoise
