@@ -1,0 +1,26 @@
+name: Production Masks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_masks -B build/masks -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/masks --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/masks/digitor_production_masks
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\masks\Release\digitor_production_masks.exe
