@@ -2,8 +2,24 @@ name: FFmpeg Export Runtime
 
 on:
   pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/renderer.hpp'
+      - 'src/render/export.cpp'
+      - 'src/render/ffmpeg_export_runtime.cpp'
+      - 'tests/test_ffmpeg_export_runtime.cpp'
+      - '.github/workflows/ffmpeg-export-runtime.yml'
   push:
     branches: [main]
+    paths:
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/digitor/renderer.hpp'
+      - 'src/render/export.cpp'
+      - 'src/render/ffmpeg_export_runtime.cpp'
+      - 'tests/test_ffmpeg_export_runtime.cpp'
+      - '.github/workflows/ffmpeg-export-runtime.yml'
 
 jobs:
   qualify:
