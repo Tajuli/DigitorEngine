@@ -1,0 +1,26 @@
+name: Production Resilience and Release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_resilience_release -B build/resilience -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/resilience --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/resilience/digitor_production_resilience_release
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\resilience\Release\digitor_production_resilience_release.exe
