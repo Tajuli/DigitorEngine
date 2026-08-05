@@ -1,0 +1,47 @@
+name: Windows Long-Run Stability Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Stress iterations'
+        required: false
+        default: '120'
+  pull_request:
+    paths:
+      - 'tests/test_windows_long_run_stability.cpp'
+      - 'tests/windows_long_run_stability/**'
+      - 'tools/windows-long-run-stability.ps1'
+      - '.github/workflows/windows-long-run-stability.yml'
+
+jobs:
+  source-validation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\windows-long-run-stability.ps1'),
+            [ref]$null,
+            [ref]$errors)
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+
+  physical-gpu-stability:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, digitor-gpu]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run long-run stability qualification
+        shell: pwsh
+        env:
+          DIGITOR_FFMPEG_ROOT: ${{ vars.DIGITOR_FFMPEG_ROOT }}
+        run: .\tools\windows-long-run-stability.ps1 -Iterations ${{ inputs.iterations }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-long-run-stability
+          path: artifacts/windows-long-run-stability
+          if-no-files-found: error
