@@ -21,12 +21,16 @@ function Invoke-Logged {
   $previous = $ErrorActionPreference
   try {
     $ErrorActionPreference = 'Continue'
-    & $Command 2>&1 | Tee-Object -FilePath $log
+    & $Command *> $log
     $exit = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previous
   }
-  if ($exit -ne 0) { throw "$Name failed with exit code $exit. See $log" }
+  if ($exit -ne 0) {
+    Get-Content $log -Tail 80
+    throw "$Name failed with exit code $exit. See $log"
+  }
+  Write-Host "$Name=PASS (log: $log)"
 }
 
 function Require-Marker {
@@ -82,10 +86,10 @@ try {
     $cfr = Join-Path $FixtureDir 'digitor-cfr.mp4'
     $vfr = Join-Path $FixtureDir 'digitor-vfr.mp4'
     Invoke-Logged 'generate-cfr' {
-      ffmpeg -y -f lavfi -i 'testsrc2=size=320x180:rate=30' -f lavfi -i 'sine=frequency=1000:sample_rate=48000' -t 4 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $cfr
+      ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=320x180:rate=30' -f lavfi -i 'sine=frequency=1000:sample_rate=48000' -t 4 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest $cfr
     }
     Invoke-Logged 'generate-vfr' {
-      ffmpeg -y -f lavfi -i 'testsrc2=size=640x360:rate=30' -vf "select='not(mod(n,3))',setpts=N/(12*TB)" -vsync vfr -t 4 -c:v libx264 -pix_fmt yuv420p $vfr
+      ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'testsrc2=size=640x360:rate=30' -vf "select='not(mod(n,3))',setpts=N/(12*TB)" -fps_mode vfr -t 4 -c:v libx264 -pix_fmt yuv420p $vfr
     }
     Invoke-Logged 'probe-cfr' { ffprobe -v error -show_streams -show_format $cfr }
     Invoke-Logged 'probe-vfr' { ffprobe -v error -show_streams -show_format $vfr }
