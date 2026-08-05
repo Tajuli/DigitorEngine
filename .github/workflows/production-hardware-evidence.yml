@@ -1,0 +1,31 @@
+name: Production Hardware Evidence
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_hardware_evidence.hpp'
+      - 'src/release/production_hardware_evidence.cpp'
+      - 'tests/production_hardware_evidence/**'
+      - 'schemas/hardware-evidence.schema.json'
+      - '.github/workflows/production-hardware-evidence.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_hardware_evidence -B build/hardware-evidence -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/hardware-evidence --config Release
+      - name: Test
+        run: ctest --test-dir build/hardware-evidence -C Release --output-on-failure
