@@ -1,5 +1,6 @@
 name: Android Physical GPU Qualification
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'include/digitor/android_gpu_qualification.hpp'
