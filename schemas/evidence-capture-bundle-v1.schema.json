@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://digitor.dev/schemas/evidence-capture-bundle-v1.schema.json",
+  "title": "DigitorEngine Evidence Capture Bundle v1",
+  "type": "object",
+  "required": ["platform", "backend", "device", "engine", "metrics", "digests", "attestation"],
+  "properties": {
+    "platform": {"enum": ["windows", "android", "macos", "ios"]},
+    "backend": {"enum": ["vulkan", "d3d12", "metal", "gles"]},
+    "device": {
+      "type": "object",
+      "required": ["id", "gpu", "driver", "realDevice"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "gpu": {"type": "string", "minLength": 1},
+        "driver": {"type": "string", "minLength": 1},
+        "realDevice": {"const": true}
+      }
+    },
+    "engine": {
+      "type": "object",
+      "required": ["version", "sourceCommit"],
+      "properties": {
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "sourceCommit": {"type": "string", "minLength": 7}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["acceptedFrames", "soakSeconds", "averageFrameMs", "p95FrameMs", "droppedFrames", "validationErrors", "deviceLossEvents"],
+      "properties": {
+        "acceptedFrames": {"type": "integer", "minimum": 1},
+        "soakSeconds": {"type": "integer", "minimum": 1},
+        "averageFrameMs": {"type": "number", "exclusiveMinimum": 0},
+        "p95FrameMs": {"type": "number", "exclusiveMinimum": 0},
+        "droppedFrames": {"type": "integer", "minimum": 0},
+        "validationErrors": {"type": "integer", "minimum": 0},
+        "deviceLossEvents": {"type": "integer", "minimum": 0}
+      }
+    },
+    "digests": {
+      "type": "object",
+      "required": ["preview", "export", "bundleSha256"],
+      "properties": {
+        "preview": {"type": "integer", "minimum": 1},
+        "export": {"type": "integer", "minimum": 1},
+        "bundleSha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "required": ["gpuExecutionObserved", "silentCpuFallbackObserved", "signed"],
+      "properties": {
+        "gpuExecutionObserved": {"const": true},
+        "silentCpuFallbackObserved": {"const": false},
+        "signed": {"type": "boolean"}
+      }
+    }
+  },
+  "additionalProperties": false
+}
