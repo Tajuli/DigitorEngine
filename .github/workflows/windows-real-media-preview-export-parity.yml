@@ -1,0 +1,54 @@
+name: Windows Real-Media Preview Export Parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/gpu/**'
+      - 'src/media/**'
+      - 'src/render/**'
+      - 'include/digitor/media.hpp'
+      - 'include/digitor/primary_wheels.hpp'
+      - 'include/digitor/log_wheels.hpp'
+      - 'include/digitor/rgb_curves.hpp'
+      - 'include/digitor/qualifier.hpp'
+      - 'include/digitor/renderer.hpp'
+      - 'tests/test_real_media_preview_export_parity.cpp'
+      - 'tests/real_media_preview_export_parity/**'
+      - 'tools/windows-real-media-preview-export-parity.ps1'
+      - '.github/workflows/windows-real-media-preview-export-parity.yml'
+
+jobs:
+  source-and-script-validation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\windows-real-media-preview-export-parity.ps1'),
+            [ref]$null,
+            [ref]$errors)
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+      - name: Configure compile contract without FFmpeg
+        shell: pwsh
+        run: cmake -S . -B build/source-check -A x64 -DDIGITOR_BUILD_TESTS=OFF -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=OFF
+
+  physical-windows-parity:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, digitor-gpu]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run physical preview/export parity qualification
+        shell: pwsh
+        env:
+          DIGITOR_FFMPEG_ROOT: ${{ vars.DIGITOR_FFMPEG_ROOT }}
+        run: .\tools\windows-real-media-preview-export-parity.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-real-media-preview-export-parity
+          path: artifacts/windows-real-media-preview-export-parity
+          if-no-files-found: error
