@@ -1,0 +1,47 @@
+name: Windows Vulkan and real-media qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/platform/windows/**'
+      - 'src/media/**'
+      - 'src/runtime/**'
+      - 'src/render/**'
+      - 'tests/test_native_gpu.cpp'
+      - 'tests/test_ffmpeg_real_media.cpp'
+      - 'tests/test_ffmpeg_vfr_parity.cpp'
+      - 'tools/windows-vulkan-real-media-qualification.ps1'
+      - '.github/workflows/windows-vulkan-real-media-qualification.yml'
+
+jobs:
+  source-and-script-validation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\tools\windows-vulkan-real-media-qualification.ps1'),
+            [ref]$null,
+            [ref]$errors)
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+
+  physical-windows-qualification:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, digitor-gpu]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Vulkan and real-media qualification
+        shell: pwsh
+        env:
+          DIGITOR_FFMPEG_ROOT: ${{ vars.DIGITOR_FFMPEG_ROOT }}
+        run: .\tools\windows-vulkan-real-media-qualification.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-vulkan-real-media-qualification
+          path: artifacts/windows-vulkan-real-media-qualification
+          if-no-files-found: error
