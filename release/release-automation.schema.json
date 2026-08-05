@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DigitorEngine Release Automation Manifest",
+  "type": "object",
+  "required": ["version", "tag", "sourceCommit", "abiMajor", "artifacts"],
+  "properties": {
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "sourceCommit": {"type": "string", "minLength": 7},
+    "abiMajor": {"type": "integer", "minimum": 1},
+    "abiMinor": {"type": "integer", "minimum": 0},
+    "dryRun": {"type": "boolean"},
+    "artifacts": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["platform", "architecture", "packageName", "sha256", "sizeBytes", "sbom", "provenance", "consumerSmoke", "symbolsVerified", "signingComplete", "hardwareEvidence"],
+        "properties": {
+          "platform": {"enum": ["windows", "android", "macos", "ios"]},
+          "architecture": {"type": "string", "minLength": 1},
+          "packageName": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+          "sizeBytes": {"type": "integer", "minimum": 1},
+          "sbom": {"type": "boolean"},
+          "provenance": {"type": "boolean"},
+          "consumerSmoke": {"type": "boolean"},
+          "symbolsVerified": {"type": "boolean"},
+          "signingComplete": {"type": "boolean"},
+          "hardwareEvidence": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}
