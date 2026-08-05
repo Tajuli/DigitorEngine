@@ -1,0 +1,31 @@
+name: Production Layer Compositing
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_layer_compositing.hpp'
+      - 'src/gpu/production_layer_compositing.cpp'
+      - 'tests/production_layer_compositing/**'
+      - '.github/workflows/production-layer-compositing.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_layer_compositing -B build/layer-compositing -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/layer-compositing --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/layer-compositing/digitor_production_layer_compositing
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\layer-compositing\Release\digitor_production_layer_compositing.exe
