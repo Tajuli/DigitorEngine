@@ -1,0 +1,32 @@
+name: Android Physical GPU Qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'include/digitor/android_gpu_qualification.hpp'
+      - 'src/gpu/android_gpu_qualification.cpp'
+      - 'tests/android_gpu_qualification/**'
+      - 'tools/android-production-qualification.sh'
+      - '.github/workflows/android-physical-gpu-qualification.yml'
+  push:
+    branches: [main]
+jobs:
+  contract:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/android_gpu_qualification -B build/android-gpu -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/android-gpu --config Release --parallel 2
+      - if: runner.os != 'Windows'
+        run: ./build/android-gpu/digitor_android_gpu_qualification
+      - if: runner.os == 'Windows'
+        run: .\build\android-gpu\Release\digitor_android_gpu_qualification.exe
+  physical-device:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, android, digitor-gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/android-production-qualification.sh
