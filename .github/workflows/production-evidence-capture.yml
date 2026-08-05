@@ -1,0 +1,28 @@
+name: Production Evidence Capture
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/production_evidence_capture.hpp'
+      - 'src/release/production_evidence_capture.cpp'
+      - 'tests/production_evidence_capture/**'
+      - 'schemas/evidence-capture-bundle-v1.schema.json'
+      - '.github/workflows/production-evidence-capture.yml'
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_evidence_capture -B build/evidence-capture -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/evidence-capture --config Release
+      - name: Test
+        run: ctest --test-dir build/evidence-capture -C Release --output-on-failure
