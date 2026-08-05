@@ -11,7 +11,7 @@ $Repository = 'BtbN/FFmpeg-Builds'
 $ReleaseApi = "https://api.github.com/repos/$Repository/releases/latest"
 $LatestDownloadBase = "https://github.com/$Repository/releases/download/latest"
 $PreferredNames = @(
-  'ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip',
+  'ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip',
   'ffmpeg-master-latest-win64-gpl-shared.zip'
 )
 
@@ -35,46 +35,71 @@ function Add-UserPath([string]$PathToAdd) {
   }
 }
 
-function Resolve-Download {
-  try {
-    $release = Invoke-RestMethod -Uri $ReleaseApi -Headers (Get-GitHubHeaders)
-    $assets = @($release.assets)
-    foreach ($name in $PreferredNames) {
-      $asset = $assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-      if ($asset) {
-        $checksumAsset = $assets | Where-Object { $_.name -eq 'checksums.sha256' } | Select-Object -First 1
-        if (-not $checksumAsset) { throw 'BtbN checksums.sha256 asset was not found.' }
-        return [pscustomobject]@{
-          Name = $asset.name
-          ArchiveUrl = $asset.browser_download_url
-          ChecksumsUrl = $checksumAsset.browser_download_url
-          Resolution = 'GitHub API'
-        }
+function Resolve-DownloadFromApi {
+  $release = Invoke-RestMethod -Uri $ReleaseApi -Headers (Get-GitHubHeaders)
+  $assets = @($release.assets)
+  foreach ($name in $PreferredNames) {
+    $asset = $assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+    if ($asset) {
+      $checksumAsset = $assets | Where-Object { $_.name -eq 'checksums.sha256' } | Select-Object -First 1
+      if (-not $checksumAsset) { throw 'BtbN checksums.sha256 asset was not found.' }
+      return [pscustomobject]@{
+        Name = $asset.name
+        ArchiveUrl = $asset.browser_download_url
+        ChecksumsUrl = $checksumAsset.browser_download_url
+        Resolution = 'GitHub API'
       }
     }
-    throw 'No preferred BtbN win64 GPL shared FFmpeg SDK asset was found.'
-  } catch {
-    Write-Warning "GitHub release API unavailable or rate-limited: $($_.Exception.Message)"
-    Write-Host 'Falling back to BtbN latest-release download aliases (no API request).'
-    return [pscustomobject]@{
-      Name = $PreferredNames[0]
-      ArchiveUrl = "$LatestDownloadBase/$($PreferredNames[0])"
-      ChecksumsUrl = "$LatestDownloadBase/checksums.sha256"
-      Resolution = 'latest release alias fallback'
-    }
   }
+  throw 'No preferred BtbN win64 GPL shared FFmpeg SDK asset was found.'
 }
 
-$download = Resolve-Download
 $temp = Join-Path $env:TEMP ('digitor-ffmpeg-' + [Guid]::NewGuid().ToString('N'))
-$zip = Join-Path $temp $download.Name
 $checksums = Join-Path $temp 'checksums.sha256'
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
+
 try {
+  try {
+    $download = Resolve-DownloadFromApi
+  } catch {
+    Write-Warning "GitHub release API unavailable or rate-limited: $($_.Exception.Message)"
+    Write-Host 'Falling back to BtbN latest-release checksums (no API request).'
+    $checksumsUrl = "$LatestDownloadBase/checksums.sha256"
+    Invoke-WebRequest -Uri $checksumsUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $checksums
+
+    $availableNames = Get-Content $checksums | ForEach-Object {
+      if ($_ -match '^\s*[0-9a-fA-F]{64}\s+\*?(ffmpeg-(?:n[0-9]+\.[0-9]+|master)-latest-win64-gpl-shared(?:-[0-9]+\.[0-9]+)?\.zip)\s*$') {
+        $matches[1]
+      }
+    }
+    $selectedName = $null
+    foreach ($name in $PreferredNames) {
+      if ($availableNames -contains $name) { $selectedName = $name; break }
+    }
+    if (-not $selectedName) {
+      $selectedName = $availableNames | Where-Object { $_ -notmatch 'master' } | Sort-Object -Descending | Select-Object -First 1
+    }
+    if (-not $selectedName) {
+      $selectedName = $availableNames | Where-Object { $_ -match 'master' } | Select-Object -First 1
+    }
+    if (-not $selectedName) { throw 'No current BtbN win64 GPL shared SDK asset was listed in checksums.sha256.' }
+
+    $download = [pscustomobject]@{
+      Name = $selectedName
+      ArchiveUrl = "$LatestDownloadBase/$selectedName"
+      ChecksumsUrl = $checksumsUrl
+      Resolution = 'latest checksums discovery'
+    }
+  }
+
+  $zip = Join-Path $temp $download.Name
   Write-Host "ASSET_RESOLUTION=$($download.Resolution)"
+  Write-Host "FFMPEG_ASSET=$($download.Name)"
   Write-Host "Downloading $($download.Name)..."
   Invoke-WebRequest -Uri $download.ArchiveUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $zip
-  Invoke-WebRequest -Uri $download.ChecksumsUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $checksums
+  if (-not (Test-Path $checksums)) {
+    Invoke-WebRequest -Uri $download.ChecksumsUrl -Headers @{ 'User-Agent' = 'DigitorEngine-Dependency-Setup' } -OutFile $checksums
+  }
 
   $expectedLine = Get-Content $checksums | Where-Object { $_ -match [regex]::Escape($download.Name) } | Select-Object -First 1
   if (-not $expectedLine) { throw "Checksum entry missing for $($download.Name)" }
