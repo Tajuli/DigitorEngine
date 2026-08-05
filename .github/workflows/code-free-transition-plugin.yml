@@ -1,16 +1,24 @@
-name: Code-free Transition Plugin
+name: Unified Transition Subsystem
 
 on:
   pull_request:
     paths:
       - 'include/digitor/remote_plugin_marketplace.hpp'
       - 'include/digitor/plugin_transition_program.hpp'
+      - 'include/digitor/plugin_transition_runtime.hpp'
+      - 'include/digitor/production_transitions.hpp'
+      - 'include/digitor/transition_subsystem.hpp'
       - 'src/plugin/remote_plugin_marketplace.cpp'
       - 'src/plugin/plugin_gpu_program.cpp'
       - 'src/plugin/plugin_transition_runtime.cpp'
       - 'src/plugin/plugin_transition_program.cpp'
+      - 'src/plugin/transition_subsystem.cpp'
+      - 'src/gpu/production_transitions.cpp'
       - 'tests/code_free_transition_plugin/**'
+      - 'tests/production_transitions/**'
       - '.github/workflows/code-free-transition-plugin.yml'
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -20,17 +28,25 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
+      - name: Configure plugin transition qualification
         run: cmake -S tests/code_free_transition_plugin -B build/code-free-transition-plugin -DCMAKE_BUILD_TYPE=Release
-      - name: Build
+      - name: Build plugin transition qualification
         run: cmake --build build/code-free-transition-plugin --config Release --parallel 2
+      - name: Configure unified transition qualification
+        run: cmake -S tests/production_transitions -B build/transition-subsystem -DCMAKE_BUILD_TYPE=Release
+      - name: Build unified transition qualification
+        run: cmake --build build/transition-subsystem --config Release --parallel 2
       - name: Qualify Unix
         if: runner.os != 'Windows'
-        run: build/code-free-transition-plugin/digitor_code_free_transition_plugin_qualification
+        run: |
+          build/code-free-transition-plugin/digitor_code_free_transition_plugin_qualification
+          build/transition-subsystem/digitor_transition_subsystem_qualification
       - name: Qualify Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: build/code-free-transition-plugin/Release/digitor_code_free_transition_plugin_qualification.exe
+        run: |
+          build/code-free-transition-plugin/Release/digitor_code_free_transition_plugin_qualification.exe
+          build/transition-subsystem/Release/digitor_transition_subsystem_qualification.exe
