@@ -13,11 +13,12 @@ on:
       - 'src/platform/windows/windows_d3d12_builtin_effect_shaders.cpp'
       - 'tests/test_windows_d3d12_effects_qualification.cpp'
       - 'tests/windows_d3d12_effects_qualification/CMakeLists.txt'
+      - 'tools/windows-production-qualification.ps1'
       - '.github/workflows/windows-d3d12-effects-qualification.yml'
   workflow_dispatch:
 
 jobs:
-  qualify:
+  compile-contract:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -26,18 +27,36 @@ jobs:
         run: cmake -S tests/windows_d3d12_effects_qualification -B build/d3d12-effects -A x64 -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build/d3d12-effects --config Release --parallel 2
-      - name: Execute qualification
+
+  physical-gpu-qualification:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Windows, X64, digitor-gpu]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute production qualification
+        shell: pwsh
+        run: .\tools\windows-production-qualification.ps1 -SkipFullSuite
+      - name: Verify physical GPU evidence
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          & .\build\d3d12-effects\Release\digitor_windows_d3d12_effects_qualification.exe 2>&1 |
-            Tee-Object artifacts\windows-d3d12-effects-qualification.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Select-String -Path artifacts\windows-d3d12-effects-qualification.log -Pattern 'D3D12_EFFECTS_QUALIFICATION=PASS' -Quiet |
-            ForEach-Object { if (-not $_) { throw 'qualification PASS marker missing' } }
+          $log = 'artifacts/windows-production-qualification/d3d12-effects.log'
+          if (-not (Test-Path $log)) { throw 'D3D12 qualification evidence missing' }
+          $required = @(
+            'D3D12_EFFECTS_QUALIFICATION=PASS',
+            'ADAPTER_CLASS=HARDWARE',
+            'CPU_READBACKS=0',
+            'CPU_REUPLOADS=0',
+            'FALLBACK_DISPATCHES=0'
+          )
+          foreach ($marker in $required) {
+            if (-not (Select-String -Path $log -SimpleMatch $marker -Quiet)) {
+              throw "qualification marker missing: $marker"
+            }
+          }
       - name: Upload evidence
         uses: actions/upload-artifact@v4
         with:
-          name: windows-d3d12-effects-qualification
-          path: artifacts/windows-d3d12-effects-qualification.log
+          name: windows-production-qualification
+          path: artifacts/windows-production-qualification
           if-no-files-found: error
