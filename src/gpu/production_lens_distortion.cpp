@@ -1,17 +1,244 @@
 #include "digitor/production_lens_distortion.hpp"
+
 #include <algorithm>
 #include <cmath>
 
-namespace digitor { namespace {
-float clamp01(float v){return std::clamp(v,0.0f,1.0f);} 
-float mirror(float v){v=std::fmod(std::fabs(v),2.0f);return v>1.0f?2.0f-v:v;}
-bool valid(const LensDistortionSettings&s){return std::isfinite(s.k1)&&std::isfinite(s.k2)&&std::isfinite(s.k3)&&std::isfinite(s.p1)&&std::isfinite(s.p2)&&s.scale>0&&s.aspect>0&&s.center_x>=0&&s.center_x<=1&&s.center_y>=0&&s.center_y<=1&&s.chromatic_aberration>=0&&s.chromatic_aberration<=0.1f;}
-std::uint64_t append(std::uint64_t h,const void*p,std::size_t n){const auto*b=static_cast<const unsigned char*>(p);for(std::size_t i=0;i<n;++i){h^=b[i];h*=1099511628211ull;}return h;}
-LensPixel sample(const LensFrame&f,float u,float v,LensEdgeMode e){if(e==LensEdgeMode::mirror){u=mirror(u);v=mirror(v);}else if(e==LensEdgeMode::clamp){u=clamp01(u);v=clamp01(v);}else if(u<0||u>1||v<0||v>1)return{};float x=u*(f.width-1),y=v*(f.height-1);auto x0=static_cast<std::uint32_t>(x),y0=static_cast<std::uint32_t>(y);auto x1=std::min(x0+1,f.width-1),y1=std::min(y0+1,f.height-1);float tx=x-x0,ty=y-y0;auto p00=f.pixels[std::size_t(y0)*f.width+x0],p10=f.pixels[std::size_t(y0)*f.width+x1],p01=f.pixels[std::size_t(y1)*f.width+x0],p11=f.pixels[std::size_t(y1)*f.width+x1];LensPixel o;float*w=&o.r;const float*a=&p00.r,*b=&p10.r,*c=&p01.r,*d=&p11.r;for(int i=0;i<4;++i)w[i]=((a[i]*(1-tx)+b[i]*tx)*(1-ty)+(c[i]*(1-tx)+d[i]*tx)*ty);return o;}
-void map(float u,float v,const LensDistortionSettings&s,float&su,float&sv){float x=(u-s.center_x)*2.0f*s.aspect/s.scale,y=(v-s.center_y)*2.0f/s.scale;float r2=x*x+y*y,radial=1+s.k1*r2+s.k2*r2*r2+s.k3*r2*r2*r2;float dx=2*s.p1*x*y+s.p2*(r2+2*x*x),dy=s.p1*(r2+2*y*y)+2*s.p2*x*y;if(s.mode==LensMode::correct){for(int i=0;i<5;++i){float rr=x*x+y*y,rd=1+s.k1*rr+s.k2*rr*rr+s.k3*rr*rr*rr;x=(x-dx)/rd;y=(y-dy)/rd;}}else{x=x*radial+dx;y=y*radial+dy;}su=s.center_x+x*s.scale/(2*s.aspect);sv=s.center_y+y*s.scale/2;}
-}}
-std::uint64_t lens_frame_digest(const LensFrame&f) noexcept{std::uint64_t h=1469598103934665603ull;h=append(h,&f.width,sizeof f.width);h=append(h,&f.height,sizeof f.height);if(!f.pixels.empty())h=append(h,f.pixels.data(),f.pixels.size()*sizeof(LensPixel));return h;}
-LensResult apply_lens_distortion_reference(const LensFrame&in,LensFrame&out,const LensDistortionSettings&s){LensResult r;if(!valid(s)||!in.width||!in.height||in.pixels.size()!=std::size_t(in.width)*in.height)return r;out={in.width,in.height,{}};out.pixels.resize(in.pixels.size());for(std::uint32_t y=0;y<in.height;++y)for(std::uint32_t x=0;x<in.width;++x){float u=float(x)/std::max(1u,in.width-1),v=float(y)/std::max(1u,in.height-1),su,sv;map(u,v,s,su,sv);if(s.chromatic_aberration>0){auto pr=sample(in,su+s.chromatic_aberration,sv,s.edge_mode),pg=sample(in,su,sv,s.edge_mode),pb=sample(in,su-s.chromatic_aberration,sv,s.edge_mode);out.pixels[std::size_t(y)*in.width+x]={pr.r,pg.g,pb.b,pg.a};}else out.pixels[std::size_t(y)*in.width+x]=sample(in,su,sv,s.edge_mode);}r.status=LensStatus::ready;r.digest=lens_frame_digest(out);return r;}
-LensResult dispatch_lens_distortion_gpu(const LensDispatchPacket&p,const LensDispatch&d){LensResult r;if(p.backend==LensBackend::cpu||!p.width||!p.height||!p.input_handle||!p.output_handle||!p.command_handle||!valid(p.settings))return r;if(!d){r.status=LensStatus::backend_unavailable;return r;}r.status=d(p)?LensStatus::ready:LensStatus::dispatch_failed;return r;}
+namespace digitor {
+namespace {
+
+float clamp01(float value) noexcept {
+  return std::clamp(value, 0.0f, 1.0f);
 }
-extern "C" std::uint32_t digitor_lens_distortion_rgba32f(const float*in,float*out,std::uint32_t w,std::uint32_t h,const DigitorLensDistortionSettings*c,std::uint64_t*d){if(!in||!out||!c||!d||!w||!h)return 1;digitor::LensFrame f{w,h,{}};f.pixels.resize(std::size_t(w)*h);for(std::size_t i=0;i<f.pixels.size();++i)f.pixels[i]={in[i*4],in[i*4+1],in[i*4+2],in[i*4+3]};digitor::LensDistortionSettings s;s.mode=static_cast<digitor::LensMode>(c->mode);s.edge_mode=static_cast<digitor::LensEdgeMode>(c->edge_mode);s.k1=c->k1;s.k2=c->k2;s.k3=c->k3;s.p1=c->p1;s.p2=c->p2;s.center_x=c->center_x;s.center_y=c->center_y;s.scale=c->scale;s.aspect=c->aspect;s.chromatic_aberration=c->chromatic_aberration;s.high_quality=c->high_quality!=0;digitor::LensFrame o;auto r=digitor::apply_lens_distortion_reference(f,o,s);if(r.status!=digitor::LensStatus::ready)return 2;for(std::size_t i=0;i<o.pixels.size();++i){out[i*4]=o.pixels[i].r;out[i*4+1]=o.pixels[i].g;out[i*4+2]=o.pixels[i].b;out[i*4+3]=o.pixels[i].a;}*d=r.digest;return 0;}
+
+float mirror_coordinate(float value) noexcept {
+  value = std::fmod(std::fabs(value), 2.0f);
+  return value > 1.0f ? 2.0f - value : value;
+}
+
+bool valid_settings(const LensDistortionSettings& settings) noexcept {
+  return std::isfinite(settings.k1) && std::isfinite(settings.k2) &&
+         std::isfinite(settings.k3) && std::isfinite(settings.p1) &&
+         std::isfinite(settings.p2) && settings.scale > 0.0f &&
+         settings.aspect > 0.0f && settings.center_x >= 0.0f &&
+         settings.center_x <= 1.0f && settings.center_y >= 0.0f &&
+         settings.center_y <= 1.0f && settings.chromatic_aberration >= 0.0f &&
+         settings.chromatic_aberration <= 0.1f;
+}
+
+std::uint64_t append_hash(std::uint64_t hash, const void* data,
+                          std::size_t size) noexcept {
+  const auto* bytes = static_cast<const unsigned char*>(data);
+  for (std::size_t index = 0; index < size; ++index) {
+    hash ^= bytes[index];
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+LensPixel sample(const LensFrame& frame, float u, float v,
+                 LensEdgeMode edge_mode) noexcept {
+  if (edge_mode == LensEdgeMode::mirror) {
+    u = mirror_coordinate(u);
+    v = mirror_coordinate(v);
+  } else if (edge_mode == LensEdgeMode::clamp) {
+    u = clamp01(u);
+    v = clamp01(v);
+  } else if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) {
+    return {};
+  }
+
+  const float x = u * static_cast<float>(frame.width - 1u);
+  const float y = v * static_cast<float>(frame.height - 1u);
+  const auto x0 = static_cast<std::uint32_t>(x);
+  const auto y0 = static_cast<std::uint32_t>(y);
+  const auto x1 = std::min(x0 + 1u, frame.width - 1u);
+  const auto y1 = std::min(y0 + 1u, frame.height - 1u);
+  const float tx = x - static_cast<float>(x0);
+  const float ty = y - static_cast<float>(y0);
+
+  const auto p00 = frame.pixels[std::size_t(y0) * frame.width + x0];
+  const auto p10 = frame.pixels[std::size_t(y0) * frame.width + x1];
+  const auto p01 = frame.pixels[std::size_t(y1) * frame.width + x0];
+  const auto p11 = frame.pixels[std::size_t(y1) * frame.width + x1];
+
+  LensPixel output;
+  float* destination = &output.r;
+  const float* top_left = &p00.r;
+  const float* top_right = &p10.r;
+  const float* bottom_left = &p01.r;
+  const float* bottom_right = &p11.r;
+  for (int channel = 0; channel < 4; ++channel) {
+    const float top = top_left[channel] * (1.0f - tx) + top_right[channel] * tx;
+    const float bottom =
+        bottom_left[channel] * (1.0f - tx) + bottom_right[channel] * tx;
+    destination[channel] = top * (1.0f - ty) + bottom * ty;
+  }
+  return output;
+}
+
+void map_coordinate(float u, float v, const LensDistortionSettings& settings,
+                    float& source_u, float& source_v) noexcept {
+  float x = (u - settings.center_x) * 2.0f * settings.aspect / settings.scale;
+  float y = (v - settings.center_y) * 2.0f / settings.scale;
+
+  if (settings.mode == LensMode::correct) {
+    const float distorted_x = x;
+    const float distorted_y = y;
+    for (int iteration = 0; iteration < 5; ++iteration) {
+      const float radius_squared = x * x + y * y;
+      const float radial =
+          1.0f + settings.k1 * radius_squared +
+          settings.k2 * radius_squared * radius_squared +
+          settings.k3 * radius_squared * radius_squared * radius_squared;
+      const float delta_x = 2.0f * settings.p1 * x * y +
+                            settings.p2 * (radius_squared + 2.0f * x * x);
+      const float delta_y = settings.p1 * (radius_squared + 2.0f * y * y) +
+                            2.0f * settings.p2 * x * y;
+      if (std::fabs(radial) < 0.000001f) {
+        break;
+      }
+      x = (distorted_x - delta_x) / radial;
+      y = (distorted_y - delta_y) / radial;
+    }
+  } else {
+    const float radius_squared = x * x + y * y;
+    const float radial =
+        1.0f + settings.k1 * radius_squared +
+        settings.k2 * radius_squared * radius_squared +
+        settings.k3 * radius_squared * radius_squared * radius_squared;
+    const float delta_x = 2.0f * settings.p1 * x * y +
+                          settings.p2 * (radius_squared + 2.0f * x * x);
+    const float delta_y = settings.p1 * (radius_squared + 2.0f * y * y) +
+                          2.0f * settings.p2 * x * y;
+    x = x * radial + delta_x;
+    y = y * radial + delta_y;
+  }
+
+  source_u = settings.center_x + x * settings.scale / (2.0f * settings.aspect);
+  source_v = settings.center_y + y * settings.scale / 2.0f;
+}
+
+}  // namespace
+
+std::uint64_t lens_frame_digest(const LensFrame& frame) noexcept {
+  std::uint64_t hash = 1469598103934665603ull;
+  hash = append_hash(hash, &frame.width, sizeof(frame.width));
+  hash = append_hash(hash, &frame.height, sizeof(frame.height));
+  if (!frame.pixels.empty()) {
+    hash = append_hash(hash, frame.pixels.data(),
+                       frame.pixels.size() * sizeof(LensPixel));
+  }
+  return hash;
+}
+
+LensResult apply_lens_distortion_reference(
+    const LensFrame& input, LensFrame& output,
+    const LensDistortionSettings& settings) {
+  LensResult result;
+  if (!valid_settings(settings) || input.width == 0u || input.height == 0u ||
+      input.pixels.size() != std::size_t(input.width) * input.height) {
+    return result;
+  }
+
+  output = {input.width, input.height, {}};
+  output.pixels.resize(input.pixels.size());
+
+  for (std::uint32_t y = 0; y < input.height; ++y) {
+    for (std::uint32_t x = 0; x < input.width; ++x) {
+      const float u = static_cast<float>(x) /
+                      static_cast<float>(std::max(1u, input.width - 1u));
+      const float v = static_cast<float>(y) /
+                      static_cast<float>(std::max(1u, input.height - 1u));
+      float source_u = 0.0f;
+      float source_v = 0.0f;
+      map_coordinate(u, v, settings, source_u, source_v);
+
+      LensPixel pixel;
+      if (settings.chromatic_aberration > 0.0f) {
+        const auto red = sample(input, source_u + settings.chromatic_aberration,
+                                source_v, settings.edge_mode);
+        const auto green = sample(input, source_u, source_v, settings.edge_mode);
+        const auto blue = sample(input, source_u - settings.chromatic_aberration,
+                                 source_v, settings.edge_mode);
+        pixel = {red.r, green.g, blue.b, green.a};
+      } else {
+        pixel = sample(input, source_u, source_v, settings.edge_mode);
+      }
+      output.pixels[std::size_t(y) * input.width + x] = pixel;
+    }
+  }
+
+  result.status = LensStatus::ready;
+  result.digest = lens_frame_digest(output);
+  return result;
+}
+
+LensResult dispatch_lens_distortion_gpu(const LensDispatchPacket& packet,
+                                        const LensDispatch& dispatch) {
+  LensResult result;
+  if (packet.backend == LensBackend::cpu || packet.width == 0u ||
+      packet.height == 0u || packet.input_handle == 0u ||
+      packet.output_handle == 0u || packet.command_handle == 0u ||
+      !valid_settings(packet.settings)) {
+    return result;
+  }
+  if (!dispatch) {
+    result.status = LensStatus::backend_unavailable;
+    return result;
+  }
+  result.status =
+      dispatch(packet) ? LensStatus::ready : LensStatus::dispatch_failed;
+  return result;
+}
+
+}  // namespace digitor
+
+extern "C" std::uint32_t digitor_lens_distortion_rgba32f(
+    const float* input, float* output, std::uint32_t width,
+    std::uint32_t height, const DigitorLensDistortionSettings* settings,
+    std::uint64_t* digest) {
+  if (input == nullptr || output == nullptr || settings == nullptr ||
+      digest == nullptr || width == 0u || height == 0u) {
+    return 1u;
+  }
+
+  digitor::LensFrame input_frame{width, height, {}};
+  input_frame.pixels.resize(std::size_t(width) * height);
+  for (std::size_t index = 0; index < input_frame.pixels.size(); ++index) {
+    input_frame.pixels[index] = {input[index * 4u], input[index * 4u + 1u],
+                                 input[index * 4u + 2u],
+                                 input[index * 4u + 3u]};
+  }
+
+  digitor::LensDistortionSettings native_settings;
+  native_settings.mode = static_cast<digitor::LensMode>(settings->mode);
+  native_settings.edge_mode =
+      static_cast<digitor::LensEdgeMode>(settings->edge_mode);
+  native_settings.k1 = settings->k1;
+  native_settings.k2 = settings->k2;
+  native_settings.k3 = settings->k3;
+  native_settings.p1 = settings->p1;
+  native_settings.p2 = settings->p2;
+  native_settings.center_x = settings->center_x;
+  native_settings.center_y = settings->center_y;
+  native_settings.scale = settings->scale;
+  native_settings.aspect = settings->aspect;
+  native_settings.chromatic_aberration = settings->chromatic_aberration;
+  native_settings.high_quality = settings->high_quality != 0u;
+
+  digitor::LensFrame output_frame;
+  const auto result = digitor::apply_lens_distortion_reference(
+      input_frame, output_frame, native_settings);
+  if (result.status != digitor::LensStatus::ready) {
+    return 2u;
+  }
+
+  for (std::size_t index = 0; index < output_frame.pixels.size(); ++index) {
+    output[index * 4u] = output_frame.pixels[index].r;
+    output[index * 4u + 1u] = output_frame.pixels[index].g;
+    output[index * 4u + 2u] = output_frame.pixels[index].b;
+    output[index * 4u + 3u] = output_frame.pixels[index].a;
+  }
+  *digest = result.digest;
+  return 0u;
+}
