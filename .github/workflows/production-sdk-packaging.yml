@@ -1,0 +1,26 @@
+name: Production SDK Packaging
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S tests/production_sdk_package -B build/sdk-package -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/sdk-package --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: ./build/sdk-package/digitor_production_sdk_package
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: .\build\sdk-package\Release\digitor_production_sdk_package.exe
