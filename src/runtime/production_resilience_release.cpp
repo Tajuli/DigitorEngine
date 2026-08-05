@@ -23,10 +23,22 @@ bool valid_backend(BackendKind backend) noexcept {
 }
 
 bool valid_version(const std::string& version) noexcept {
-  if (version.empty()) {
-    return false;
-  }
-  return std::count(version.begin(), version.end(), '.') == 2;
+  return !version.empty() &&
+         std::count(version.begin(), version.end(), '.') == 2;
+}
+
+std::uint64_t snapshot_digest(const RecoverySnapshot& snapshot) noexcept {
+  std::uint64_t hash = 1469598103934665603ull;
+  hash = append(hash, &snapshot.status, sizeof(snapshot.status));
+  hash = append(hash, &snapshot.backend, sizeof(snapshot.backend));
+  hash = append(hash, &snapshot.attempts, sizeof(snapshot.attempts));
+  hash = append(hash, &snapshot.device_generation,
+                sizeof(snapshot.device_generation));
+  hash = append(hash, &snapshot.cache_generation,
+                sizeof(snapshot.cache_generation));
+  hash = append(hash, &snapshot.invalidated_frames,
+                sizeof(snapshot.invalidated_frames));
+  return hash;
 }
 
 }  // namespace
@@ -55,8 +67,7 @@ RecoveryStatus ProductionRecoveryController::notify_device_lost(
   if (policy_.invalidate_pipeline_cache) {
     ++snapshot_.cache_generation;
   }
-  snapshot_.digest = release_manifest_digest(
-      ReleaseManifest{"recovery", 1u, 0u, "runtime", {backend_}, true, true});
+  snapshot_.digest = snapshot_digest(snapshot_);
   return snapshot_.status;
 }
 
@@ -68,10 +79,12 @@ RecoveryStatus ProductionRecoveryController::attempt_recovery(
   }
   if (!callback) {
     snapshot_.status = RecoveryStatus::failed;
+    snapshot_.digest = snapshot_digest(snapshot_);
     return snapshot_.status;
   }
   if (snapshot_.attempts >= policy_.max_attempts) {
     snapshot_.status = RecoveryStatus::exhausted;
+    snapshot_.digest = snapshot_digest(snapshot_);
     return snapshot_.status;
   }
 
@@ -82,13 +95,13 @@ RecoveryStatus ProductionRecoveryController::attempt_recovery(
     snapshot_.status = snapshot_.attempts >= policy_.max_attempts
                            ? RecoveryStatus::exhausted
                            : RecoveryStatus::device_lost;
+    snapshot_.digest = snapshot_digest(snapshot_);
     return snapshot_.status;
   }
 
   snapshot_.device_generation = next_generation;
   snapshot_.status = RecoveryStatus::recovered;
-  snapshot_.digest = append(1469598103934665603ull, &snapshot_,
-                            sizeof(snapshot_) - sizeof(snapshot_.digest));
+  snapshot_.digest = snapshot_digest(snapshot_);
   return snapshot_.status;
 }
 
@@ -131,6 +144,20 @@ std::uint64_t release_manifest_digest(const ReleaseManifest& manifest) noexcept 
 
 }  // namespace digitor
 
+namespace {
+struct CRecoveryCallbackContext {
+  DigitorRecreateBackendFn callback;
+  void* user_data;
+};
+
+bool invoke_c_recovery(digitor::BackendKind backend,
+                       std::uint64_t generation, void* opaque) {
+  auto* context = static_cast<CRecoveryCallbackContext*>(opaque);
+  return context->callback(static_cast<std::uint32_t>(backend), generation,
+                           context->user_data) != 0u;
+}
+}  // namespace
+
 extern "C" DigitorRecoveryHandle digitor_recovery_create(
     std::uint32_t backend, const DigitorRecoveryPolicy* policy) {
   if (!policy) {
@@ -171,16 +198,10 @@ extern "C" std::uint32_t digitor_recovery_attempt(
   if (!handle || !callback) {
     return static_cast<std::uint32_t>(digitor::RecoveryStatus::invalid);
   }
-  const auto adapter = +[](digitor::BackendKind backend,
-                           std::uint64_t generation, void* opaque) -> bool {
-    auto* values = static_cast<void**>(opaque);
-    const auto fn = reinterpret_cast<DigitorRecreateBackendFn>(values[0]);
-    return fn(static_cast<std::uint32_t>(backend), generation, values[1]) != 0u;
-  };
-  void* values[2] = {reinterpret_cast<void*>(callback), user_data};
+  CRecoveryCallbackContext context{callback, user_data};
   return static_cast<std::uint32_t>(
       static_cast<digitor::ProductionRecoveryController*>(handle)
-          ->attempt_recovery(adapter, values));
+          ->attempt_recovery(invoke_c_recovery, &context));
 }
 
 extern "C" std::uint32_t digitor_recovery_snapshot(
