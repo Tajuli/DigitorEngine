@@ -16,15 +16,6 @@
 
 namespace digitor {
 
-#if !defined(DIGITOR_HAS_FFMPEG)
-namespace {
-// image_io.cpp defines this helper for the FFmpeg encoder path. In builds where
-// FFmpeg is disabled the definition is intentionally retained for source
-// symmetry, so mark the entity maybe-unused without weakening -Werror globally.
-[[maybe_unused]] float clamp01(float value) noexcept;
-}  // namespace
-#endif
-
 enum class ImageExportFormat : std::uint8_t { jpeg, png, webp };
 
 struct ImageExportOptions {
