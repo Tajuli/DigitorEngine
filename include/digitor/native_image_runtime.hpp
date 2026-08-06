@@ -5,7 +5,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
 
 namespace digitor {
@@ -22,12 +21,12 @@ struct NativeImageRuntimeCapabilities {
   bool icc_metadata{};
   bool alpha{};
   bool tiled_processing{};
-  const char* decoder_name{};
-  const char* encoder_name{};
+  bool terminal_gpu_readback{};
+  const char* codec_path{};
 };
 
-// Backend-owned operations. Upload/readback are explicit terminal boundaries;
-// implementations must not silently switch a GPU-selected session to CPU.
+// Backend-owned GPU operations. Upload and final_readback are the only allowed
+// CPU/GPU boundaries. Once this bridge is selected, processing stays GPU-only.
 struct NativeImageGpuBridge {
   std::function<DigitorResult(const RenderVideoFrame&, const NativeStillImageInfo&,
                               std::int64_t, ProcessedGpuFramePtr&, std::string&)>
@@ -67,10 +66,10 @@ struct NativeImageRuntimeResult {
 [[nodiscard]] NativeImageRuntimeCapabilities
 native_image_runtime_capabilities(NativeStillPlatform platform) noexcept;
 
-// Creates the complete platform image runtime. Decode uses the engine image
-// codec layer, then performs an explicit backend upload. Export performs one
-// terminal GPU readback and encodes through the same JPEG/PNG/WebP codec layer.
-// Processing between upload and final readback remains GPU-only.
+// Builds a production GPU image host over the engine JPEG/PNG/WebP codec layer.
+// Decode/orientation/profile conversion happens before one explicit upload;
+// export performs one terminal readback and then encodes. No intermediate CPU
+// processing is permitted in a GPU-selected session.
 [[nodiscard]] NativeImageRuntimeResult make_native_image_runtime(
     NativeImageRuntimeConfig config);
 
