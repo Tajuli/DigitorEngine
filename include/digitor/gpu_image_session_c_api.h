@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define DIGITOR_GPU_IMAGE_SESSION_HOST_VERSION 2u
+#define DIGITOR_GPU_IMAGE_SESSION_HOST_VERSION 1u
 #define DIGITOR_IMAGE_EXPORT_OPTIONS_VERSION 1u
 
 typedef struct DigitorGpuImageSession DigitorGpuImageSession;
@@ -44,15 +44,13 @@ typedef DigitorResult (*DigitorGpuImageOpenCallback)(
     uint32_t diagnostic_capacity
 );
 
-/* node_graph is the same production DigitorNodeGraph used by video clips.
- * Implementations execute that graph through the existing video node/color/
- * effect GPU pipeline for both preview and export. No image-only filter or
- * effect implementation is permitted. */
+/* The host must process the image through the same production GPU node graph
+ * used by video clips. Primary/Log wheels, correction, curves, HSL qualifier,
+ * LUTs, masks, filters and effects must not have photo-only implementations. */
 typedef DigitorResult (*DigitorGpuImageProcessCallback)(
     void* user_data,
     DigitorGpuImageRenderMode mode,
     const DigitorNativeGpuTextureDescriptor* source,
-    DigitorNodeGraph* node_graph,
     uint32_t width,
     uint32_t height,
     int64_t timestamp_us,
@@ -99,7 +97,9 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_destroy(
     DigitorGpuImageSession* session
 );
 
-/* The graph remains caller-owned and must outlive the session binding. */
+/* Bind the exact caller-owned DigitorNodeGraph already used by video. The graph
+ * must outlive the binding. The processing host queries this binding and runs
+ * the existing video node/effect executor; no new filter format is introduced. */
 DIGITOR_API DigitorResult digitor_gpu_image_session_bind_node_graph(
     DigitorGpuImageSession* session,
     DigitorNodeGraph* graph,
