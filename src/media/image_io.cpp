@@ -22,9 +22,11 @@ extern "C" {
 namespace digitor {
 namespace {
 
+#ifdef DIGITOR_HAS_FFMPEG
 float clamp01(float value) noexcept {
   return std::clamp(value, 0.0F, 1.0F);
 }
+#endif
 
 std::string lowercase_extension(const std::string& path) {
   auto extension = std::filesystem::path(path).extension().string();
