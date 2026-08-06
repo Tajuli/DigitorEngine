@@ -1,4 +1,5 @@
 #include "digitor/log_wheels.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -8,6 +9,7 @@
 
 namespace digitor { namespace {
 std::atomic_uint64_t reference_calls{};
+constexpr std::size_t kLogWheelGrain = 16U * 1024U;
 
 void u32(std::string& out, std::uint32_t value) {
   constexpr char h[] = "0123456789abcdef";
@@ -90,7 +92,7 @@ Color apply_log_wheels_reference(Color c,const LogWheelsParameters&parameters)no
   reference_calls.fetch_add(1,std::memory_order_relaxed);
   const auto&p=parameters.values();const float alpha=c.a;
   if(!std::isfinite(c.r)||!std::isfinite(c.g)||!std::isfinite(c.b)){
-    if(std::isfinite(c.r)&&std::isfinite(c.g)&&std::isfinite(c.b)){} else {c.a=alpha;return c;}
+    c.a=alpha;return c;
   }
   const auto w=weights(luminance(c),p);
   c.r=channel(c.r,p.shadows.rgb.r,p.midtones.rgb.r,p.highlights.rgb.r,p.global.rgb.r,p,w);
@@ -100,7 +102,10 @@ Color apply_log_wheels_reference(Color c,const LogWheelsParameters&parameters)no
 }
 void apply_log_wheels_reference(std::span<const Color>in,std::span<Color>out,const LogWheelsParameters&p){
   if(in.size()!=out.size())throw std::invalid_argument("log wheels image sizes differ");
-  for(std::size_t i=0;i<in.size();++i)out[i]=apply_log_wheels_reference(in[i],p);
+  shared_cpu_executor().parallel_for(in.size(), kLogWheelGrain,
+    [&](std::size_t begin,std::size_t end){
+      for(std::size_t i=begin;i<end;++i)out[i]=apply_log_wheels_reference(in[i],p);
+    });
 }
 std::uint64_t log_wheels_reference_count()noexcept{return reference_calls.load(std::memory_order_relaxed);}
 void reset_log_wheels_reference_count()noexcept{reference_calls.store(0,std::memory_order_relaxed);}

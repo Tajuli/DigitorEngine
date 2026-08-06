@@ -1,0 +1,61 @@
+name: Transcendental CPU Parallel Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'src/gpu/color.cpp'
+      - 'src/gpu/primary_wheels.cpp'
+      - 'src/gpu/log_wheels.cpp'
+      - 'tests/transcendental_parallel/**'
+      - '.github/workflows/transcendental-parallel-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/gpu/color.cpp'
+      - 'src/gpu/primary_wheels.cpp'
+      - 'src/gpu/log_wheels.cpp'
+      - 'tests/transcendental_parallel/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transcendental-cpu-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: ${{ matrix.os }} bit-exact parity
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout without external actions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+      - name: Configure (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S tests/transcendental_parallel -B build-transcendental -DCMAKE_BUILD_TYPE=Release
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S tests/transcendental_parallel -B build-transcendental -A x64
+      - name: Build
+        run: cmake --build build-transcendental --config Release --target digitor_transcendental_parallel_test --parallel 2
+      - name: Run qualification (Unix)
+        if: runner.os != 'Windows'
+        run: ./build-transcendental/digitor_transcendental_parallel_test
+      - name: Run qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build-transcendental\Release\digitor_transcendental_parallel_test.exe

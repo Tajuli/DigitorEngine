@@ -1,14 +1,16 @@
 name: Production Masks
-
 on:
-  pull_request:
   push:
     branches: [main]
-
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   qualify:
     strategy:
       fail-fast: true
+      max-parallel: 1
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}

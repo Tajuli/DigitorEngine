@@ -1,4 +1,5 @@
 #include "digitor/primary_wheels.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <atomic>
 #include <bit>
@@ -7,9 +8,9 @@
 
 namespace digitor { namespace {
 std::atomic_uint64_t reference_calls{};
+constexpr std::size_t kPrimaryWheelGrain = 16U * 1024U;
 
 void u32(std::string& out, std::uint32_t value) {
-  // Fixed little-endian wire representation, hex encoded for safe storage.
   constexpr char h[] = "0123456789abcdef";
   for (unsigned byte = 0; byte != 4; ++byte) {
     const auto v = (value >> (byte * 8)) & 0xffu;
@@ -77,7 +78,10 @@ Color apply_primary_wheels_reference(Color c,const PrimaryWheelsParameters& para
 }
 void apply_primary_wheels_reference(std::span<const Color> in,std::span<Color> out,const PrimaryWheelsParameters&p){
   if(in.size()!=out.size())throw std::invalid_argument("primary wheels image sizes differ");
-  for(std::size_t i=0;i<in.size();++i)out[i]=apply_primary_wheels_reference(in[i],p);
+  shared_cpu_executor().parallel_for(in.size(), kPrimaryWheelGrain,
+    [&](std::size_t begin,std::size_t end){
+      for(std::size_t i=begin;i<end;++i)out[i]=apply_primary_wheels_reference(in[i],p);
+    });
 }
 std::uint64_t primary_wheels_reference_count()noexcept{return reference_calls.load(std::memory_order_relaxed);}
 void reset_primary_wheels_reference_count()noexcept{reference_calls.store(0,std::memory_order_relaxed);}

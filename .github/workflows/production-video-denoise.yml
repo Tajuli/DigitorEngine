@@ -1,28 +1,28 @@
 name: Production Video Denoise
 on:
-  pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  ubuntu:
-    runs-on: ubuntu-latest
+  qualify:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build/video-denoise --config Release --parallel 2
-      - run: build/video-denoise/digitor_production_video_denoise
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build/video-denoise --config Release --parallel 2
-      - run: build/video-denoise/Release/digitor_production_video_denoise.exe
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build/video-denoise --config Release --parallel 2
-      - run: build/video-denoise/digitor_production_video_denoise
+      - name: Configure
+        run: cmake -S tests/production_video_denoise -B build/video-denoise -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/video-denoise --config Release --parallel 2
+      - name: Test Unix
+        if: runner.os != 'Windows'
+        run: build/video-denoise/digitor_production_video_denoise
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: build/video-denoise/Release/digitor_production_video_denoise.exe
