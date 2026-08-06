@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace digitor {
 
@@ -13,6 +14,13 @@ enum class NativeStillPlatform : std::uint8_t {
   windows,
   android,
   apple,
+};
+
+enum class NativeStillEncodedFormat : std::uint8_t {
+  unknown,
+  jpeg,
+  png,
+  webp,
 };
 
 enum class ImageOrientation : std::uint8_t {
@@ -32,8 +40,12 @@ struct NativeStillImageInfo {
   std::uint32_t display_width{};
   std::uint32_t display_height{};
   ImageOrientation orientation{ImageOrientation::normal};
+  NativeStillEncodedFormat encoded_format{NativeStillEncodedFormat::unknown};
+  std::uint8_t bits_per_channel{8};
   bool has_alpha{};
+  bool orientation_applied{};
   std::string color_metadata_identity{"srgb"};
+  std::string icc_profile_identity;
 };
 
 struct NativeStillImageLimits {
@@ -41,6 +53,15 @@ struct NativeStillImageLimits {
   std::uint64_t max_decoded_bytes{1024ULL * 1024ULL * 1024ULL};
   std::uint32_t tile_width{2048};
   std::uint32_t tile_height{2048};
+};
+
+struct NativeStillImageTile {
+  std::uint32_t x{};
+  std::uint32_t y{};
+  std::uint32_t width{};
+  std::uint32_t height{};
+  std::uint32_t index{};
+  std::uint32_t count{};
 };
 
 struct NativeStillImageProgress {
@@ -77,6 +98,16 @@ struct NativeStillImageServices {
       encode_from_gpu;
 };
 
+struct NativeStillImageServicePack {
+  NativeStillPlatform platform{NativeStillPlatform::windows};
+  DigitorRendererBackend backend{DIGITOR_RENDERER_AUTO};
+  std::string codec_identity;
+  bool applies_orientation{};
+  bool preserves_color_metadata{};
+  bool supports_alpha{};
+  NativeStillImageServices services{};
+};
+
 struct NativeStillImageHostConfig {
   NativeStillPlatform platform{NativeStillPlatform::windows};
   DigitorRendererBackend backend{DIGITOR_RENDERER_AUTO};
@@ -85,6 +116,7 @@ struct NativeStillImageHostConfig {
   NativeStillImageLimits limits{};
   NativeStillImageProgress progress{};
   NativeStillImageServices services{};
+  std::string codec_identity;
 };
 
 struct NativeStillImageHostResult {
@@ -98,6 +130,19 @@ struct NativeStillImageHostResult {
 
 [[nodiscard]] bool native_still_backend_matches_platform(
     NativeStillPlatform platform, DigitorRendererBackend backend) noexcept;
+
+[[nodiscard]] bool native_still_image_info_valid(
+    const NativeStillImageInfo& info,
+    const NativeStillImageLimits& limits) noexcept;
+
+[[nodiscard]] std::vector<NativeStillImageTile> make_native_still_tile_plan(
+    std::uint32_t width, std::uint32_t height,
+    const NativeStillImageLimits& limits);
+
+[[nodiscard]] DigitorResult bind_native_still_image_service_pack(
+    NativeStillImageHostConfig& config,
+    NativeStillImageServicePack pack,
+    std::string& diagnostic);
 
 [[nodiscard]] NativeStillImageHostResult make_native_still_image_host(
     NativeStillImageHostConfig config);
