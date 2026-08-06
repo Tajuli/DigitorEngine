@@ -27,10 +27,6 @@ std::unique_ptr<NativeImageCodec> create_windows_wic_image_codec() noexcept {
 std::unique_ptr<NativeImageCodec> create_android_image_codec() noexcept {
   try { return std::make_unique<AndroidImageCodec>(); } catch (...) { return {}; }
 }
-#elif defined(__APPLE__)
-std::unique_ptr<NativeImageCodec> create_apple_imageio_codec() noexcept {
-  return {};
-}
 #endif
 
 }  // namespace
