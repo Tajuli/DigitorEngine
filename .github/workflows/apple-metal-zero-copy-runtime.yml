@@ -1,7 +1,17 @@
 name: Apple Metal Zero-Copy Runtime
+
 on:
   pull_request:
+    paths:
+      - 'apple_metal_zero_copy/**'
+      - 'scripts/run_apple_zero_copy_qualification.sh'
+      - 'src/gpu/**metal**'
+      - 'src/gpu/**apple**'
+      - 'include/digitor/**metal**'
+      - 'include/digitor/**apple**'
+      - '.github/workflows/apple-metal-zero-copy-runtime.yml'
   workflow_dispatch:
+
 jobs:
   macos-contract:
     runs-on: macos-latest
@@ -13,6 +23,7 @@ jobs:
         run: cmake --build build-apple-metal-zero-copy --target digitor_apple_metal_zero_copy_runtime_tests --parallel 2
       - name: Test focused contract
         run: ctest --test-dir build-apple-metal-zero-copy -R '^digitor_apple_metal_zero_copy_runtime_tests$' --output-on-failure
+
   apple-gpu-lab:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, macOS, digitor-apple-gpu-lab]
