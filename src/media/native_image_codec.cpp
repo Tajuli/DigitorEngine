@@ -7,6 +7,17 @@
 #include <limits>
 
 namespace digitor {
+
+#if defined(_WIN32)
+std::unique_ptr<NativeImageCodec> create_windows_wic_image_codec() noexcept;
+#endif
+#if defined(__ANDROID__)
+std::unique_ptr<NativeImageCodec> create_android_image_codec() noexcept;
+#endif
+#if defined(__APPLE__)
+std::unique_ptr<NativeImageCodec> create_apple_imageio_codec() noexcept;
+#endif
+
 namespace {
 
 bool cancelled(const NativeStillImageProgress& progress) noexcept {
@@ -26,16 +37,6 @@ std::uint32_t bytes_per_pixel(NativeImagePixelFormat format) noexcept {
   }
   return 0;
 }
-
-#if defined(_WIN32)
-std::unique_ptr<NativeImageCodec> create_windows_wic_image_codec() noexcept;
-#endif
-#if defined(__ANDROID__)
-std::unique_ptr<NativeImageCodec> create_android_image_codec() noexcept;
-#endif
-#if defined(__APPLE__)
-std::unique_ptr<NativeImageCodec> create_apple_imageio_codec() noexcept;
-#endif
 
 }  // namespace
 
