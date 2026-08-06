@@ -2,8 +2,6 @@
 
 #include "gpu/gpu_backend.hpp"
 
-#include <memory>
-
 namespace digitor {
 
 class CpuParallelExecutor;
@@ -25,7 +23,7 @@ public:
 
 private:
   bool initialized_{false};
-  std::unique_ptr<CpuParallelExecutor> executor_;
+  CpuParallelExecutor* executor_{nullptr};
 };
 
 } // namespace digitor
