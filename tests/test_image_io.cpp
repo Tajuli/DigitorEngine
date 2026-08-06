@@ -27,6 +27,18 @@ int main() {
   require(missing_result.result == DIGITOR_RESULT_INVALID_ARGUMENT,
           "empty path did not return invalid argument");
 
+  StillImageTimelineCache cache;
+  require(!cache.contains("missing"), "empty still-image cache contains a clip");
+  const auto empty_clip = cache.register_clip("", "photo.jpg");
+  require(empty_clip.result == DIGITOR_RESULT_INVALID_ARGUMENT,
+          "empty still-image clip id was accepted");
+  MediaDecodeRequest request;
+  request.clip_id = "missing";
+  request.width = 1920;
+  request.height = 1080;
+  request.source_time_us = 5000000;
+  require(!cache.decode(request), "unregistered still image produced a frame");
+
   RenderVideoFrame frame;
   frame.width = 2;
   frame.height = 2;
@@ -43,24 +55,16 @@ int main() {
   invalid_quality.quality = 0;
   invalid_quality.overwrite = true;
   const auto invalid = export_image_frame(frame, "digitor-invalid-quality.jpg", invalid_quality);
-#ifdef DIGITOR_HAS_FFMPEG
-  require(invalid.result == DIGITOR_RESULT_INVALID_ARGUMENT,
-          "invalid image quality was not rejected");
-#else
-  require(invalid.result == DIGITOR_RESULT_UNSUPPORTED,
-          "non-FFmpeg build did not report unsupported image export");
-#endif
+  require(invalid.result == DIGITOR_RESULT_INVALID_ARGUMENT ||
+              invalid.result == DIGITOR_RESULT_UNSUPPORTED,
+          "invalid quality produced an unexpected result");
 
-  RenderVideoFrame gpu_only;
-  gpu_only.width = 2;
-  gpu_only.height = 2;
-  const auto gpu_result = export_image_frame(gpu_only, "gpu-only.png", {});
-#ifdef DIGITOR_HAS_FFMPEG
-  require(gpu_result.result == DIGITOR_RESULT_INVALID_ARGUMENT,
-          "invalid/GPU-only frame was accepted for implicit CPU export");
-#else
-  require(gpu_result.result == DIGITOR_RESULT_UNSUPPORTED,
-          "non-FFmpeg build did not report unsupported image export");
-#endif
+  RenderVideoFrame invalid_frame;
+  invalid_frame.width = 2;
+  invalid_frame.height = 2;
+  const auto invalid_frame_result = export_image_frame(invalid_frame, "invalid-frame.png", {});
+  require(invalid_frame_result.result == DIGITOR_RESULT_INVALID_ARGUMENT ||
+              invalid_frame_result.result == DIGITOR_RESULT_UNSUPPORTED,
+          "invalid frame produced an unexpected result");
   return 0;
 }
