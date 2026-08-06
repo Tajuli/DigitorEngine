@@ -4,16 +4,10 @@
 #include "digitor/native_still_image_host.hpp"
 
 #include <functional>
-#include <mutex>
-#include <optional>
 #include <string>
 
 namespace digitor {
 
-// Platform applications register one concrete service provider during startup:
-// WIC on Windows, ImageDecoder/NDK codecs on Android, and ImageIO on Apple.
-// Registration is process-wide and intentionally happens before image sessions
-// are created, so a selected GPU session never silently falls back to CPU.
 using NativeStillImageServiceFactory =
     std::function<NativeStillImageServices(DigitorRendererBackend,
                                            const void* context_identity,
@@ -26,12 +20,15 @@ struct ProductionNativeImageRuntimeConfig {
   std::string device_identity;
   NativeStillImageLimits limits{};
   NativeStillImageProgress progress{};
+  std::function<DigitorResult(const ImageEditorCpuProcessRequest&,
+                              RenderVideoFrame&, std::string&)>
+      process_cpu;
 };
 
 struct ProductionNativeImageRuntimeResult {
   DigitorResult result{DIGITOR_RESULT_OK};
   std::string diagnostic;
-  ImageEditorRuntimeHost host;
+  ImageEditorRuntimeConfig runtime_config;
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return result == DIGITOR_RESULT_OK;
@@ -47,9 +44,9 @@ void clear_native_still_image_services_for_test() noexcept;
 [[nodiscard]] bool native_still_image_services_registered(
     NativeStillPlatform platform) noexcept;
 
-// Creates one locked image-editor host. GPU backends require a registered,
-// complete native provider. CPU is selected only when the engine selected CPU
-// before session creation; GPU provider failure is returned as an error.
+// Builds a locked image-editor configuration. A GPU backend requires a complete
+// registered native provider. CPU is allowed only when CPU was selected before
+// the image session is created; GPU provider failure never falls back silently.
 [[nodiscard]] ProductionNativeImageRuntimeResult
 make_production_native_image_runtime(ProductionNativeImageRuntimeConfig config);
 
