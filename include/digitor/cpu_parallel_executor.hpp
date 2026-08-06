@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,18 @@ struct CpuTile2D {
   std::size_t read_y_begin{};
   std::size_t read_x_end{};
   std::size_t read_y_end{};
+};
+
+struct CpuParallelTelemetry {
+  std::uint64_t submitted_jobs{};
+  std::uint64_t parallel_jobs{};
+  std::uint64_t serial_jobs{};
+  std::uint64_t nested_serial_jobs{};
+  std::uint64_t executed_tasks{};
+  std::uint64_t processed_items{};
+  std::uint64_t elapsed_nanoseconds{};
+  std::size_t worker_count{};
+  std::size_t last_task_count{};
 };
 
 // Persistent deterministic scheduler shared by CPU render, image, video,
@@ -62,20 +75,53 @@ class CpuParallelExecutor final {
     return workers_.size();
   }
 
+  [[nodiscard]] CpuParallelTelemetry telemetry() const noexcept {
+    return {
+        submitted_jobs_.load(std::memory_order_relaxed),
+        parallel_jobs_.load(std::memory_order_relaxed),
+        serial_jobs_.load(std::memory_order_relaxed),
+        nested_serial_jobs_.load(std::memory_order_relaxed),
+        executed_tasks_.load(std::memory_order_relaxed),
+        processed_items_.load(std::memory_order_relaxed),
+        elapsed_nanoseconds_.load(std::memory_order_relaxed),
+        workers_.size(),
+        last_task_count_.load(std::memory_order_relaxed)};
+  }
+
+  void reset_telemetry() noexcept {
+    submitted_jobs_.store(0, std::memory_order_relaxed);
+    parallel_jobs_.store(0, std::memory_order_relaxed);
+    serial_jobs_.store(0, std::memory_order_relaxed);
+    nested_serial_jobs_.store(0, std::memory_order_relaxed);
+    executed_tasks_.store(0, std::memory_order_relaxed);
+    processed_items_.store(0, std::memory_order_relaxed);
+    elapsed_nanoseconds_.store(0, std::memory_order_relaxed);
+    last_task_count_.store(0, std::memory_order_relaxed);
+  }
+
   template <typename Function>
   void parallel_for(std::size_t count, std::size_t minimum_grain,
                     Function&& function) {
     if (count == 0) return;
+    const auto started = std::chrono::steady_clock::now();
+    submitted_jobs_.fetch_add(1, std::memory_order_relaxed);
+    processed_items_.fetch_add(count, std::memory_order_relaxed);
     const std::size_t grain = std::max<std::size_t>(1, minimum_grain);
     const std::size_t task_count =
         std::min(workers_.size(), (count + grain - 1) / grain);
+    last_task_count_.store(task_count, std::memory_order_relaxed);
     if (task_count <= 1 || inside_worker_) {
+      serial_jobs_.fetch_add(1, std::memory_order_relaxed);
+      if (inside_worker_) {
+        nested_serial_jobs_.fetch_add(1, std::memory_order_relaxed);
+      }
       function(0, count);
+      elapsed_nanoseconds_.fetch_add(elapsed_since(started),
+                                     std::memory_order_relaxed);
       return;
     }
 
-    // One executor may be reached by concurrent preview/export callers. Jobs
-    // are serialized at submission while their pixel work remains parallel.
+    parallel_jobs_.fetch_add(1, std::memory_order_relaxed);
     std::unique_lock submission_lock(submission_mutex_);
     std::function<void(std::size_t, std::size_t)> job(
         std::forward<Function>(function));
@@ -99,6 +145,8 @@ class CpuParallelExecutor final {
     job_ = {};
     const auto error = exception_;
     lock.unlock();
+    elapsed_nanoseconds_.fetch_add(elapsed_since(started),
+                                   std::memory_order_relaxed);
     if (error) std::rethrow_exception(error);
   }
 
@@ -136,8 +184,6 @@ class CpuParallelExecutor final {
     });
   }
 
-  // Fixed chunk indices and an ordered final merge make reductions independent
-  // of worker completion order.
   template <typename Value, typename Map, typename Merge>
   Value deterministic_reduce(std::size_t count, std::size_t minimum_grain,
                              Value identity, Map&& map, Merge&& merge) {
@@ -163,6 +209,13 @@ class CpuParallelExecutor final {
   }
 
  private:
+  static std::uint64_t elapsed_since(
+      std::chrono::steady_clock::time_point started) noexcept {
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+  }
+
   void worker_loop() {
     std::uint64_t observed_generation = 0;
     inside_worker_ = true;
@@ -186,6 +239,7 @@ class CpuParallelExecutor final {
       const std::size_t task =
           next_task_.fetch_add(1, std::memory_order_relaxed);
       if (task >= task_count_) break;
+      executed_tasks_.fetch_add(1, std::memory_order_relaxed);
       const std::size_t begin = count_ * task / task_count_;
       const std::size_t end = count_ * (task + 1) / task_count_;
       try {
@@ -215,6 +269,14 @@ class CpuParallelExecutor final {
   std::size_t task_count_{};
   std::uint64_t generation_{};
   bool stopping_{};
+  std::atomic<std::uint64_t> submitted_jobs_{0};
+  std::atomic<std::uint64_t> parallel_jobs_{0};
+  std::atomic<std::uint64_t> serial_jobs_{0};
+  std::atomic<std::uint64_t> nested_serial_jobs_{0};
+  std::atomic<std::uint64_t> executed_tasks_{0};
+  std::atomic<std::uint64_t> processed_items_{0};
+  std::atomic<std::uint64_t> elapsed_nanoseconds_{0};
+  std::atomic<std::size_t> last_task_count_{0};
 };
 
 inline CpuParallelExecutor& shared_cpu_executor() {
