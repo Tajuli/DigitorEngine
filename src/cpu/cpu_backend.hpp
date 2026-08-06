@@ -10,7 +10,7 @@ class CpuParallelExecutor;
 
 class CpuBackend final : public IRenderBackend {
 public:
-  CpuBackend() = default;
+  CpuBackend();
   ~CpuBackend() override;
 
   bool initialize(bool enable_validation) override;
