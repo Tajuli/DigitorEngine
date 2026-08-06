@@ -6,7 +6,6 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
-#include <numeric>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -101,7 +100,7 @@ void verify_nested_calls_and_exception_propagation() {
   bool threw = false;
   try {
     executor.parallel_for(128, 1, [](std::size_t begin, std::size_t end) {
-      if (begin < 64 && end > 64) throw std::runtime_error("qualification");
+      if (begin <= 64 && end > 64) throw std::runtime_error("qualification");
     });
   } catch (const std::runtime_error&) {
     threw = true;
