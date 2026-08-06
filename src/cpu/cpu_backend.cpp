@@ -13,6 +13,8 @@ constexpr std::size_t kByteGrain = 256U * 1024U;
 constexpr std::size_t kPixelGrain = 64U * 1024U;
 }
 
+CpuBackend::~CpuBackend() = default;
+
 bool CpuBackend::initialize(bool enable_validation) {
   (void)enable_validation;
   try {
