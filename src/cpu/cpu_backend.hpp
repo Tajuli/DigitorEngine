@@ -10,6 +10,9 @@ class CpuParallelExecutor;
 
 class CpuBackend final : public IRenderBackend {
 public:
+  CpuBackend() = default;
+  ~CpuBackend() override;
+
   bool initialize(bool enable_validation) override;
   void shutdown() noexcept override;
   [[nodiscard]] DigitorRendererInfo info() const noexcept override;
