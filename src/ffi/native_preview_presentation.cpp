@@ -116,6 +116,6 @@ NativePreviewTelemetry NativePreviewPresentationSession::telemetry() const noexc
 } // namespace digitor
 
 /* Kept in the already-qualified native-preview translation unit so the public
- * GPU photo C ABI is built by every existing platform target without adding a
- * second platform-specific source list. */
+ * GPU photo C ABI is built by every existing platform target. */
 #include "gpu_image_session_c_api.cpp"
+#include "gpu_image_node_graph_binding_c_api.cpp"

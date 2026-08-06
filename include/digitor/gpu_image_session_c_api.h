@@ -44,6 +44,9 @@ typedef DigitorResult (*DigitorGpuImageOpenCallback)(
     uint32_t diagnostic_capacity
 );
 
+/* The host must process the image through the same production GPU node graph
+ * used by video clips. Primary/Log wheels, correction, curves, HSL qualifier,
+ * LUTs, masks, filters and effects must not have photo-only implementations. */
 typedef DigitorResult (*DigitorGpuImageProcessCallback)(
     void* user_data,
     DigitorGpuImageRenderMode mode,
@@ -94,6 +97,26 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_destroy(
     DigitorGpuImageSession* session
 );
 
+/* Bind the exact caller-owned DigitorNodeGraph already used by video. The graph
+ * must outlive the binding. The processing host queries this binding and runs
+ * the existing video node/effect executor; no new filter format is introduced. */
+DIGITOR_API DigitorResult digitor_gpu_image_session_bind_node_graph(
+    DigitorGpuImageSession* session,
+    DigitorNodeGraph* graph,
+    uint64_t graph_revision
+);
+
+DIGITOR_API DigitorResult digitor_gpu_image_session_clear_node_graph(
+    DigitorGpuImageSession* session,
+    uint64_t graph_revision
+);
+
+DIGITOR_API DigitorResult digitor_gpu_image_session_get_node_graph(
+    DigitorGpuImageSession* session,
+    DigitorNodeGraph** out_graph,
+    uint64_t* out_graph_revision
+);
+
 DIGITOR_API DigitorResult digitor_gpu_image_session_set_graph_revision(
     DigitorGpuImageSession* session,
     uint64_t revision
@@ -119,9 +142,6 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_export(
     const DigitorImageExportOptions* options
 );
 
-/* Two-call UTF-8 diagnostic API. Pass buffer == NULL to query required bytes,
- * including the trailing NUL. Diagnostics are session-local and replaced by
- * each API call. */
 DIGITOR_API DigitorResult digitor_gpu_image_session_get_last_error(
     DigitorGpuImageSession* session,
     char* buffer,
