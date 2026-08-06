@@ -36,6 +36,12 @@ bool orientation_value_valid(ImageOrientation orientation) noexcept {
          value <= static_cast<std::uint8_t>(ImageOrientation::rotate_270);
 }
 
+bool frame_belongs_to_host(const ProcessedGpuFramePtr& frame,
+                           const NativeStillImageHostConfig& config) noexcept {
+  return frame && frame->backend() == config.backend && frame->ready() &&
+         frame->has_context_identity(config.context_identity);
+}
+
 }  // namespace
 
 bool native_still_backend_matches_platform(
@@ -195,6 +201,10 @@ NativeStillImageHostResult make_native_still_image_host(
       if (diagnostic.empty()) diagnostic = "native still-image decode/upload failed";
       return std::nullopt;
     }
+    if (!frame_belongs_to_host(frame, state->config)) {
+      diagnostic = "native decoder returned a foreign backend/context frame";
+      return std::nullopt;
+    }
     if (!native_still_image_info_valid(info, state->config.limits)) {
       diagnostic = "decoded image metadata or decoded size exceeds configured limits";
       return std::nullopt;
@@ -226,12 +236,22 @@ NativeStillImageHostResult make_native_still_image_host(
       diagnostic = "still-image resize cancelled";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
+    if (!frame_belongs_to_host(source, state->config)) {
+      diagnostic = "image resize source belongs to a foreign backend/context";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
     if (make_native_still_tile_plan(width, height, state->config.limits).empty()) {
       diagnostic = "requested image size exceeds configured limits";
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
     const auto resize_result = state->config.services.resize_gpu(
         source, width, height, timestamp, output, diagnostic);
+    if (resize_result == DIGITOR_RESULT_OK &&
+        !frame_belongs_to_host(output, state->config)) {
+      output.reset();
+      diagnostic = "image resize returned a foreign backend/context frame";
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
     if (resize_result == DIGITOR_RESULT_OK) report(state->config.progress, 0.35F);
     return resize_result;
   };
@@ -244,8 +264,18 @@ NativeStillImageHostResult make_native_still_image_host(
       diagnostic = "still-image processing cancelled";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
+    if (!frame_belongs_to_host(request.source, state->config)) {
+      diagnostic = "image processing source belongs to a foreign backend/context";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
     const auto process_result =
         state->config.services.process_graph(request, output, diagnostic);
+    if (process_result == DIGITOR_RESULT_OK &&
+        !frame_belongs_to_host(output, state->config)) {
+      output.reset();
+      diagnostic = "image processing returned a foreign backend/context frame";
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
     if (process_result == DIGITOR_RESULT_OK) {
       report(state->config.progress,
              request.mode == GpuImageSessionRenderMode::preview ? 1.0F : 0.80F);
@@ -259,6 +289,10 @@ NativeStillImageHostResult make_native_still_image_host(
     if (cancelled(state->config.progress)) {
       return ImageIoResult{DIGITOR_RESULT_RESOURCE_IN_USE,
                            "still-image export cancelled"};
+    }
+    if (!frame_belongs_to_host(frame, state->config)) {
+      return ImageIoResult{DIGITOR_RESULT_INVALID_ARGUMENT,
+                           "image export frame belongs to a foreign backend/context"};
     }
     NativeStillImageInfo info;
     {
