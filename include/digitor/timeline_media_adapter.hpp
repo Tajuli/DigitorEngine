@@ -11,12 +11,15 @@
 
 namespace digitor {
 
+enum class TimelineMediaSourceKind { video, still_image };
+
 struct TimelineMediaSource {
   std::string clip_id;
   std::string original_path;
   std::string proxy_path;
   bool prefer_proxy_for_preview{true};
   std::int64_t stream_duration_us{};
+  TimelineMediaSourceKind kind{TimelineMediaSourceKind::video};
 };
 
 struct MediaDecodeRequest {
@@ -32,6 +35,9 @@ struct MediaDecodeRequest {
 
 struct MediaAdapterCallbacks {
   std::function<std::optional<RenderVideoFrame>(const MediaDecodeRequest&)> decode_video;
+  // Decodes a still image once and may return a cached GPU-resident frame on
+  // subsequent timeline frames. The adapter always requests source time zero.
+  std::function<std::optional<RenderVideoFrame>(const MediaDecodeRequest&)> decode_still_image;
   std::function<std::optional<RenderAudioBlock>(const MediaDecodeRequest&, std::size_t)> decode_audio;
   std::function<bool(const VideoExecutionLayer&, RenderVideoFrame&)> apply_effects;
   std::function<bool(const VideoExecutionLayer&, const RenderVideoFrame&, RenderVideoFrame&)> composite;
@@ -57,6 +63,7 @@ class TimelineMediaAdapter {
   [[nodiscard]] bool deliver(const TimelineRenderResult& result,
                              const TimelineExecutionPlan& plan) const;
   [[nodiscard]] bool has_source(const std::string& clip_id) const noexcept;
+  [[nodiscard]] bool is_still_image(const std::string& clip_id) const noexcept;
   [[nodiscard]] std::optional<std::string> selected_path(const std::string& clip_id,
                                                          TimelineExecutionMode mode,
                                                          bool allow_proxy = true) const;
