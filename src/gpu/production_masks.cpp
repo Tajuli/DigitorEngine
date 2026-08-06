@@ -1,4 +1,5 @@
 #include "digitor/production_masks.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -97,17 +98,28 @@ MaskResult render_masks_reference(std::uint32_t width, std::uint32_t height,
   MaskResult result;
   if (width == 0u || height == 0u || masks.empty()) return result;
   for (const auto& m : masks) if (!finite_definition(m)) return result;
-  output = {width, height, std::vector<float>(static_cast<std::size_t>(width) * height, 0.0f)};
-  double sum = 0.0;
-  for (std::uint32_t y = 0; y < height; ++y) {
-    for (std::uint32_t x = 0; x < width; ++x) {
-      const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
-      const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
-      float a = 0.0f;
-      for (const auto& m : masks) a = combine(a, evaluate(m, u, v), m.combine);
-      a = clamp01(a); output.alpha[static_cast<std::size_t>(y) * width + x] = a; sum += a;
-    }
-  }
+  const std::size_t count = static_cast<std::size_t>(width) * height;
+  output = {width, height, std::vector<float>(count, 0.0f)};
+
+  const double sum = shared_cpu_executor().deterministic_reduce<double>(
+      count, 32768, 0.0,
+      [&](std::size_t begin, std::size_t end) {
+        double partial = 0.0;
+        for (std::size_t index = begin; index < end; ++index) {
+          const std::uint32_t y = static_cast<std::uint32_t>(index / width);
+          const std::uint32_t x = static_cast<std::uint32_t>(index % width);
+          const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
+          const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
+          float a = 0.0f;
+          for (const auto& m : masks) a = combine(a, evaluate(m, u, v), m.combine);
+          a = clamp01(a);
+          output.alpha[index] = a;
+          partial += static_cast<double>(a);
+        }
+        return partial;
+      },
+      [](double a, double b) { return a + b; });
+
   result.status = MaskStatus::ready; result.digest = mask_frame_digest(output);
   result.coverage = static_cast<float>(sum / static_cast<double>(output.alpha.size()));
   return result;
