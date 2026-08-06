@@ -1,0 +1,61 @@
+name: CPU Parallel Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/cpu_parallel_executor.hpp'
+      - 'tests/test_cpu_parallel_qualification.cpp'
+      - '.github/workflows/cpu-parallel-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'include/digitor/cpu_parallel_executor.hpp'
+      - 'tests/test_cpu_parallel_qualification.cpp'
+      - '.github/workflows/cpu-parallel-qualification.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: ${{ matrix.os }} deterministic runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile and run (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -Iinclude \
+            tests/test_cpu_parallel_qualification.cpp \
+            -o cpu_parallel_qualification
+          ./cpu_parallel_qualification | tee cpu-parallel-report.txt
+
+      - name: Compile and run (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          clang++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -Iinclude \
+            tests/test_cpu_parallel_qualification.cpp \
+            -o cpu_parallel_qualification
+          ./cpu_parallel_qualification | tee cpu-parallel-report.txt
+
+      - name: Compile and run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /O2 /EHsc /W4 /WX /Iinclude tests/test_cpu_parallel_qualification.cpp /Fe:cpu_parallel_qualification.exe
+          .\cpu_parallel_qualification.exe | Tee-Object -FilePath cpu-parallel-report.txt
+
+      - name: Upload benchmark and telemetry report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-parallel-report-${{ matrix.os }}
+          path: cpu-parallel-report.txt
+          if-no-files-found: error
