@@ -1,0 +1,254 @@
+name: Release Qualification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, agent/app-integration-release-rc]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  source-policy:
+    name: Source, ABI and version policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical version ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f cmake/DigitorEngineVersion.cmake
+          grep -q 'DIGITOR_ENGINE_VERSION "5.51.0"' cmake/DigitorEngineVersion.cmake
+          grep -q 'include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineVersion.cmake")' CMakeLists.txt
+          grep -q 'digitor_get_version' include/digitor/digitor.h
+      - name: Validate app integration boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'UnifiedRealMediaRuntime' include/digitor/unified_real_media_runtime.hpp
+          grep -q 'DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT' include/digitor/digitor.h
+          grep -q 'DIGITOR_PREVIEW_MODE_CPU_COMPATIBILITY' include/digitor/digitor.h
+          grep -q 'compatibility-only' docs/app_integration_rc.md
+      - name: Reject generated build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! git ls-files | grep -E '(^|/)(build|out|install|stage)/'
+
+  desktop-build-test-install:
+    name: ${{ matrix.os }} build, test and install
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            warnings: ON
+          - os: windows-latest
+            warnings: ON
+          - os: macos-latest
+            warnings: OFF
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+          -DDIGITOR_WARNINGS_AS_ERRORS=${{ matrix.warnings }}
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/stage
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Install
+        run: cmake --install build --config Release
+      - name: Configure installed CMake consumer
+        run: cmake -S tests/install_consumer -B consumer-build -DCMAKE_PREFIX_PATH=${{ github.workspace }}/stage
+      - name: Build installed CMake consumer
+        run: cmake --build consumer-build --config Release --parallel 2
+      - name: Run consumer on Unix
+        if: runner.os != 'Windows'
+        run: ./consumer-build/digitor_engine_consumer
+      - name: Run consumer on Windows
+        if: runner.os == 'Windows'
+        run: .\consumer-build\Release\digitor_engine_consumer.exe
+      - name: Upload installed package
+        uses: actions/upload-artifact@v4
+        with:
+          name: digitor-engine-${{ matrix.os }}
+          path: stage
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-sanitizers:
+    name: Linux ASan and UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure sanitizers
+        run: >-
+          cmake -S . -B build-sanitize
+          -DCMAKE_BUILD_TYPE=Debug
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+          -DDIGITOR_ENABLE_FFMPEG=OFF
+          -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+          -DDIGITOR_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+          -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'
+      - name: Build
+        run: cmake --build build-sanitize --parallel 2
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-sanitize --output-on-failure
+
+  ffmpeg-real-media:
+    name: FFmpeg build and real-media tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg development packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg pkg-config libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+      - name: Configure with required FFmpeg
+        run: >-
+          cmake -S . -B build-ffmpeg
+          -DCMAKE_BUILD_TYPE=Release
+          -DDIGITOR_BUILD_TESTS=ON
+          -DDIGITOR_BUILD_EXAMPLES=OFF
+          -DDIGITOR_ENABLE_FFMPEG=ON
+          -DDIGITOR_REQUIRE_FFMPEG=ON
+          -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+      - name: Build
+        run: cmake --build build-ffmpeg --parallel 2
+      - name: Test FFmpeg and export targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build-ffmpeg --output-on-failure -R 'ffmpeg|export|media|decode|timeline_render|av_sync'
+
+  android-ndk:
+    name: Android NDK ${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Configure Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-android-${{ matrix.abi }} \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26 \
+            -DDIGITOR_BUILD_TESTS=OFF \
+            -DDIGITOR_BUILD_EXAMPLES=OFF \
+            -DDIGITOR_ENABLE_FFMPEG=OFF \
+            -DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF
+      - name: Build Android library
+        run: cmake --build build-android-${{ matrix.abi }} --parallel 2
+
+  flutter-ffi:
+    name: Flutter and Dart FFI package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve dependencies
+        working-directory: dart/digitor_engine_ffi
+        run: flutter pub get
+      - name: Check formatting
+        working-directory: dart/digitor_engine_ffi
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        working-directory: dart/digitor_engine_ffi
+        run: flutter analyze --fatal-infos --fatal-warnings
+      - name: Test
+        working-directory: dart/digitor_engine_ffi
+        run: flutter test
+      - name: Verify platform package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dart/digitor_engine_ffi/android/CMakeLists.txt
+          test -f dart/digitor_engine_ffi/windows/CMakeLists.txt
+          test -f dart/digitor_engine_ffi/ios/digitor_engine_ffi.podspec
+          test -f dart/digitor_engine_ffi/macos/digitor_engine_ffi.podspec
+
+  production-contracts:
+    name: Production contract suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure release candidate contract
+        run: cmake -S tests/production_release_candidate -B build/release-candidate -DCMAKE_BUILD_TYPE=Release
+      - name: Build release candidate contract
+        run: cmake --build build/release-candidate --parallel 2
+      - name: Run release candidate contract
+        run: ./build/release-candidate/digitor_production_release_candidate
+      - name: Configure resilience contract
+        run: cmake -S tests/production_resilience_release -B build/resilience -DCMAKE_BUILD_TYPE=Release
+      - name: Build resilience contract
+        run: cmake --build build/resilience --parallel 2
+      - name: Run resilience contract
+        run: ./build/resilience/digitor_production_resilience_release
+
+  release-gate:
+    name: Release gate
+    if: always()
+    needs:
+      - source-policy
+      - desktop-build-test-install
+      - linux-sanitizers
+      - ffmpeg-real-media
+      - android-ndk
+      - flutter-ffi
+      - production-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every qualification job to pass
+        shell: bash
+        env:
+          SOURCE_POLICY: ${{ needs.source-policy.result }}
+          DESKTOP: ${{ needs.desktop-build-test-install.result }}
+          SANITIZERS: ${{ needs.linux-sanitizers.result }}
+          FFMPEG: ${{ needs.ffmpeg-real-media.result }}
+          ANDROID: ${{ needs.android-ndk.result }}
+          FLUTTER: ${{ needs.flutter-ffi.result }}
+          CONTRACTS: ${{ needs.production-contracts.result }}
+        run: |
+          set -euo pipefail
+          for result in "$SOURCE_POLICY" "$DESKTOP" "$SANITIZERS" "$FFMPEG" "$ANDROID" "$FLUTTER" "$CONTRACTS"; do
+            test "$result" = success
+          done
+          echo 'All portable release qualification gates passed.'
+          echo 'Physical GPU/device qualification remains a separate evidence gate.'
