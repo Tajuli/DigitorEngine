@@ -1,0 +1,66 @@
+name: App Integration RC
+
+on:
+  pull_request:
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'docs/app_integration_rc.md'
+      - '.github/workflows/app-integration-rc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF -DDIGITOR_ENABLE_FFMPEG=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Install package
+        run: cmake --install build --config Release --prefix install
+
+  version-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical version
+        shell: bash
+        run: |
+          grep -q 'DIGITOR_ENGINE_VERSION "5.51.0"' cmake/DigitorEngineVersion.cmake
+          grep -q 'include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineVersion.cmake")' CMakeLists.txt
+          grep -q 'UnifiedRealMediaRuntime' docs/app_integration_rc.md
+
+  android-ndk-configure:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Configure Android
+        shell: bash
+        run: |
+          cmake -S . -B build-android-${{ matrix.abi }} \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26 \
+            -DDIGITOR_BUILD_TESTS=OFF \
+            -DDIGITOR_BUILD_EXAMPLES=OFF \
+            -DDIGITOR_ENABLE_FFMPEG=OFF
+      - name: Build Android
+        run: cmake --build build-android-${{ matrix.abi }} --parallel
