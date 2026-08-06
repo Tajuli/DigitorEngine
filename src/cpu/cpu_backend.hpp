@@ -2,10 +2,17 @@
 
 #include "gpu/gpu_backend.hpp"
 
+#include <memory>
+
 namespace digitor {
+
+class CpuParallelExecutor;
 
 class CpuBackend final : public IRenderBackend {
 public:
+  CpuBackend();
+  ~CpuBackend() override;
+
   bool initialize(bool enable_validation) override;
   void shutdown() noexcept override;
   [[nodiscard]] DigitorRendererInfo info() const noexcept override;
@@ -18,6 +25,7 @@ public:
 
 private:
   bool initialized_{false};
+  std::unique_ptr<CpuParallelExecutor> executor_;
 };
 
 } // namespace digitor
