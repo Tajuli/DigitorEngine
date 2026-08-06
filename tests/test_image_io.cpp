@@ -1,3 +1,4 @@
+#include "digitor/gpu_image_session.hpp"
 #include "digitor/image_io.hpp"
 
 #include <cstdlib>
@@ -66,5 +67,21 @@ int main() {
   require(invalid_frame_result.result == DIGITOR_RESULT_INVALID_ARGUMENT ||
               invalid_frame_result.result == DIGITOR_RESULT_UNSUPPORTED,
           "invalid frame produced an unexpected result");
+
+  GpuImageSessionHost incomplete_host;
+  require(!gpu_image_session_host_valid(incomplete_host),
+          "incomplete GPU image-session host was accepted");
+  auto [invalid_session, invalid_session_result] =
+      GpuImageSession::open("photo.jpg", incomplete_host);
+  require(!invalid_session, "invalid GPU image session unexpectedly opened");
+  require(invalid_session_result.result == DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+          "invalid GPU image-session host returned the wrong result");
+
+  GpuImageSessionProcessRequest process_request;
+  require(process_request.mode == GpuImageSessionRenderMode::preview,
+          "GPU image-session request did not default to preview mode");
+  require(process_request.graph_revision == 0 &&
+              process_request.parameter_revision == 0,
+          "GPU image-session revisions did not default to zero");
   return 0;
 }
