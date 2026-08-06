@@ -182,3 +182,10 @@ NativeStillImageHostResult make_native_still_image_host(
 }
 
 }  // namespace digitor
+
+// Keep the completed native image runtime in the existing media translation
+// unit so all supported package configurations build it without adding another
+// workflow or duplicating target wiring.
+#include "native_image_codec.cpp"
+#include "native_image_runtime.cpp"
+#include "production_native_image_runtime.cpp"

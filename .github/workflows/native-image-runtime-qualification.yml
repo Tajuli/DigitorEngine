@@ -1,0 +1,54 @@
+name: Native Image Runtime Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/native_image_runtime.hpp'
+      - 'include/digitor/native_still_image_host.hpp'
+      - 'include/digitor/image_editor_runtime.hpp'
+      - 'tests/test_native_image_runtime.cpp'
+      - 'tests/native_image_runtime/**'
+      - '.github/workflows/native-image-runtime-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'include/digitor/native_image_runtime.hpp'
+      - 'include/digitor/native_still_image_host.hpp'
+      - 'include/digitor/image_editor_runtime.hpp'
+      - 'tests/test_native_image_runtime.cpp'
+      - 'tests/native_image_runtime/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-image-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: ${{ matrix.os }} image runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Unix
+        if: runner.os != 'Windows'
+        run: cmake -S tests/native_image_runtime -B build-image-runtime -DCMAKE_BUILD_TYPE=Release
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S tests/native_image_runtime -B build-image-runtime -A x64
+      - name: Build
+        run: cmake --build build-image-runtime --config Release --target digitor_native_image_runtime_test --parallel 2
+      - name: Run Unix
+        if: runner.os != 'Windows'
+        run: ./build-image-runtime/digitor_native_image_runtime_test
+      - name: Run Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build-image-runtime\Release\digitor_native_image_runtime_test.exe
