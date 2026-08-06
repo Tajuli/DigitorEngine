@@ -1,18 +1,17 @@
 #include "digitor/native_image_runtime.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <utility>
 
 namespace digitor {
 namespace {
 
-bool cancelled(const NativeStillImageProgress& progress) noexcept {
+bool runtime_cancelled(const NativeStillImageProgress& progress) noexcept {
   return progress.cancelled && progress.cancelled->load();
 }
 
-void report(const NativeStillImageProgress& progress, float value) {
+void runtime_report(const NativeStillImageProgress& progress, float value) {
   if (progress.report) progress.report(std::clamp(value, 0.0F, 1.0F));
 }
 
@@ -34,20 +33,14 @@ bool frame_has_alpha(const RenderVideoFrame& frame) noexcept {
   return false;
 }
 
-const char* decoder_for(NativeStillPlatform platform) noexcept {
+const char* codec_path_for(NativeStillPlatform platform) noexcept {
   switch (platform) {
-    case NativeStillPlatform::windows: return "Windows WIC / engine WebP codec";
-    case NativeStillPlatform::android: return "Android ImageDecoder / engine codec";
-    case NativeStillPlatform::apple: return "Apple ImageIO";
-  }
-  return "unknown";
-}
-
-const char* encoder_for(NativeStillPlatform platform) noexcept {
-  switch (platform) {
-    case NativeStillPlatform::windows: return "Windows WIC / engine WebP codec";
-    case NativeStillPlatform::android: return "Android native image encoder";
-    case NativeStillPlatform::apple: return "Apple ImageIO destination";
+    case NativeStillPlatform::windows:
+      return "engine JPEG/PNG/WebP codec + D3D12/Vulkan upload";
+    case NativeStillPlatform::android:
+      return "engine JPEG/PNG/WebP codec + Vulkan/GLES upload";
+    case NativeStillPlatform::apple:
+      return "engine JPEG/PNG/WebP codec + Metal upload";
   }
   return "unknown";
 }
@@ -64,8 +57,8 @@ NativeImageRuntimeCapabilities native_image_runtime_capabilities(
   value.icc_metadata = true;
   value.alpha = true;
   value.tiled_processing = true;
-  value.decoder_name = decoder_for(platform);
-  value.encoder_name = encoder_for(platform);
+  value.terminal_gpu_readback = true;
+  value.codec_path = codec_path_for(platform);
   return value;
 }
 
@@ -108,7 +101,7 @@ NativeImageRuntimeResult make_native_image_runtime(
                                  ProcessedGpuFramePtr& frame,
                                  std::string& diagnostic) {
         frame.reset();
-        if (cancelled(progress)) {
+        if (runtime_cancelled(progress)) {
           diagnostic = "native image decode cancelled";
           return DIGITOR_RESULT_RESOURCE_IN_USE;
         }
@@ -116,17 +109,17 @@ NativeImageRuntimeResult make_native_image_runtime(
           diagnostic = "supported image formats are JPEG, PNG and WebP";
           return DIGITOR_RESULT_UNSUPPORTED;
         }
-        report(progress, 0.04F);
+        runtime_report(progress, 0.04F);
         auto [asset, open_result] = StillImageAsset::open(path);
         if (!open_result || !asset) {
           diagnostic = open_result.diagnostic.empty()
-                           ? "platform image decoder failed"
+                           ? "image codec decode failed"
                            : std::move(open_result.diagnostic);
           return open_result.result;
         }
         auto cpu = asset->render_frame();
         if (!cpu || !cpu->valid() || cpu->gpu_resident()) {
-          diagnostic = "platform image decoder did not produce CPU RGBA32F";
+          diagnostic = "image codec did not produce CPU RGBA32F";
           return DIGITOR_RESULT_INTERNAL_ERROR;
         }
         if (!decoded_size_allowed(cpu->width, cpu->height, limits)) {
@@ -138,9 +131,9 @@ NativeImageRuntimeResult make_native_image_runtime(
         info.orientation = ImageOrientation::normal;
         info.has_alpha = frame_has_alpha(*cpu);
         info.color_metadata_identity = "decoded-source-profile";
-        report(progress, 0.14F);
+        runtime_report(progress, 0.14F);
         const auto result = upload(*cpu, info, 0, frame, diagnostic);
-        if (result == DIGITOR_RESULT_OK && frame) report(progress, 0.20F);
+        if (result == DIGITOR_RESULT_OK && frame) runtime_report(progress, 0.20F);
         return result;
       };
 
@@ -153,7 +146,7 @@ NativeImageRuntimeResult make_native_image_runtime(
                  const ImageExportOptions& options,
                  const NativeStillImageInfo& info,
                  const NativeStillImageProgress& progress) {
-        if (cancelled(progress)) {
+        if (runtime_cancelled(progress)) {
           return ImageIoResult{DIGITOR_RESULT_RESOURCE_IN_USE,
                                "native image export cancelled"};
         }
@@ -164,7 +157,7 @@ NativeImageRuntimeResult make_native_image_runtime(
         }
         RenderVideoFrame cpu;
         std::string diagnostic;
-        report(progress, 0.88F);
+        runtime_report(progress, 0.88F);
         const auto result = readback(source, cpu, diagnostic);
         if (result != DIGITOR_RESULT_OK || !cpu.valid() || cpu.gpu_resident()) {
           return ImageIoResult{result == DIGITOR_RESULT_OK
@@ -174,9 +167,9 @@ NativeImageRuntimeResult make_native_image_runtime(
                                    ? "terminal GPU image readback failed"
                                    : std::move(diagnostic)};
         }
-        report(progress, 0.94F);
+        runtime_report(progress, 0.94F);
         auto encoded = export_image_frame(cpu, output_path, options);
-        if (encoded) report(progress, 1.0F);
+        if (encoded) runtime_report(progress, 1.0F);
         return encoded;
       };
 
