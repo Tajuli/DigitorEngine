@@ -44,6 +44,13 @@ typedef DigitorResult (*DigitorGpuImageOpenCallback)(
     uint32_t diagnostic_capacity
 );
 
+/* The host must route this request through the same production GPU node graph
+ * used by video clips. Primary/Log wheels, correction, RGB curves, HSL
+ * qualifier, LUTs, masks, filters and effects must not have photo-only copies.
+ * graph_revision and parameter_revision identify that existing shared graph.
+ * Preview and export must execute the same graph, shaders, parameter buffers,
+ * precision, sampling, alpha and color-management rules. CPU frames and silent
+ * CPU fallback are invalid results. */
 typedef DigitorResult (*DigitorGpuImageProcessCallback)(
     void* user_data,
     DigitorGpuImageRenderMode mode,
@@ -94,6 +101,9 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_destroy(
     DigitorGpuImageSession* session
 );
 
+/* These revisions are the revisions of the existing shared video node/effect
+ * graph. Updating either invalidates the cached photo frame; no separate photo
+ * filter state is created by this API. */
 DIGITOR_API DigitorResult digitor_gpu_image_session_set_graph_revision(
     DigitorGpuImageSession* session,
     uint64_t revision
