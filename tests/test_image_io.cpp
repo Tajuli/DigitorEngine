@@ -1,6 +1,7 @@
 #include "digitor/gpu_image_session.hpp"
 #include "digitor/gpu_image_session_c_api.h"
 #include "digitor/image_io.hpp"
+#include "digitor/still_image_runtime.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -119,6 +120,16 @@ int main() {
       1.0F, 1.0F, 1.0F, 0.5F,
   };
   require(frame.valid(), "test image frame is invalid");
+
+  auto exact = StillImageRuntime::compare_cpu_frames(frame, frame);
+  require(exact.compared && exact.equivalent && exact.max_absolute_error == 0.0F,
+          "identical still-image frames failed per-pixel parity");
+  auto changed = frame;
+  changed.rgba[0] += 0.01F;
+  auto mismatch = StillImageRuntime::compare_cpu_frames(frame, changed);
+  require(mismatch.compared && !mismatch.equivalent &&
+              mismatch.failing_components == 1,
+          "per-pixel mismatch was not detected");
 
   ImageExportOptions invalid_quality;
   invalid_quality.quality = 0;

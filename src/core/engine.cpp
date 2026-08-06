@@ -6,7 +6,53 @@
 namespace digitor {
 
 Engine &Engine::instance() { static Engine engine; return engine; }
-DigitorResult Engine::initialize(const DigitorEngineConfig &config){std::scoped_lock lock(mutex_);if(initialized_)return DIGITOR_RESULT_ALREADY_INITIALIZED;const bool valid=config.preferred_backend==DIGITOR_RENDERER_AUTO||config.preferred_backend==DIGITOR_RENDERER_VULKAN||config.preferred_backend==DIGITOR_RENDERER_METAL||config.preferred_backend==DIGITOR_RENDERER_D3D12||config.preferred_backend==DIGITOR_RENDERER_OPENGL_ES||config.preferred_backend==DIGITOR_RENDERER_CPU;if(!valid||config.enable_validation>1||config.allow_cpu_fallback>1)return DIGITOR_RESULT_INVALID_ARGUMENT;config_=config;backend_=create_gpu_backend(config.preferred_backend);if(!backend_&&config.allow_cpu_fallback)backend_=std::make_unique<CpuBackend>();if(!backend_)return DIGITOR_RESULT_BACKEND_UNAVAILABLE;if(!backend_->initialize(config.enable_validation!=0)){backend_.reset();return DIGITOR_RESULT_BACKEND_UNAVAILABLE;}initialized_=true;return DIGITOR_RESULT_OK;}
+
+DigitorResult Engine::initialize(const DigitorEngineConfig &config) {
+    std::scoped_lock lock(mutex_);
+    if (initialized_) return DIGITOR_RESULT_ALREADY_INITIALIZED;
+    const bool valid = config.preferred_backend == DIGITOR_RENDERER_AUTO ||
+        config.preferred_backend == DIGITOR_RENDERER_VULKAN ||
+        config.preferred_backend == DIGITOR_RENDERER_METAL ||
+        config.preferred_backend == DIGITOR_RENDERER_D3D12 ||
+        config.preferred_backend == DIGITOR_RENDERER_OPENGL_ES ||
+        config.preferred_backend == DIGITOR_RENDERER_CPU;
+    if (!valid || config.enable_validation > 1 || config.allow_cpu_fallback > 1)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+    config_ = config;
+    const bool explicit_cpu = config.preferred_backend == DIGITOR_RENDERER_CPU;
+    const bool automatic = config.preferred_backend == DIGITOR_RENDERER_AUTO;
+
+    // Preserve the existing public meaning of allow_cpu_fallback for explicit
+    // CPU requests while enforcing GPU-first automatic selection.
+    if (explicit_cpu && !config.allow_cpu_fallback)
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    backend_ = explicit_cpu ? std::make_unique<CpuBackend>()
+                            : create_gpu_backend(config.preferred_backend);
+    if (backend_ && backend_->initialize(config.enable_validation != 0)) {
+        initialized_ = true;
+        return DIGITOR_RESULT_OK;
+    }
+    if (backend_) {
+        backend_->shutdown();
+        backend_.reset();
+    }
+
+    // CPU is selected only when AUTO cannot establish any usable GPU backend.
+    // Explicit GPU requests remain strict. Once selected, the backend is locked
+    // for the engine lifetime and failures never switch execution mid-session.
+    if (automatic && config.allow_cpu_fallback) {
+        auto cpu = std::make_unique<CpuBackend>();
+        if (!cpu->initialize(config.enable_validation != 0))
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        backend_ = std::move(cpu);
+        initialized_ = true;
+        return DIGITOR_RESULT_OK;
+    }
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+}
+
 DigitorResult Engine::shutdown(){std::scoped_lock lock(mutex_);if(!initialized_)return DIGITOR_RESULT_NOT_INITIALIZED;if(!contexts_.empty())return DIGITOR_RESULT_RESOURCE_IN_USE;if(backend_){backend_->shutdown();backend_.reset();}initialized_=false;return DIGITOR_RESULT_OK;}
 bool Engine::is_initialized()const noexcept{std::scoped_lock lock(mutex_);return initialized_;}
 DigitorRendererInfo Engine::renderer_info()const noexcept{std::scoped_lock lock(mutex_);return backend_?backend_->info():DigitorRendererInfo{};}
