@@ -1,7 +1,7 @@
 #include "cpu/cpu_backend.hpp"
 
 #include "core/string_utils.hpp"
-#include "runtime/cpu_parallel_executor.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <algorithm>
 #include <limits>
