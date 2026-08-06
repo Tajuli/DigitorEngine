@@ -1,10 +1,12 @@
 #include "digitor/color.hpp"
 #include "core/engine.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 #include "gpu/execution_provenance.hpp"
 #include <algorithm>
 #include <cmath>
 namespace digitor {
 namespace {
+constexpr std::size_t kTranscendentalColorGrain = 16U * 1024U;
 float lin(float x) {
   return x <= .04045f ? x / 12.92f : std::pow((x + .055f) / 1.055f, 2.4f);
 }
@@ -46,8 +48,14 @@ Color grade_color(Color c, const ColorGrade &p) {
 }
 void grade_image_cpu(const Color *i, Color *o, size_t n, const ColorGrade &p) {
   note_cpu_color_reference();
-  for (size_t k = 0; k < n; ++k)
-    o[k] = grade_color(i[k], p);
+  if (n == 0) return;
+  if (!i || !o) throw std::invalid_argument("null CPU color image");
+  shared_cpu_executor().parallel_for(
+      n, kTranscendentalColorGrain,
+      [&](std::size_t begin, std::size_t end) {
+        for (std::size_t k = begin; k < end; ++k)
+          o[k] = grade_color(i[k], p);
+      });
 }
 void grade_image_gpu(CommandEncoder &e, const Color *i, Color *o, size_t n,
                      const ColorGrade &p) {
