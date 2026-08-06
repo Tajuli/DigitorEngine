@@ -2,13 +2,17 @@
 
 #include "digitor/digitor.h"
 #include "digitor/media.hpp"
+#include "digitor/timeline_media_adapter.hpp"
 #include "digitor/timeline_render_runtime.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace digitor {
 
@@ -58,7 +62,27 @@ class StillImageAsset {
   std::string path_;
   std::shared_ptr<VideoFrame> frame_;
   mutable std::mutex cache_mutex_;
-  mutable std::optional<RenderVideoFrame> scaled_cache_;
+  mutable std::unordered_map<std::uint64_t, RenderVideoFrame> scaled_cache_;
+};
+
+// Owns retained still-image assets for timeline clips. Register each image clip
+// once and install decoder_callback() as MediaAdapterCallbacks::decode_still_image.
+// Every frame request reuses the decoded image and only caches a new scaled frame
+// when the requested preview/export dimensions change.
+class StillImageTimelineCache {
+ public:
+  ImageIoResult register_clip(std::string clip_id, const std::string& path);
+  void unregister_clip(const std::string& clip_id) noexcept;
+  void clear() noexcept;
+  [[nodiscard]] bool contains(const std::string& clip_id) const noexcept;
+  [[nodiscard]] std::optional<RenderVideoFrame> decode(
+      const MediaDecodeRequest& request) const;
+  [[nodiscard]] std::function<std::optional<RenderVideoFrame>(const MediaDecodeRequest&)>
+  decoder_callback();
+
+ private:
+  mutable std::mutex mutex_;
+  std::unordered_map<std::string, std::shared_ptr<StillImageAsset>> clips_;
 };
 
 // Stateless helpers for photo-workspace export and processed timeline frames.
