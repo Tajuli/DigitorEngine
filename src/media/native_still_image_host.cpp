@@ -182,3 +182,8 @@ NativeStillImageHostResult make_native_still_image_host(
 }
 
 }  // namespace digitor
+
+// Keep the native image runtime in the same compiled translation unit as the
+// established host so every existing build target exports the new API without
+// creating a second platform-specific source list.
+#include "native_image_runtime.cpp"
