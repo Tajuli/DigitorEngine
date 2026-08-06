@@ -35,9 +35,6 @@ struct ImageIoResult {
   }
 };
 
-// Decodes a JPEG, PNG or WebP through the engine's FFmpeg media provider and
-// retains a full-resolution linear RGBA frame. The retained frame is reused for
-// every timeline timestamp; still images are never repeatedly decoded as video.
 class StillImageAsset {
  public:
   static std::pair<std::shared_ptr<StillImageAsset>, ImageIoResult> open(
@@ -48,8 +45,6 @@ class StillImageAsset {
   [[nodiscard]] const std::string& path() const noexcept { return path_; }
   [[nodiscard]] std::shared_ptr<const VideoFrame> frame() const noexcept;
 
-  // Returns a CPU linear-RGBA timeline frame. Width/height 0 use the original
-  // dimensions. A scaled result is cached, making long still-image clips cheap.
   [[nodiscard]] std::optional<RenderVideoFrame> render_frame(
       std::uint32_t width = 0, std::uint32_t height = 0) const;
 
@@ -62,13 +57,11 @@ class StillImageAsset {
   std::string path_;
   std::shared_ptr<VideoFrame> frame_;
   mutable std::mutex cache_mutex_;
-  mutable std::unordered_map<std::uint64_t, RenderVideoFrame> scaled_cache_;
+  mutable std::optional<RenderVideoFrame> scaled_cache_;
 };
 
 // Owns retained still-image assets for timeline clips. Register each image clip
 // once and install decoder_callback() as MediaAdapterCallbacks::decode_still_image.
-// Every frame request reuses the decoded image and only caches a new scaled frame
-// when the requested preview/export dimensions change.
 class StillImageTimelineCache {
  public:
   ImageIoResult register_clip(std::string clip_id, const std::string& path);
@@ -85,7 +78,6 @@ class StillImageTimelineCache {
   std::unordered_map<std::string, std::shared_ptr<StillImageAsset>> clips_;
 };
 
-// Stateless helpers for photo-workspace export and processed timeline frames.
 ImageIoResult export_image_frame(const RenderVideoFrame& frame,
                                  const std::string& output_path,
                                  const ImageExportOptions& options = {});
