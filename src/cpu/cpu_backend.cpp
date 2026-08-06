@@ -19,18 +19,18 @@ CpuBackend::~CpuBackend() = default;
 bool CpuBackend::initialize(bool enable_validation) {
   (void)enable_validation;
   try {
-    executor_ = std::make_unique<CpuParallelExecutor>();
+    executor_ = &shared_cpu_executor();
     initialized_ = true;
     return true;
   } catch (...) {
-    executor_.reset();
+    executor_ = nullptr;
     initialized_ = false;
     return false;
   }
 }
 
 void CpuBackend::shutdown() noexcept {
-  executor_.reset();
+  executor_ = nullptr;
   initialized_ = false;
 }
 
