@@ -2,7 +2,11 @@
 
 #include "gpu/gpu_backend.hpp"
 
+#include <memory>
+
 namespace digitor {
+
+class CpuParallelExecutor;
 
 class CpuBackend final : public IRenderBackend {
 public:
@@ -18,6 +22,7 @@ public:
 
 private:
   bool initialized_{false};
+  std::unique_ptr<CpuParallelExecutor> executor_;
 };
 
 } // namespace digitor
