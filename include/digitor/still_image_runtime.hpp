@@ -25,6 +25,8 @@ struct StillImageCpuHost {
 };
 
 struct StillImageRuntimeOptions {
+  // Retained for source compatibility. A valid GPU host always selects GPU;
+  // callers cannot force CPU while a usable GPU backend is selected.
   bool prefer_gpu{true};
   bool allow_cpu_fallback{true};
   bool validate_parity{false};
@@ -57,31 +59,41 @@ class StillImageRuntime final {
       std::string path, GpuImageSessionHost gpu_host,
       StillImageCpuHost cpu_host, StillImageRuntimeOptions options = {}) {
     if (path.empty()) {
-      return {nullptr, {DIGITOR_RESULT_INVALID_ARGUMENT, "image path is empty"}};
+      return {nullptr,
+              {DIGITOR_RESULT_INVALID_ARGUMENT, "image path is empty"}};
     }
 
-    if (options.prefer_gpu && gpu_image_session_host_valid(gpu_host)) {
+    const bool gpu_selected = gpu_image_session_host_valid(gpu_host);
+    if (gpu_selected) {
       auto [gpu, result] = GpuImageSession::open(path, std::move(gpu_host));
-      if (result && gpu) {
-        return {std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
-                    std::move(path), std::move(gpu), nullptr,
-                    std::move(cpu_host), options)), {}};
+      if (!result || !gpu) {
+        // The process selected a usable GPU backend. Decode, upload or session
+        // failures are returned to the app and never trigger CPU execution.
+        return {nullptr, std::move(result)};
       }
-      if (!options.allow_cpu_fallback) return {nullptr, std::move(result)};
-    } else if (!options.allow_cpu_fallback) {
-      return {nullptr, {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                        "GPU unavailable and CPU fallback is disabled"}};
+      return {std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
+                  std::move(path), std::move(gpu), nullptr,
+                  std::move(cpu_host), options)),
+              {}};
     }
 
-    if (!cpu_host.process) {
-      return {nullptr, {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                        "CPU still-image processing host is unavailable"}};
+    if (!options.allow_cpu_fallback) {
+      return {nullptr,
+              {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+               "no usable GPU backend and CPU fallback is disabled"}};
     }
+    if (!cpu_host.process) {
+      return {nullptr,
+              {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+               "CPU still-image processing host is unavailable"}};
+    }
+
     auto [cpu, result] = StillImageAsset::open(path);
     if (!result || !cpu) return {nullptr, std::move(result)};
     return {std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
                 std::move(path), nullptr, std::move(cpu),
-                std::move(cpu_host), options)), {}};
+                std::move(cpu_host), options)),
+            {}};
   }
 
   StillImageRuntime(const StillImageRuntime&) = delete;
@@ -120,7 +132,9 @@ class StillImageRuntime final {
       std::uint32_t width = 0, std::uint32_t height = 0,
       std::string* diagnostic = nullptr) const {
     if (!cpu_ || !cpu_host_.process) {
-      if (diagnostic) *diagnostic = "CPU still-image runtime is unavailable";
+      if (diagnostic) {
+        *diagnostic = "CPU still-image runtime is unavailable";
+      }
       return std::nullopt;
     }
     auto source = cpu_->render_frame(width, height);
@@ -130,12 +144,15 @@ class StillImageRuntime final {
     }
     RenderVideoFrame output;
     std::string local;
-    const auto result = cpu_host_.process(*source, source->width, source->height,
-                                          graph_revision_, parameter_revision_,
-                                          output, local);
-    if (result != DIGITOR_RESULT_OK || !output.valid() || output.gpu_resident()) {
-      if (diagnostic) *diagnostic = local.empty()
-          ? "CPU node/effect processing failed" : std::move(local);
+    const auto result = cpu_host_.process(
+        *source, source->width, source->height, graph_revision_,
+        parameter_revision_, output, local);
+    if (result != DIGITOR_RESULT_OK || !output.valid() ||
+        output.gpu_resident()) {
+      if (diagnostic) {
+        *diagnostic = local.empty() ? "CPU node/effect processing failed"
+                                    : std::move(local);
+      }
       return std::nullopt;
     }
     return output;
@@ -148,8 +165,9 @@ class StillImageRuntime final {
     auto frame = render_cpu(options.width, options.height, diagnostic);
     if (!frame) {
       return {DIGITOR_RESULT_INTERNAL_ERROR,
-              diagnostic && !diagnostic->empty() ? *diagnostic
-                                                  : "CPU image render failed"};
+              diagnostic && !diagnostic->empty()
+                  ? *diagnostic
+                  : "CPU image render failed"};
     }
     return export_image_frame(*frame, output_path, options);
   }
@@ -161,7 +179,8 @@ class StillImageRuntime final {
     report.compared = true;
     if (!preview.valid() || !output.valid() || preview.gpu_resident() ||
         output.gpu_resident() || preview.width != output.width ||
-        preview.height != output.height || preview.rgba.size() != output.rgba.size()) {
+        preview.height != output.height ||
+        preview.rgba.size() != output.rgba.size()) {
       report.diagnostic = "frames are not comparable CPU RGBA frames";
       return report;
     }
@@ -169,9 +188,12 @@ class StillImageRuntime final {
     report.compared_components = preview.rgba.size();
     for (std::size_t i = 0; i < preview.rgba.size(); ++i) {
       const auto error = std::fabs(preview.rgba[i] - output.rgba[i]);
-      report.max_absolute_error = std::max(report.max_absolute_error, error);
+      report.max_absolute_error =
+          std::max(report.max_absolute_error, error);
       squared += static_cast<long double>(error) * error;
-      if (error > options.max_absolute_error) ++report.failing_components;
+      if (error > options.max_absolute_error) {
+        ++report.failing_components;
+      }
     }
     if (report.compared_components != 0) {
       report.rms_error = std::sqrt(static_cast<double>(
@@ -179,16 +201,22 @@ class StillImageRuntime final {
     }
     report.equivalent = report.failing_components == 0 &&
                         report.rms_error <= options.max_rms_error;
-    if (!report.equivalent) report.diagnostic = "per-pixel parity threshold exceeded";
+    if (!report.equivalent) {
+      report.diagnostic = "per-pixel parity threshold exceeded";
+    }
     return report;
   }
 
  private:
   StillImageRuntime(std::string path, std::unique_ptr<GpuImageSession> gpu,
                     std::shared_ptr<StillImageAsset> cpu,
-                    StillImageCpuHost cpu_host, StillImageRuntimeOptions options)
-      : path_(std::move(path)), gpu_(std::move(gpu)), cpu_(std::move(cpu)),
-        cpu_host_(std::move(cpu_host)), options_(options) {}
+                    StillImageCpuHost cpu_host,
+                    StillImageRuntimeOptions options)
+      : path_(std::move(path)),
+        gpu_(std::move(gpu)),
+        cpu_(std::move(cpu)),
+        cpu_host_(std::move(cpu_host)),
+        options_(options) {}
 
   std::string path_;
   std::unique_ptr<GpuImageSession> gpu_;
