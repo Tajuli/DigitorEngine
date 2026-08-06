@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define DIGITOR_GPU_IMAGE_SESSION_HOST_VERSION 1u
+#define DIGITOR_GPU_IMAGE_SESSION_HOST_VERSION 2u
 #define DIGITOR_IMAGE_EXPORT_OPTIONS_VERSION 1u
 
 typedef struct DigitorGpuImageSession DigitorGpuImageSession;
@@ -44,17 +44,15 @@ typedef DigitorResult (*DigitorGpuImageOpenCallback)(
     uint32_t diagnostic_capacity
 );
 
-/* The host must route this request through the same production GPU node graph
- * used by video clips. Primary/Log wheels, correction, RGB curves, HSL
- * qualifier, LUTs, masks, filters and effects must not have photo-only copies.
- * graph_revision and parameter_revision identify that existing shared graph.
- * Preview and export must execute the same graph, shaders, parameter buffers,
- * precision, sampling, alpha and color-management rules. CPU frames and silent
- * CPU fallback are invalid results. */
+/* node_graph is the same production DigitorNodeGraph used by video clips.
+ * Implementations execute that graph through the existing video node/color/
+ * effect GPU pipeline for both preview and export. No image-only filter or
+ * effect implementation is permitted. */
 typedef DigitorResult (*DigitorGpuImageProcessCallback)(
     void* user_data,
     DigitorGpuImageRenderMode mode,
     const DigitorNativeGpuTextureDescriptor* source,
+    DigitorNodeGraph* node_graph,
     uint32_t width,
     uint32_t height,
     int64_t timestamp_us,
@@ -101,9 +99,24 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_destroy(
     DigitorGpuImageSession* session
 );
 
-/* These revisions are the revisions of the existing shared video node/effect
- * graph. Updating either invalidates the cached photo frame; no separate photo
- * filter state is created by this API. */
+/* The graph remains caller-owned and must outlive the session binding. */
+DIGITOR_API DigitorResult digitor_gpu_image_session_bind_node_graph(
+    DigitorGpuImageSession* session,
+    DigitorNodeGraph* graph,
+    uint64_t graph_revision
+);
+
+DIGITOR_API DigitorResult digitor_gpu_image_session_clear_node_graph(
+    DigitorGpuImageSession* session,
+    uint64_t graph_revision
+);
+
+DIGITOR_API DigitorResult digitor_gpu_image_session_get_node_graph(
+    DigitorGpuImageSession* session,
+    DigitorNodeGraph** out_graph,
+    uint64_t* out_graph_revision
+);
+
 DIGITOR_API DigitorResult digitor_gpu_image_session_set_graph_revision(
     DigitorGpuImageSession* session,
     uint64_t revision
@@ -129,9 +142,6 @@ DIGITOR_API DigitorResult digitor_gpu_image_session_export(
     const DigitorImageExportOptions* options
 );
 
-/* Two-call UTF-8 diagnostic API. Pass buffer == NULL to query required bytes,
- * including the trailing NUL. Diagnostics are session-local and replaced by
- * each API call. */
 DIGITOR_API DigitorResult digitor_gpu_image_session_get_last_error(
     DigitorGpuImageSession* session,
     char* buffer,
