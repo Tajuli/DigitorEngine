@@ -1,6 +1,17 @@
 name: App Integration RC
 
 on:
+  push:
+    branches:
+      - agent/app-integration-release-rc
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'docs/app_integration_rc.md'
+      - '.github/workflows/app-integration-rc.yml'
   pull_request:
     paths:
       - 'include/**'
