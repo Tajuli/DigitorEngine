@@ -21,8 +21,8 @@ enum class ImageExportFormat : std::uint8_t { jpeg, png, webp };
 struct ImageExportOptions {
   ImageExportFormat format{ImageExportFormat::jpeg};
   int quality{90};
-  std::uint32_t width{};   // 0 keeps source width.
-  std::uint32_t height{};  // 0 keeps source height.
+  std::uint32_t width{};
+  std::uint32_t height{};
   bool preserve_alpha{true};
   bool overwrite{false};
 };
@@ -60,18 +60,51 @@ class StillImageAsset {
   mutable std::optional<RenderVideoFrame> scaled_cache_;
 };
 
-// Owns retained still-image assets for timeline clips. Register each image clip
-// once and install decoder_callback() as MediaAdapterCallbacks::decode_still_image.
+// Register each image clip once and assign decoder_callback() to
+// MediaAdapterCallbacks::decode_still_image. The decoder ignores timeline source
+// time and reuses the retained decoded frame throughout the clip duration.
 class StillImageTimelineCache {
  public:
-  ImageIoResult register_clip(std::string clip_id, const std::string& path);
-  void unregister_clip(const std::string& clip_id) noexcept;
-  void clear() noexcept;
-  [[nodiscard]] bool contains(const std::string& clip_id) const noexcept;
+  ImageIoResult register_clip(std::string clip_id, const std::string& path) {
+    if (clip_id.empty()) return {DIGITOR_RESULT_INVALID_ARGUMENT, "clip id is empty"};
+    auto [asset, result] = StillImageAsset::open(path);
+    if (!result) return result;
+    std::lock_guard lock(mutex_);
+    clips_.insert_or_assign(std::move(clip_id), std::move(asset));
+    return {};
+  }
+
+  void unregister_clip(const std::string& clip_id) noexcept {
+    std::lock_guard lock(mutex_);
+    clips_.erase(clip_id);
+  }
+
+  void clear() noexcept {
+    std::lock_guard lock(mutex_);
+    clips_.clear();
+  }
+
+  [[nodiscard]] bool contains(const std::string& clip_id) const noexcept {
+    std::lock_guard lock(mutex_);
+    return clips_.contains(clip_id);
+  }
+
   [[nodiscard]] std::optional<RenderVideoFrame> decode(
-      const MediaDecodeRequest& request) const;
+      const MediaDecodeRequest& request) const {
+    std::shared_ptr<StillImageAsset> asset;
+    {
+      std::lock_guard lock(mutex_);
+      const auto found = clips_.find(request.clip_id);
+      if (found == clips_.end()) return std::nullopt;
+      asset = found->second;
+    }
+    return asset->render_frame(request.width, request.height);
+  }
+
   [[nodiscard]] std::function<std::optional<RenderVideoFrame>(const MediaDecodeRequest&)>
-  decoder_callback();
+  decoder_callback() {
+    return [this](const MediaDecodeRequest& request) { return decode(request); };
+  }
 
  private:
   mutable std::mutex mutex_;
