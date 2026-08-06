@@ -36,9 +36,6 @@ struct ClipExecutionOverrides {
   AutomationCurve volume_curve;
   AutomationCurve pan_curve;
 
-  // Shared visual controls for video, still-image, text and generated clips.
-  // Curves are evaluated at clip-local time so moving the clip on the timeline
-  // does not change its animation.
   VisualTransform transform{};
   AutomationCurve position_x_curve;
   AutomationCurve position_y_curve;
@@ -52,23 +49,23 @@ struct ClipExecutionOverrides {
   AutomationCurve crop_right_curve;
   AutomationCurve crop_bottom_curve;
 
-  // Still images use the same visual execution layer as video while retaining
-  // one immutable source frame. This freezes decode/cache source time without
-  // bypassing transform, node, effect, transition, preview or export stages.
   bool static_visual_source{};
   std::int64_t static_source_time_us{};
 };
 
 struct VideoExecutionLayer {
+  // Original fields remain first for source compatibility with aggregate users.
   std::string clip_id;
   std::size_t track_index{};
   std::int64_t timeline_us{};
-  std::int64_t clip_local_time_us{};
   std::int64_t source_time_us{};
   double opacity{1.0};
   double transition_weight{1.0};
-  VisualTransform transform{};
   RenderCacheKey cache_key;
+
+  // Shared video/still-image visual animation state.
+  std::int64_t clip_local_time_us{};
+  VisualTransform transform{};
 };
 
 struct AudioExecutionLayer {
