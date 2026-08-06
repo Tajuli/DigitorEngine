@@ -52,14 +52,23 @@ class GpuImageSession final {
  public:
   static std::pair<std::unique_ptr<GpuImageSession>, ImageIoResult> open(
       std::string path, GpuImageSessionHost host) {
+    using OpenResult =
+        std::pair<std::unique_ptr<GpuImageSession>, ImageIoResult>;
+
     if (!gpu_image_session_host_valid(host)) {
-      return {nullptr, {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+      return OpenResult{
+          std::unique_ptr<GpuImageSession>{},
+          ImageIoResult{DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                         "GPU image-session host is incomplete"}};
     }
     auto [asset, result] = GpuStillImageAsset::open(std::move(path), host.image_io);
-    if (!result) return {nullptr, std::move(result)};
-    return {std::unique_ptr<GpuImageSession>(
-                new GpuImageSession(std::move(asset), std::move(host))), {}};
+    if (!result) {
+      return OpenResult{std::unique_ptr<GpuImageSession>{}, std::move(result)};
+    }
+    return OpenResult{
+        std::unique_ptr<GpuImageSession>(
+            new GpuImageSession(std::move(asset), std::move(host))),
+        ImageIoResult{}};
   }
 
   GpuImageSession(const GpuImageSession&) = delete;
