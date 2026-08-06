@@ -3,8 +3,8 @@
 #include "digitor/primary_wheels.hpp"
 
 #include <bit>
-#include <cassert>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <vector>
 
@@ -12,12 +12,17 @@ namespace {
 bool exact(float a, float b) {
   return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
 }
-void exact_color(const digitor::Color& a, const digitor::Color& b) {
-  assert(exact(a.r, b.r));
-  assert(exact(a.g, b.g));
-  assert(exact(a.b, b.b));
-  assert(exact(a.a, b.a));
+
+bool exact_color(const digitor::Color& actual, const digitor::Color& expected,
+                 const char* stage, std::size_t index) {
+  if (exact(actual.r, expected.r) && exact(actual.g, expected.g) &&
+      exact(actual.b, expected.b) && exact(actual.a, expected.a)) {
+    return true;
+  }
+  std::cerr << stage << " bit-exact mismatch at pixel " << index << '\n';
+  return false;
 }
+
 std::vector<digitor::Color> fixture(std::size_t count) {
   std::vector<digitor::Color> values(count);
   for (std::size_t i = 0; i < count; ++i) {
@@ -30,7 +35,19 @@ std::vector<digitor::Color> fixture(std::size_t count) {
   values[7].g = std::numeric_limits<float>::quiet_NaN();
   return values;
 }
+
+bool verify(std::span<const digitor::Color> actual,
+            std::span<const digitor::Color> expected, const char* stage) {
+  if (actual.size() != expected.size()) {
+    std::cerr << stage << " size mismatch\n";
+    return false;
+  }
+  for (std::size_t i = 0; i < actual.size(); ++i) {
+    if (!exact_color(actual[i], expected[i], stage, i)) return false;
+  }
+  return true;
 }
+}  // namespace
 
 int main() {
   using namespace digitor;
@@ -51,7 +68,7 @@ int main() {
   grade.offset = 0.019f;
   for (std::size_t i = 0; i < count; ++i) expected[i] = grade_color(input[i], grade);
   grade_image_cpu(input.data(), actual.data(), count, grade);
-  for (std::size_t i = 0; i < count; ++i) exact_color(actual[i], expected[i]);
+  if (!verify(actual, expected, "grade")) return 1;
 
   PrimaryWheelsDescriptor primary_desc{};
   primary_desc.lift = {0.07f, -0.02f, 0.03f};
@@ -62,7 +79,7 @@ int main() {
   for (std::size_t i = 0; i < count; ++i)
     expected[i] = apply_primary_wheels_reference(input[i], *primary);
   apply_primary_wheels_reference(input, actual, *primary);
-  for (std::size_t i = 0; i < count; ++i) exact_color(actual[i], expected[i]);
+  if (!verify(actual, expected, "primary-wheels")) return 1;
 
   LogWheelsDescriptor log_desc{};
   log_desc.shadows.master = -0.7f;
@@ -76,7 +93,8 @@ int main() {
   for (std::size_t i = 0; i < count; ++i)
     expected[i] = apply_log_wheels_reference(input[i], *log);
   apply_log_wheels_reference(input, actual, *log);
-  for (std::size_t i = 0; i < count; ++i) exact_color(actual[i], expected[i]);
+  if (!verify(actual, expected, "log-wheels")) return 1;
 
+  std::cout << "Transcendental CPU parallel bit-exact qualification passed\n";
   return 0;
 }
