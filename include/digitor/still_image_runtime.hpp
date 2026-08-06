@@ -17,16 +17,12 @@ namespace digitor {
 enum class StillImageExecutionBackend : std::uint8_t { gpu, cpu };
 
 struct StillImageCpuHost {
-  // Must execute the same logical node graph, node order, parameters, alpha and
-  // color-management rules used by the production video CPU fallback.
   std::function<DigitorResult(const RenderVideoFrame&, std::uint32_t,
                               std::uint32_t, std::uint64_t, std::uint64_t,
                               RenderVideoFrame&, std::string&)> process;
 };
 
 struct StillImageRuntimeOptions {
-  // Retained for source compatibility. A valid GPU host always selects GPU;
-  // callers cannot force CPU while a usable GPU backend is selected.
   bool prefer_gpu{true};
   bool allow_cpu_fallback{true};
   bool validate_parity{false};
@@ -55,45 +51,56 @@ struct StillImageRuntimeSnapshot {
 
 class StillImageRuntime final {
  public:
-  static std::pair<std::unique_ptr<StillImageRuntime>, ImageIoResult> open(
+  using OpenResult =
+      std::pair<std::unique_ptr<StillImageRuntime>, ImageIoResult>;
+
+  static OpenResult open(
       std::string path, GpuImageSessionHost gpu_host,
       StillImageCpuHost cpu_host, StillImageRuntimeOptions options = {}) {
     if (path.empty()) {
-      return {nullptr,
-              {DIGITOR_RESULT_INVALID_ARGUMENT, "image path is empty"}};
+      return OpenResult{
+          std::unique_ptr<StillImageRuntime>{},
+          ImageIoResult{DIGITOR_RESULT_INVALID_ARGUMENT,
+                        "image path is empty"}};
     }
 
     const bool gpu_selected = gpu_image_session_host_valid(gpu_host);
     if (gpu_selected) {
       auto [gpu, result] = GpuImageSession::open(path, std::move(gpu_host));
       if (!result || !gpu) {
-        // The process selected a usable GPU backend. Decode, upload or session
-        // failures are returned to the app and never trigger CPU execution.
-        return {nullptr, std::move(result)};
+        return OpenResult{std::unique_ptr<StillImageRuntime>{},
+                          std::move(result)};
       }
-      return {std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
-                  std::move(path), std::move(gpu), nullptr,
-                  std::move(cpu_host), options)),
-              {}};
+      return OpenResult{
+          std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
+              std::move(path), std::move(gpu), nullptr,
+              std::move(cpu_host), options)),
+          ImageIoResult{}};
     }
 
     if (!options.allow_cpu_fallback) {
-      return {nullptr,
-              {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-               "no usable GPU backend and CPU fallback is disabled"}};
+      return OpenResult{
+          std::unique_ptr<StillImageRuntime>{},
+          ImageIoResult{DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+                        "no usable GPU backend and CPU fallback is disabled"}};
     }
     if (!cpu_host.process) {
-      return {nullptr,
-              {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-               "CPU still-image processing host is unavailable"}};
+      return OpenResult{
+          std::unique_ptr<StillImageRuntime>{},
+          ImageIoResult{DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+                        "CPU still-image processing host is unavailable"}};
     }
 
     auto [cpu, result] = StillImageAsset::open(path);
-    if (!result || !cpu) return {nullptr, std::move(result)};
-    return {std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
-                std::move(path), nullptr, std::move(cpu),
-                std::move(cpu_host), options)),
-            {}};
+    if (!result || !cpu) {
+      return OpenResult{std::unique_ptr<StillImageRuntime>{},
+                        std::move(result)};
+    }
+    return OpenResult{
+        std::unique_ptr<StillImageRuntime>(new StillImageRuntime(
+            std::move(path), nullptr, std::move(cpu),
+            std::move(cpu_host), options)),
+        ImageIoResult{}};
   }
 
   StillImageRuntime(const StillImageRuntime&) = delete;
@@ -132,9 +139,7 @@ class StillImageRuntime final {
       std::uint32_t width = 0, std::uint32_t height = 0,
       std::string* diagnostic = nullptr) const {
     if (!cpu_ || !cpu_host_.process) {
-      if (diagnostic) {
-        *diagnostic = "CPU still-image runtime is unavailable";
-      }
+      if (diagnostic) *diagnostic = "CPU still-image runtime is unavailable";
       return std::nullopt;
     }
     auto source = cpu_->render_frame(width, height);
@@ -191,9 +196,7 @@ class StillImageRuntime final {
       report.max_absolute_error =
           std::max(report.max_absolute_error, error);
       squared += static_cast<long double>(error) * error;
-      if (error > options.max_absolute_error) {
-        ++report.failing_components;
-      }
+      if (error > options.max_absolute_error) ++report.failing_components;
     }
     if (report.compared_components != 0) {
       report.rms_error = std::sqrt(static_cast<double>(
