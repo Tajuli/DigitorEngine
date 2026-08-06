@@ -50,23 +50,26 @@ struct NativeStillImageProgress {
 
 struct NativeStillImageServices {
   // Platform codec stage: WIC on Windows, Android ImageDecoder/codec bridge,
-  // ImageIO on Apple. EXIF orientation must be applied before upload. The
-  // requested timestamp is forwarded so the returned frame can preserve the
-  // image-session timeline identity.
-  std::function<DigitorResult(const std::string&, std::int64_t,
-                              NativeStillImageInfo&, ProcessedGpuFramePtr&,
-                              std::string&)>
+  // ImageIO on Apple. The implementation must parse metadata and apply EXIF
+  // orientation before returning the native GPU texture.
+  std::function<DigitorResult(const std::string&, NativeStillImageInfo&,
+                              ProcessedGpuFramePtr&, std::string&)>
       decode_to_gpu;
 
+  // Native GPU resize/transform stage. This must use the same sampling and
+  // alpha conventions as video preview/export.
   std::function<DigitorResult(const ProcessedGpuFramePtr&, std::uint32_t,
                               std::uint32_t, std::int64_t,
                               ProcessedGpuFramePtr&, std::string&)>
       resize_gpu;
 
+  // Existing production video node/color/filter/effect executor.
   std::function<DigitorResult(const GpuImageSessionProcessRequest&,
                               ProcessedGpuFramePtr&, std::string&)>
       process_graph;
 
+  // Terminal export stage. A GPU implementation may encode directly or perform
+  // an explicit, final staging readback. Processing must not continue on CPU.
   std::function<ImageIoResult(const ProcessedGpuFramePtr&, const std::string&,
                               const ImageExportOptions&,
                               const NativeStillImageInfo&,
