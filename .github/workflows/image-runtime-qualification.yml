@@ -1,0 +1,56 @@
+name: Image Runtime Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/native_image_runtime.hpp'
+      - 'include/digitor/native_still_image_host.hpp'
+      - 'src/media/native_still_image_host.cpp'
+      - 'tests/test_native_image_runtime.cpp'
+      - '.github/workflows/image-runtime-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'include/digitor/native_image_runtime.hpp'
+      - 'include/digitor/native_still_image_host.hpp'
+      - 'src/media/native_still_image_host.cpp'
+      - 'tests/test_native_image_runtime.cpp'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: ${{ matrix.os }} image runtime contract
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Syntax and warning qualification (Linux)
+        if: runner.os == 'Linux'
+        run: g++ -std=c++20 -Wall -Wextra -Werror -Iinclude -Isrc -fsyntax-only tests/test_native_image_runtime.cpp
+      - name: Syntax and warning qualification (macOS)
+        if: runner.os == 'macOS'
+        run: clang++ -std=c++20 -Wall -Wextra -Werror -Iinclude -Isrc -fsyntax-only tests/test_native_image_runtime.cpp
+      - name: Syntax and warning qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cl /nologo /std:c++20 /EHsc /W4 /WX /Iinclude /Isrc /Zs tests/test_native_image_runtime.cpp
+      - name: Full engine build
+        shell: bash
+        run: |
+          cmake -S . -B build -DDIGITOR_BUILD_TESTS=OFF -DDIGITOR_BUILD_EXAMPLES=OFF
+          cmake --build build --config Release --parallel 2
