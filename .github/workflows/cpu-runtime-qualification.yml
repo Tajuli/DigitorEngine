@@ -1,0 +1,110 @@
+name: CPU Runtime Qualification
+
+on:
+  pull_request:
+    paths:
+      - 'include/digitor/cpu_parallel_executor.hpp'
+      - 'include/digitor/cpu_simd.hpp'
+      - 'src/cpu/cpu_backend.cpp'
+      - 'src/gpu/color.cpp'
+      - 'src/gpu/primary_wheels.cpp'
+      - 'src/gpu/log_wheels.cpp'
+      - 'tests/test_cpu_parallel_qualification.cpp'
+      - 'tests/test_cpu_simd.cpp'
+      - 'tests/transcendental_parallel/**'
+      - '.github/workflows/cpu-runtime-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'include/digitor/cpu_parallel_executor.hpp'
+      - 'include/digitor/cpu_simd.hpp'
+      - 'src/cpu/cpu_backend.cpp'
+      - 'src/gpu/color.cpp'
+      - 'src/gpu/primary_wheels.cpp'
+      - 'src/gpu/log_wheels.cpp'
+      - 'tests/test_cpu_parallel_qualification.cpp'
+      - 'tests/test_cpu_simd.cpp'
+      - 'tests/transcendental_parallel/**'
+      - '.github/workflows/cpu-runtime-qualification.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    name: ${{ matrix.os }} CPU runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Parallel and SIMD qualification (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          g++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -Iinclude tests/test_cpu_parallel_qualification.cpp -o cpu_parallel_test
+          ./cpu_parallel_test > cpu-runtime-report.txt
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -Iinclude tests/test_cpu_simd.cpp -o cpu_simd_test
+          ./cpu_simd_test >> cpu-runtime-report.txt
+          g++ -std=c++20 -O2 -mavx2 -Wall -Wextra -Werror -Iinclude tests/test_cpu_simd.cpp -o cpu_simd_avx2_test
+          if grep -q avx2 /proc/cpuinfo; then ./cpu_simd_avx2_test >> cpu-runtime-report.txt; else echo 'AVX2 compile passed; execution skipped.' >> cpu-runtime-report.txt; fi
+
+      - name: Parallel and SIMD qualification (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          clang++ -std=c++20 -O2 -pthread -Wall -Wextra -Werror -Iinclude tests/test_cpu_parallel_qualification.cpp -o cpu_parallel_test
+          ./cpu_parallel_test > cpu-runtime-report.txt
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -Iinclude tests/test_cpu_simd.cpp -o cpu_simd_test
+          ./cpu_simd_test >> cpu-runtime-report.txt
+
+      - name: Parallel and SIMD qualification (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /O2 /EHsc /W4 /WX /Iinclude tests/test_cpu_parallel_qualification.cpp /Fe:cpu_parallel_test.exe
+          .\cpu_parallel_test.exe | Out-File cpu-runtime-report.txt
+          cl /nologo /std:c++20 /O2 /EHsc /W4 /WX /Iinclude tests/test_cpu_simd.cpp /Fe:cpu_simd_test.exe
+          .\cpu_simd_test.exe | Out-File cpu-runtime-report.txt -Append
+
+      - name: Configure transcendental parity (Unix)
+        if: runner.os != 'Windows'
+        run: cmake -S tests/transcendental_parallel -B build-transcendental -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure transcendental parity (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S tests/transcendental_parallel -B build-transcendental -A x64
+
+      - name: Build transcendental parity
+        run: cmake --build build-transcendental --config Release --target digitor_transcendental_parallel_test --parallel 2
+
+      - name: Run transcendental parity (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./build-transcendental/digitor_transcendental_parallel_test >> cpu-runtime-report.txt
+
+      - name: Run transcendental parity (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build-transcendental\Release\digitor_transcendental_parallel_test.exe | Out-File cpu-runtime-report.txt -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-runtime-report-${{ matrix.os }}
+          path: cpu-runtime-report.txt
+          if-no-files-found: error
