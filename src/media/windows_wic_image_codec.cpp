@@ -14,17 +14,6 @@ namespace digitor {
 namespace {
 using Microsoft::WRL::ComPtr;
 
-class ComApartment {
- public:
-  ComApartment() noexcept : result_(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {}
-  ~ComApartment() { if (SUCCEEDED(result_)) CoUninitialize(); }
-  [[nodiscard]] bool ready() const noexcept {
-    return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE;
-  }
- private:
-  HRESULT result_;
-};
-
 ImageOrientation read_orientation(IWICBitmapFrameDecode* frame) noexcept {
   ComPtr<IWICMetadataQueryReader> reader;
   if (FAILED(frame->GetMetadataQueryReader(&reader))) return ImageOrientation::normal;
@@ -42,11 +31,15 @@ ImageOrientation read_orientation(IWICBitmapFrameDecode* frame) noexcept {
 
 class WicImageCodec final : public NativeImageCodec {
  public:
-  WicImageCodec() noexcept {
-    ComApartment apartment;
-    if (apartment.ready())
+  WicImageCodec() noexcept : com_result_(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {
+    if (SUCCEEDED(com_result_) || com_result_ == RPC_E_CHANGED_MODE)
       CoCreateInstance(CLSID_WICImagingFactory2, nullptr, CLSCTX_INPROC_SERVER,
                        IID_PPV_ARGS(&factory_));
+  }
+
+  ~WicImageCodec() override {
+    factory_.Reset();
+    if (SUCCEEDED(com_result_)) CoUninitialize();
   }
 
   NativeImageCodecCapabilities capabilities() const noexcept override {
@@ -154,6 +147,7 @@ class WicImageCodec final : public NativeImageCodec {
     }
   }
  private:
+  HRESULT com_result_{E_FAIL};
   ComPtr<IWICImagingFactory2> factory_;
 };
 }  // namespace
