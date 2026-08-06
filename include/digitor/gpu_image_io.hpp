@@ -1,12 +1,16 @@
 #pragma once
 
 #include "digitor/image_io.hpp"
+#include "digitor/timeline_media_adapter.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 
 namespace digitor {
 
