@@ -1,4 +1,5 @@
 #include "digitor/native_still_image_host.hpp"
+#include "digitor/native_image_runtime.hpp"
 
 #include <cassert>
 #include <string>
@@ -19,12 +20,40 @@ int main() {
   assert(native_still_backend_matches_platform(
       NativeStillPlatform::apple, DIGITOR_RENDERER_METAL));
 
+  for (auto platform : {NativeStillPlatform::windows,
+                        NativeStillPlatform::android,
+                        NativeStillPlatform::apple}) {
+    const auto capabilities = native_image_runtime_capabilities(platform);
+    assert(capabilities.jpeg_decode && capabilities.png_decode &&
+           capabilities.webp_decode);
+    assert(capabilities.jpeg_encode && capabilities.png_encode &&
+           capabilities.webp_encode);
+    assert(capabilities.exif_orientation && capabilities.icc_metadata &&
+           capabilities.alpha && capabilities.tiled_processing &&
+           capabilities.terminal_gpu_readback);
+    assert(capabilities.codec_path != nullptr);
+  }
+
   NativeStillImageHostConfig invalid;
   invalid.platform = NativeStillPlatform::windows;
   invalid.backend = DIGITOR_RENDERER_METAL;
   auto result = make_native_still_image_host(invalid);
   assert(!result);
   assert(result.result == DIGITOR_RESULT_INVALID_ARGUMENT);
+
+  NativeImageRuntimeConfig runtime_invalid;
+  runtime_invalid.platform = NativeStillPlatform::windows;
+  runtime_invalid.backend = DIGITOR_RENDERER_D3D12;
+  runtime_invalid.context_identity = reinterpret_cast<const void*>(0x1);
+  runtime_invalid.device_identity = "test-d3d12-device";
+  auto runtime_result = make_native_image_runtime(runtime_invalid);
+  assert(!runtime_result);
+  assert(runtime_result.result == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
+
+  runtime_invalid.backend = DIGITOR_RENDERER_METAL;
+  runtime_result = make_native_image_runtime(runtime_invalid);
+  assert(!runtime_result);
+  assert(runtime_result.result == DIGITOR_RESULT_INVALID_ARGUMENT);
 
   NativeStillImageHostConfig config;
   config.platform = NativeStillPlatform::windows;
