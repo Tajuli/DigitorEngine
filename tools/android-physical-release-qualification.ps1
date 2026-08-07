@@ -169,15 +169,19 @@ try {
   if (-not (Test-Path $exe)) { throw 'Android physical qualification executable was not produced.' }
 
   $Remote = '/data/local/tmp/digitor-android-qualification'
+  $RemoteExe = "$Remote/digitor_android_physical_runtime"
+  $RemoteMedia = "$Remote/input.mp4"
+  $RemoteShader = "$Remote/conversion.spv"
   adb -s $serial shell "rm -rf $Remote && mkdir -p $Remote" | Out-Null
   Invoke-Logged 'push-android-harness' {
-    adb -s $serial push $exe "$Remote/digitor_android_physical_runtime"
-    adb -s $serial push $Fixture "$Remote/input.mp4"
-    adb -s $serial push $Shader "$Remote/conversion.spv"
-    adb -s $serial shell "chmod 755 $Remote/digitor_android_physical_runtime"
+    adb -s $serial push $exe $RemoteExe
+    adb -s $serial push $Fixture $RemoteMedia
+    adb -s $serial push $Shader $RemoteShader
+    adb -s $serial shell "chmod 755 $RemoteExe"
+    adb -s $serial shell "test -r $RemoteMedia && test -s $RemoteMedia"
   }
   Invoke-Logged 'run-android-physical-runtime' {
-    adb -s $serial shell "cd $Remote && ./digitor_android_physical_runtime input.mp4 conversion.spv"
+    adb -s $serial shell "$RemoteExe $RemoteMedia $RemoteShader"
   }
 
   $runtimeLog = Join-Path $ArtifactDir 'run-android-physical-runtime.log'
