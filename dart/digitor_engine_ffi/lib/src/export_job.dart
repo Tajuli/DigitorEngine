@@ -147,7 +147,7 @@ final class DigitorExportJob {
     DynamicLibrary? library,
     String? libraryPath,
   }) : _library =
-           library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
+            library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
     _bind();
     final native = calloc<_NativeConfig>();
     final strings = <Pointer<Utf8>>[
