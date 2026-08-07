@@ -22,14 +22,23 @@ Future<void> main(List<String> arguments) async {
     }
 
     final engineRoot = input.packageRoot.resolve('../../');
-    // Use the configuration-specific directory. In particular, iOS device and
-    // simulator builds can both be arm64 and must never reuse each other's
-    // CMake cache or dynamic library.
     final outputRoot = input.outputDirectory;
     final buildDirectory = outputRoot.resolve('cmake/');
     final libraryUri = outputRoot.resolve(
       targetOs.dylibFileName('digitor_engine'),
     );
+
+    final ffmpegRoot = input.userDefines.path('ffmpeg_root');
+    if (ffmpegRoot != null) {
+      final directory = Directory.fromUri(ffmpegRoot);
+      if (!await directory.exists()) {
+        throw ArgumentError(
+          'hooks.user_defines.digitor_engine_ffi.ffmpeg_root does not exist: '
+          '${directory.path}',
+        );
+      }
+      output.dependencies.add(ffmpegRoot);
+    }
 
     output.dependencies.addAll(<Uri>[
       engineRoot.resolve('CMakeLists.txt'),
@@ -50,7 +59,10 @@ Future<void> main(List<String> arguments) async {
       '-DBUILD_SHARED_LIBS=ON',
       '-DDIGITOR_BUILD_TESTS=OFF',
       '-DDIGITOR_BUILD_EXAMPLES=OFF',
-      '-DDIGITOR_ENABLE_FFMPEG=OFF',
+      '-DDIGITOR_ENABLE_FFMPEG=${ffmpegRoot == null ? 'OFF' : 'ON'}',
+      '-DDIGITOR_REQUIRE_FFMPEG=${ffmpegRoot == null ? 'OFF' : 'ON'}',
+      if (ffmpegRoot != null)
+        '-DDIGITOR_FFMPEG_ROOT=${ffmpegRoot.toFilePath()}',
       '-DDIGITOR_ENABLE_OCIO=OFF',
       '-DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF',
       '-DDIGITOR_WARNINGS_AS_ERRORS=OFF',
