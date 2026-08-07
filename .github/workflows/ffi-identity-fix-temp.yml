@@ -27,49 +27,21 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           graph = Path('dart/digitor_engine_ffi/lib/src/node_graph.dart')
           text = graph.read_text()
-          old = '''final class DigitorPrimaryWheels {
-  const DigitorPrimaryWheels({
-    this.lift = const DigitorPrimaryWheelValue(),
-    this.gamma = const DigitorPrimaryWheelValue(),
-    this.gain = const DigitorPrimaryWheelValue(),
-    this.offset = const DigitorPrimaryWheelValue(),
-  });
-'''
-          new = '''final class DigitorPrimaryWheels {
-  const DigitorPrimaryWheels({
-    this.lift = const DigitorPrimaryWheelValue(master: 0),
-    this.gamma = const DigitorPrimaryWheelValue(master: 1),
-    this.gain = const DigitorPrimaryWheelValue(master: 1),
-    this.offset = const DigitorPrimaryWheelValue(master: 0),
-  });
-'''
+          old = "    this.lift = const DigitorPrimaryWheelValue(),\n    this.gamma = const DigitorPrimaryWheelValue(),\n    this.gain = const DigitorPrimaryWheelValue(),\n    this.offset = const DigitorPrimaryWheelValue(),"
+          new = "    this.lift = const DigitorPrimaryWheelValue(master: 0),\n    this.gamma = const DigitorPrimaryWheelValue(master: 1),\n    this.gain = const DigitorPrimaryWheelValue(master: 1),\n    this.offset = const DigitorPrimaryWheelValue(master: 0),"
           if old not in text:
               raise SystemExit('Primary Wheels defaults block not found')
           graph.write_text(text.replace(old, new, 1))
-
           test = Path('dart/digitor_engine_ffi/test/engine_public_api_test.dart')
           t = test.read_text()
-          marker = '\n}\n'
-          addition = '''
-
-  test('primary wheels default to native identity values', () {
-    const wheels = DigitorPrimaryWheels();
-
-    expect(wheels.lift.master, 0);
-    expect(wheels.gamma.master, 1);
-    expect(wheels.gain.master, 1);
-    expect(wheels.offset.master, 0);
-  });
-'''
           if "primary wheels default to native identity values" not in t:
-              pos = t.rfind(marker)
+              addition = "\n  test('primary wheels default to native identity values', () {\n    const wheels = DigitorPrimaryWheels();\n\n    expect(wheels.lift.master, 0);\n    expect(wheels.gamma.master, 1);\n    expect(wheels.gain.master, 1);\n    expect(wheels.offset.master, 0);\n  });\n"
+              pos = t.rfind('\n}')
               if pos < 0:
                   raise SystemExit('test file closing brace not found')
-              t = t[:pos] + addition + t[pos:]
-              test.write_text(t)
+              test.write_text(t[:pos] + addition + t[pos:])
           PY
       - name: Format package
         working-directory: dart/digitor_engine_ffi
@@ -86,8 +58,6 @@ jobs:
           rm .github/workflows/ffi-identity-fix-temp.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add dart/digitor_engine_ffi/lib/src/node_graph.dart \
-                  dart/digitor_engine_ffi/test/engine_public_api_test.dart \
-                  .github/workflows/ffi-identity-fix-temp.yml
+          git add dart/digitor_engine_ffi/lib/src/node_graph.dart dart/digitor_engine_ffi/test/engine_public_api_test.dart .github/workflows/ffi-identity-fix-temp.yml
           git commit -m 'Fix Primary Wheels Flutter identity defaults'
           git push origin HEAD:agent/internal-digitor-integration
