@@ -23,6 +23,13 @@ bool color_valid(const NativeMediaColorMetadata& color) noexcept {
          color.chroma_location <= 6;
 }
 
+bool windows_vulkan_surface(const NativeMediaSurfaceDescriptor& d,
+                            DigitorRendererBackend backend) noexcept {
+  return backend == DIGITOR_RENDERER_VULKAN &&
+         d.platform == NativeMediaPlatform::windows &&
+         d.handle_type == NativeMediaHandleType::dxgi_shared_handle;
+}
+
 WindowsYuvMatrix windows_matrix(std::int32_t value) noexcept {
   if (value == 9) return WindowsYuvMatrix::bt2020_ncl;
   if (value == 1) return WindowsYuvMatrix::bt709;
@@ -71,13 +78,12 @@ NativeSurfaceImportResult import_native_media_surface(
       return fail(NativeSurfaceImportFailure::unsupported_pixel_format,
                   DIGITOR_RESULT_UNSUPPORTED,
                   "only native NV12 and P010 surfaces are supported");
-    if (target.backend == DIGITOR_RENDERER_AUTO ||
-        !native_surface_backend_compatible(d, target.backend))
+    const bool compatible = native_surface_backend_compatible(d, target.backend) ||
+                            windows_vulkan_surface(d, target.backend);
+    if (target.backend == DIGITOR_RENDERER_AUTO || !compatible)
       return fail(NativeSurfaceImportFailure::backend_mismatch,
                   DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                  target.backend == DIGITOR_RENDERER_VULKAN
-                    ? "Windows D3D11 external-memory Vulkan import is not implemented"
-                    : "native surface is incompatible with the selected backend");
+                  "native surface is incompatible with the selected backend");
     if (!color_valid(d.color))
       return fail(NativeSurfaceImportFailure::invalid_color_metadata,
                   DIGITOR_RESULT_INVALID_ARGUMENT, "invalid native colour metadata");
@@ -139,6 +145,20 @@ NativeSurfaceImportResult import_native_media_surface(
       result = target.metal->import_metal(in, imported);
       if (result == DIGITOR_RESULT_OK) result = target.metal->convert(imported, frame);
 #endif
+    } else if (target.backend == DIGITOR_RENDERER_VULKAN &&
+               d.platform == NativeMediaPlatform::windows) {
+      if (d.handle_type != NativeMediaHandleType::dxgi_shared_handle)
+        return fail(NativeSurfaceImportFailure::unsupported_handle,
+                    DIGITOR_RESULT_UNSUPPORTED,
+                    "Windows Vulkan import requires a qualified DXGI shared handle");
+      if (!target.windows_vulkan)
+        return fail(NativeSurfaceImportFailure::backend_unavailable,
+                    DIGITOR_RESULT_NOT_INITIALIZED,
+                    "Windows Vulkan external-memory importer is not initialized");
+      ZeroCopyImportRequest request{surface, target.backend,
+                                    options.working_format,
+                                    options.working_color_space};
+      result = target.windows_vulkan(request, frame);
     } else if (target.backend == DIGITOR_RENDERER_VULKAN ||
                target.backend == DIGITOR_RENDERER_OPENGL_ES) {
       if (d.platform != NativeMediaPlatform::android ||
