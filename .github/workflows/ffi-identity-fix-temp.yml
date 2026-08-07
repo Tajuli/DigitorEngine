@@ -1,0 +1,93 @@
+name: FFI primary wheels identity fix
+
+on:
+  push:
+    branches:
+      - agent/internal-digitor-integration
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter pub get
+      - name: Fix Primary Wheels native identity defaults and test
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          graph = Path('dart/digitor_engine_ffi/lib/src/node_graph.dart')
+          text = graph.read_text()
+          old = '''final class DigitorPrimaryWheels {
+  const DigitorPrimaryWheels({
+    this.lift = const DigitorPrimaryWheelValue(),
+    this.gamma = const DigitorPrimaryWheelValue(),
+    this.gain = const DigitorPrimaryWheelValue(),
+    this.offset = const DigitorPrimaryWheelValue(),
+  });
+'''
+          new = '''final class DigitorPrimaryWheels {
+  const DigitorPrimaryWheels({
+    this.lift = const DigitorPrimaryWheelValue(master: 0),
+    this.gamma = const DigitorPrimaryWheelValue(master: 1),
+    this.gain = const DigitorPrimaryWheelValue(master: 1),
+    this.offset = const DigitorPrimaryWheelValue(master: 0),
+  });
+'''
+          if old not in text:
+              raise SystemExit('Primary Wheels defaults block not found')
+          graph.write_text(text.replace(old, new, 1))
+
+          test = Path('dart/digitor_engine_ffi/test/engine_public_api_test.dart')
+          t = test.read_text()
+          marker = '\n}\n'
+          addition = '''
+
+  test('primary wheels default to native identity values', () {
+    const wheels = DigitorPrimaryWheels();
+
+    expect(wheels.lift.master, 0);
+    expect(wheels.gamma.master, 1);
+    expect(wheels.gain.master, 1);
+    expect(wheels.offset.master, 0);
+  });
+'''
+          if "primary wheels default to native identity values" not in t:
+              pos = t.rfind(marker)
+              if pos < 0:
+                  raise SystemExit('test file closing brace not found')
+              t = t[:pos] + addition + t[pos:]
+              test.write_text(t)
+          PY
+      - name: Format package
+        working-directory: dart/digitor_engine_ffi
+        run: dart format lib test
+      - name: Analyze package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter analyze --fatal-infos
+      - name: Test package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter test
+      - name: Commit verified identity fix and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/ffi-identity-fix-temp.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dart/digitor_engine_ffi/lib/src/node_graph.dart \
+                  dart/digitor_engine_ffi/test/engine_public_api_test.dart \
+                  .github/workflows/ffi-identity-fix-temp.yml
+          git commit -m 'Fix Primary Wheels Flutter identity defaults'
+          git push origin HEAD:agent/internal-digitor-integration
