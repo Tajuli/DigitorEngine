@@ -37,7 +37,6 @@ jobs:
           replacements = {
               'DigitorNativeNodeGraph._(this._library, this._handle)':
                   'DigitorNativeNodeGraph._(DynamicLibrary library, this._handle)',
-              '_library.lookupFunction': 'library.lookupFunction',
               '  final DynamicLibrary _library;\n': '',
               "      if (out.value == nullptr)\n        throw const DigitorEngineException('nodeGraphCreate', 100);":
                   "      if (out.value == nullptr) {\n        throw const DigitorEngineException('nodeGraphCreate', 100);\n      }",
@@ -55,6 +54,14 @@ jobs:
               if old not in text:
                   raise SystemExit(f'expected source pattern not found: {old!r}')
               text = text.replace(old, new)
+
+          start_marker = '  DigitorNativeNodeGraph._(DynamicLibrary library, this._handle)'
+          end_marker = ';\n\n  factory DigitorNativeNodeGraph.create'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          initializer = text[start:end]
+          initializer = initializer.replace('_library', 'library')
+          text = text[:start] + initializer + text[end:]
 
           path.write_text(text)
           PY
