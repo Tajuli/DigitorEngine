@@ -18,7 +18,11 @@ struct NativeSurfaceImportTarget {
   void* native_device{};
   WindowsD3D12ZeroCopyImporter* d3d12{};
   AppleNativeZeroCopyBindings* metal{};
-  // Android backends own their VkDevice/EGLContext objects.  Keeping this as
+  // Windows Vulkan import must be owned by the renderer because external-memory
+  // and external-semaphore objects must be created on the selected VkDevice.
+  // The decoder surface must expose a qualified DXGI shared handle.
+  NativeMediaImportCallback windows_vulkan{};
+  // Android backends own their VkDevice/EGLContext objects. Keeping this as
   // the existing importer callback avoids teaching the platform-neutral bridge
   // how to manufacture resources on a foreign context.
   NativeMediaImportCallback android{};
