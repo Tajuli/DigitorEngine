@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cstdlib>
 #include <fcntl.h>
+#include <media/NdkImageReader.h>
 #include <media/NdkMediaExtractor.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include <vector>
 
 inline media_status_t digitor_media_extractor_set_data_source_fd(
     AMediaExtractor* extractor,
@@ -27,5 +31,32 @@ inline media_status_t digitor_media_extractor_set_data_source_fd(
   return status;
 }
 
+// AImageReader_delete() returns every acquired AImage to the system. The
+// qualification harness intentionally carries one acquired AImage/AHB out of
+// decode_one_frame() so Vulkan can import it afterwards. Defer reader deletion
+// until process shutdown, after the DecodedFrame's AImage has been destroyed.
+// This preserves the Android NDK lifetime contract without changing production
+// engine code or weakening the qualification criteria.
+inline std::vector<AImageReader*>& digitor_deferred_image_readers() {
+  static auto* readers = new std::vector<AImageReader*>();
+  return *readers;
+}
+
+inline void digitor_release_deferred_image_readers() {
+  auto& readers = digitor_deferred_image_readers();
+  for (auto* reader : readers) {
+    if (reader) AImageReader_delete(reader);
+  }
+  readers.clear();
+}
+
+inline void digitor_defer_image_reader_delete(AImageReader* reader) {
+  if (!reader) return;
+  auto& readers = digitor_deferred_image_readers();
+  if (readers.empty()) std::atexit(digitor_release_deferred_image_readers);
+  readers.push_back(reader);
+}
+
 #define AMediaExtractor_setDataSource(extractor, path) \
   digitor_media_extractor_set_data_source_fd((extractor), (path))
+#define AImageReader_delete(reader) digitor_defer_image_reader_delete((reader))
