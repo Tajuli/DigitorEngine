@@ -35,8 +35,11 @@ class AppleImageIoCodec final : public NativeImageCodec {
       if(bytes>request.limits.max_decoded_bytes){CGImageRelease(image);CFRelease(source);return {DIGITOR_RESULT_OUT_OF_MEMORY,"ImageIO image exceeds memory limit"};}
       try{output.pixels.resize(static_cast<size_t>(bytes));}catch(...){CGImageRelease(image);CFRelease(source);return {DIGITOR_RESULT_OUT_OF_MEMORY,"ImageIO allocation failed"};}
       CGColorSpaceRef color=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+      const CGBitmapInfo decode_bitmap_info = static_cast<CGBitmapInfo>(
+          static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) |
+          static_cast<uint32_t>(kCGBitmapByteOrder32Big));
       CGContextRef context=CGBitmapContextCreate(output.pixels.data(),output.width,output.height,8,
-          output.row_bytes,color,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+          output.row_bytes,color,decode_bitmap_info);
       CGColorSpaceRelease(color);
       if(!context){CGImageRelease(image);CFRelease(source);return {DIGITOR_RESULT_INTERNAL_ERROR,"ImageIO bitmap context failed"};}
       CGContextDrawImage(context,CGRectMake(0,0,output.width,output.height),image);
@@ -47,17 +50,21 @@ class AppleImageIoCodec final : public NativeImageCodec {
   ImageIoResult encode(const NativeImageEncodeRequest& request,const NativeImageBuffer& input) noexcept override {
     @autoreleasepool {
       NativeImageBuffer prepared=input;auto prep=prepare_image_for_export(prepared,request);if(!prep)return prep;
-      CFStringRef uti=UTTypePNG.identifier;
-      if(request.options.format==ImageExportFormat::jpeg)uti=UTTypeJPEG.identifier;
-      else if(request.options.format==ImageExportFormat::webp)uti=UTTypeWebP.identifier;
+      NSString* uti_identifier=UTTypePNG.identifier;
+      if(request.options.format==ImageExportFormat::jpeg)uti_identifier=UTTypeJPEG.identifier;
+      else if(request.options.format==ImageExportFormat::webp)uti_identifier=UTTypeWebP.identifier;
+      CFStringRef uti=(__bridge CFStringRef)uti_identifier;
       CFURLRef url=CFURLCreateFromFileSystemRepresentation(nullptr,reinterpret_cast<const UInt8*>(request.path.data()),request.path.size(),false);
       if(!url)return {DIGITOR_RESULT_INVALID_ARGUMENT,"ImageIO output path is invalid"};
       CGImageDestinationRef destination=CGImageDestinationCreateWithURL(url,uti,1,nullptr);CFRelease(url);
       if(!destination)return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,"ImageIO encoder unavailable"};
       CGDataProviderRef provider=CGDataProviderCreateWithData(nullptr,prepared.pixels.data(),prepared.pixels.size(),nullptr);
       CGColorSpaceRef color=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+      const CGBitmapInfo encode_bitmap_info = static_cast<CGBitmapInfo>(
+          static_cast<uint32_t>(kCGImageAlphaLast) |
+          static_cast<uint32_t>(kCGBitmapByteOrder32Big));
       CGImageRef image=CGImageCreate(prepared.width,prepared.height,8,32,prepared.row_bytes,color,
-          kCGImageAlphaLast|kCGBitmapByteOrder32Big,provider,nullptr,false,kCGRenderingIntentDefault);
+          encode_bitmap_info,provider,nullptr,false,kCGRenderingIntentDefault);
       CGColorSpaceRelease(color);CGDataProviderRelease(provider);
       if(!image){CFRelease(destination);return {DIGITOR_RESULT_INTERNAL_ERROR,"ImageIO export image creation failed"};}
       CGImageDestinationAddImage(destination,image,nullptr);const bool ok=CGImageDestinationFinalize(destination);
