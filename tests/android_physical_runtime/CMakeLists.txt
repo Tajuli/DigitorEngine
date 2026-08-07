@@ -5,7 +5,14 @@ if(NOT ANDROID)
   message(FATAL_ERROR "android_physical_runtime must be cross-compiled with the Android NDK")
 endif()
 
+# Compile the existing qualification entrypoint under an internal name so the
+# wrapper can deterministically release retained AImageReader objects before
+# process/runtime teardown begins.
+set_source_files_properties(main.cpp PROPERTIES
+  COMPILE_DEFINITIONS "main=digitor_android_physical_runtime_main")
+
 add_executable(digitor_android_physical_runtime
+  qualification_entry.cpp
   main.cpp
   ../../src/gpu/android_gpu_qualification.cpp)
 
