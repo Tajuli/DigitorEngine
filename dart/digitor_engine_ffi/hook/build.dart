@@ -22,10 +22,11 @@ Future<void> main(List<String> arguments) async {
     }
 
     final engineRoot = input.packageRoot.resolve('../../');
-    final outputRoot = input.outputDirectoryShared;
-    final buildDirectory = outputRoot.resolve(
-      'cmake-${targetOs.name}-${code.targetArchitecture.name}/',
-    );
+    // Use the configuration-specific directory. In particular, iOS device and
+    // simulator builds can both be arm64 and must never reuse each other's
+    // CMake cache or dynamic library.
+    final outputRoot = input.outputDirectory;
+    final buildDirectory = outputRoot.resolve('cmake/');
     final libraryUri = outputRoot.resolve(
       targetOs.dylibFileName('digitor_engine'),
     );
@@ -125,6 +126,9 @@ List<String> _platformCmakeArguments(CodeConfig code) {
         '-DCMAKE_OSX_DEPLOYMENT_TARGET=${code.macOS.targetVersion}',
       ];
     case OS.windows:
+      if (architecture == 'arm64') return const <String>['-A', 'ARM64'];
+      if (architecture == 'ia32') return const <String>['-A', 'Win32'];
+      return const <String>[];
     case OS.linux:
       return const <String>[];
     default:
@@ -194,10 +198,7 @@ Future<String> _findCmake() async {
       '$sdkRoot${Platform.pathSeparator}cmake',
     );
     if (cmakeRoot.existsSync()) {
-      final installs = cmakeRoot
-          .listSync()
-          .whereType<Directory>()
-          .toList()
+      final installs = cmakeRoot.listSync().whereType<Directory>().toList()
         ..sort((a, b) => b.path.compareTo(a.path));
       for (final install in installs) {
         candidates.add(
