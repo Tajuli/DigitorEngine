@@ -51,7 +51,8 @@ final class DigitorSdkWorker {
     if (totalUnits <= 0) {
       throw ArgumentError.value(totalUnits, 'totalUnits');
     }
-    final progressController = StreamController<DigitorWorkerProgress>.broadcast();
+    final progressController =
+        StreamController<DigitorWorkerProgress>.broadcast();
     final completionController =
         StreamController<DigitorWorkerCompletion>.broadcast();
     final progress = NativeCallable<_ProgressNative>.listener(
