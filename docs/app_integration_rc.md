@@ -26,7 +26,7 @@ Use `UnifiedRealMediaRuntime` with a real `NativeFlutterPresenter`. The presente
 
 ### Explicit compatibility preview
 
-The legacy `digitor_sdk_*` CPU-readable preview API remains available only as an explicitly declared compatibility/validation path. `DigitorNativeTexture` is CPU memory and must not be registered or described as a zero-copy GPU texture.
+The legacy `digitor_sdk_*` CPU-readable preview API remains available only as an explicitly declared compatibility-only validation path. `DigitorNativeTexture` is CPU memory and must not be registered or described as a zero-copy GPU texture.
 
 `DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT` fails with `DIGITOR_RESULT_BACKEND_UNAVAILABLE` until a real native presenter is attached. This is intentional fail-closed behavior.
 
