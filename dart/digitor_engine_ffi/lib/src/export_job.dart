@@ -5,7 +5,14 @@ import 'package:ffi/ffi.dart';
 
 import 'library_loader.dart';
 
-enum DigitorExportJobState { idle, running, paused, completed, cancelled, failed }
+enum DigitorExportJobState {
+  idle,
+  running,
+  paused,
+  completed,
+  cancelled,
+  failed
+}
 
 final class DigitorExportJobConfig {
   const DigitorExportJobConfig({
