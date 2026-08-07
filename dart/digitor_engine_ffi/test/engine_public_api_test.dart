@@ -16,4 +16,13 @@ void main() {
     expect(configuration.enableValidation, isFalse);
     expect(configuration.allowCpuFallback, isTrue);
   });
+
+  test('high-level Primary Wheels identity matches native convention', () {
+    const wheels = DigitorEngine.identityPrimaryWheels;
+
+    expect(wheels.lift.master, 0);
+    expect(wheels.gamma.master, 1);
+    expect(wheels.gain.master, 1);
+    expect(wheels.offset.master, 0);
+  });
 }
