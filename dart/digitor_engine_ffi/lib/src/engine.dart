@@ -19,6 +19,18 @@ final class DigitorEngine {
   factory DigitorEngine.open({String? libraryPath}) =>
       DigitorEngine._(libraryPath: libraryPath);
 
+  /// Neutral Primary Wheels values matching the native engine's identity
+  /// convention: Lift/Offset master 0 and Gamma/Gain master 1.
+  ///
+  /// Prefer this value when creating an untouched Primary Wheels operation.
+  static const DigitorPrimaryWheels identityPrimaryWheels =
+      DigitorPrimaryWheels(
+        lift: DigitorPrimaryWheelValue(master: 0),
+        gamma: DigitorPrimaryWheelValue(master: 1),
+        gain: DigitorPrimaryWheelValue(master: 1),
+        offset: DigitorPrimaryWheelValue(master: 0),
+      );
+
   final String? _libraryPath;
   final DigitorNativeEngine _native;
 
