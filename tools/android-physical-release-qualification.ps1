@@ -34,21 +34,6 @@ function Invoke-Logged {
   Write-Host "$Name=PASS (log: $log)"
 }
 
-if (-not (Get-Command adb -ErrorAction SilentlyContinue)) {
-  if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
-    $candidate = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
-    if (Test-Path $candidate) { $AndroidSdkRoot = $candidate }
-  }
-  if (-not [string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
-    $env:Path = "$(Join-Path $AndroidSdkRoot 'platform-tools');$env:Path"
-  }
-}
-if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb was not found.' }
-
-$authorized = @(adb devices | Select-String "`tdevice$")
-if ($authorized.Count -ne 1) { throw 'Expected exactly one authorized Android device.' }
-$serial = (($authorized[0].ToString() -split "`t")[0]).Trim()
-
 if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
   $candidate = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
   if (Test-Path $candidate) { $AndroidSdkRoot = $candidate }
@@ -56,6 +41,12 @@ if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
 if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot) -or -not (Test-Path $AndroidSdkRoot)) {
   throw 'Android SDK root was not found. Set ANDROID_SDK_ROOT.'
 }
+$env:Path = "$(Join-Path $AndroidSdkRoot 'platform-tools');$env:Path"
+if (-not (Get-Command adb -ErrorAction SilentlyContinue)) { throw 'adb was not found.' }
+
+$authorized = @(adb devices | Select-String "`tdevice$")
+if ($authorized.Count -ne 1) { throw 'Expected exactly one authorized Android device.' }
+$serial = (($authorized[0].ToString() -split "`t")[0]).Trim()
 
 if ([string]::IsNullOrWhiteSpace($AndroidNdkRoot) -or -not (Test-Path $AndroidNdkRoot)) {
   $ndkParent = Join-Path $AndroidSdkRoot 'ndk'
@@ -69,6 +60,30 @@ if ([string]::IsNullOrWhiteSpace($AndroidNdkRoot) -or -not (Test-Path $AndroidNd
 }
 $Toolchain = Join-Path $AndroidNdkRoot 'build\cmake\android.toolchain.cmake'
 if (-not (Test-Path $Toolchain)) { throw "Android NDK CMake toolchain missing: $Toolchain" }
+
+$Ninja = $null
+$ninjaCommand = Get-Command ninja -ErrorAction SilentlyContinue
+if ($ninjaCommand) { $Ninja = $ninjaCommand.Source }
+if (-not $Ninja) {
+  $sdkCmakeRoot = Join-Path $AndroidSdkRoot 'cmake'
+  if (Test-Path $sdkCmakeRoot) {
+    $sdkNinja = Get-ChildItem $sdkCmakeRoot -Directory | Sort-Object Name -Descending |
+      ForEach-Object { Join-Path $_.FullName 'bin\ninja.exe' } |
+      Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($sdkNinja) { $Ninja = $sdkNinja }
+  }
+}
+if (-not $Ninja) {
+  $cmakeCommand = Get-Command cmake -ErrorAction SilentlyContinue
+  if ($cmakeCommand) {
+    $cmakeDir = Split-Path $cmakeCommand.Source -Parent
+    $bundledNinja = Join-Path $cmakeDir 'ninja.exe'
+    if (Test-Path $bundledNinja) { $Ninja = $bundledNinja }
+  }
+}
+if (-not $Ninja -or -not (Test-Path $Ninja)) {
+  throw 'Ninja was not found. Install Android SDK CMake/Ninja from Android Studio SDK Manager or add ninja.exe to PATH.'
+}
 
 $Glslc = Join-Path $AndroidNdkRoot 'shader-tools\windows-x86_64\glslc.exe'
 if (-not (Test-Path $Glslc)) {
@@ -92,6 +107,8 @@ try {
   "UTC_TIMESTAMP=$([DateTime]::UtcNow.ToString('o'))" | Add-Content $summary
   "COMMIT=$(git rev-parse HEAD)" | Add-Content $summary
   "ADB_SERIAL=$serial" | Add-Content $summary
+  "ANDROID_NDK_ROOT=$AndroidNdkRoot" | Add-Content $summary
+  "NINJA=$Ninja" | Add-Content $summary
 
   $manufacturer = (adb -s $serial shell getprop ro.product.manufacturer).Trim()
   $model = (adb -s $serial shell getprop ro.product.model).Trim()
@@ -130,16 +147,22 @@ try {
 
   Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
   Invoke-Logged 'configure-android-harness' {
-    cmake -S tests/android_physical_runtime -B $BuildDir -G Ninja `
-      -DCMAKE_TOOLCHAIN_FILE=$Toolchain `
-      -DANDROID_ABI=arm64-v8a `
-      -DANDROID_PLATFORM=android-31 `
-      -DANDROID_STL=c++_static `
-      -DCMAKE_BUILD_TYPE=$Configuration `
-      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+    $configureArgs = @(
+      '-S', 'tests/android_physical_runtime',
+      '-B', $BuildDir,
+      '-G', 'Ninja',
+      "-DCMAKE_MAKE_PROGRAM=$Ninja",
+      "-DCMAKE_TOOLCHAIN_FILE=$Toolchain",
+      '-DANDROID_ABI=arm64-v8a',
+      '-DANDROID_PLATFORM=android-31',
+      '-DANDROID_STL=c++_static',
+      "-DCMAKE_BUILD_TYPE=$Configuration",
+      '-DCMAKE_CXX_SCAN_FOR_MODULES=OFF'
+    )
+    & cmake @configureArgs
   }
   Invoke-Logged 'build-android-harness' {
-    cmake --build $BuildDir --parallel
+    & cmake --build $BuildDir --parallel
   }
 
   $exe = Join-Path $BuildDir 'digitor_android_physical_runtime'
