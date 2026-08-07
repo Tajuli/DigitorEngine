@@ -22,6 +22,8 @@ struct AndroidNativeZeroCopyBindings::Impl {
   AndroidVulkanRgba16fDispatch vulkan_dispatch;
   AndroidGlesRgba16fDispatch gles_dispatch;
   AndroidMediaCodecSurfaceSubmit encoder_submit;
+  AndroidVulkanImport native_vulkan_import;
+  AndroidGlesImport native_gles_import;
   mutable std::mutex mutex;
   AndroidNativeInteropTelemetry telemetry;
 #if defined(__ANDROID__)
@@ -38,12 +40,16 @@ AndroidNativeZeroCopyBindings::AndroidNativeZeroCopyBindings(
     AndroidNativeInteropConfig c,
     AndroidVulkanRgba16fDispatch vd,
     AndroidGlesRgba16fDispatch gd,
-    AndroidMediaCodecSurfaceSubmit es)
+    AndroidMediaCodecSurfaceSubmit es,
+    AndroidVulkanImport vi,
+    AndroidGlesImport gi)
     : impl_(std::make_shared<Impl>()) {
   impl_->config = std::move(c);
   impl_->vulkan_dispatch = std::move(vd);
   impl_->gles_dispatch = std::move(gd);
   impl_->encoder_submit = std::move(es);
+  impl_->native_vulkan_import = std::move(vi);
+  impl_->native_gles_import = std::move(gi);
 }
 
 AndroidNativeZeroCopyBindings::~AndroidNativeZeroCopyBindings() = default;
@@ -66,10 +72,11 @@ DigitorResult AndroidNativeZeroCopyBindings::initialize() noexcept {
     i.import_semaphore_fd = reinterpret_cast<PFN_vkImportSemaphoreFdKHR>(
         vkGetDeviceProcAddr(device, "vkImportSemaphoreFdKHR"));
     if (i.config.require_vulkan_external_memory &&
-        (!i.get_ahb_properties || !i.get_memory_ahb)) {
+        (!i.get_ahb_properties || !i.get_memory_ahb || !i.native_vulkan_import)) {
       std::scoped_lock lock(i.mutex);
       ++i.telemetry.failures;
-      i.telemetry.diagnostic = "VK_ANDROID_external_memory_android_hardware_buffer unavailable";
+      i.telemetry.diagnostic =
+          "Vulkan AHardwareBuffer import requires extension entry points and renderer-owned VkImage binding";
       return DIGITOR_RESULT_UNSUPPORTED;
     }
     if (i.config.require_sync_fd && !i.import_semaphore_fd) {
@@ -80,7 +87,7 @@ DigitorResult AndroidNativeZeroCopyBindings::initialize() noexcept {
     }
   }
 
-  if (i.config.allow_gles_external_image && i.config.egl.display) {
+  if (i.config.allow_gles_external_image && i.config.egl.display && !i.native_gles_import) {
     i.egl_create_image = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
         eglGetProcAddress("eglCreateImageKHR"));
     i.egl_destroy_image = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
@@ -112,12 +119,11 @@ DigitorResult AndroidNativeZeroCopyBindings::import_vulkan(
   auto& i = *impl_;
   if (!frame.hardware_buffer || !frame.width || !frame.height ||
       !i.config.vulkan.device || !i.config.vulkan.physical_device ||
-      !i.get_ahb_properties)
+      !i.get_ahb_properties || !i.native_vulkan_import)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
 
   AHardwareBuffer_Desc desc{};
-  AHardwareBuffer_describe(
-      static_cast<AHardwareBuffer*>(frame.hardware_buffer), &desc);
+  AHardwareBuffer_describe(static_cast<AHardwareBuffer*>(frame.hardware_buffer), &desc);
   if (desc.width != frame.width || desc.height != frame.height) {
     std::scoped_lock lock(i.mutex);
     ++i.telemetry.failures;
@@ -146,29 +152,39 @@ DigitorResult AndroidNativeZeroCopyBindings::import_vulkan(
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
-  AHardwareBuffer_acquire(ahb);
-  auto lifetime = std::shared_ptr<void>(ahb, [](void* p) {
-    AHardwareBuffer_release(static_cast<AHardwareBuffer*>(p));
-  });
-
-  out.backend = AndroidZeroCopyBackend::vulkan;
-  out.image = frame.hardware_buffer;
-  out.image_view = reinterpret_cast<void*>(static_cast<std::uintptr_t>(
-      format_props.externalFormat ? format_props.externalFormat : format_props.format));
-  out.completion_sync = frame.acquire_fence_fd >= 0
-      ? reinterpret_cast<void*>(static_cast<std::intptr_t>(frame.acquire_fence_fd))
-      : nullptr;
-  out.width = frame.width;
-  out.height = frame.height;
-  out.format = frame.format;
-  out.timestamp_us = frame.timestamp_us;
-  out.frame_identity = frame.frame_identity;
-  out.lifetime = std::move(lifetime);
+  // The renderer owns VkDevice/VkQueue lifetime and therefore owns creation of
+  // VkImage, VkDeviceMemory, VkImageView, YCbCr conversion and sync import. Do
+  // not expose AHardwareBuffer/externalFormat integers as fake Vulkan handles.
+  const auto result = i.native_vulkan_import(frame, out);
+  if (result != DIGITOR_RESULT_OK) {
+    out = {};
+    std::scoped_lock lock(i.mutex);
+    ++i.telemetry.failures;
+    i.telemetry.diagnostic = "renderer-owned AHardwareBuffer Vulkan import failed";
+    return result;
+  }
+  if (out.backend != AndroidZeroCopyBackend::vulkan || !out.image || !out.image_view ||
+      !out.lifetime || out.width != frame.width || out.height != frame.height ||
+      out.format != frame.format || out.timestamp_us != frame.timestamp_us ||
+      out.frame_identity != frame.frame_identity) {
+    out = {};
+    std::scoped_lock lock(i.mutex);
+    ++i.telemetry.failures;
+    i.telemetry.diagnostic = "renderer-owned Vulkan import violated native image contract";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
+  if (i.config.require_sync_fd && frame.acquire_fence_fd >= 0 && !out.completion_sync) {
+    out = {};
+    std::scoped_lock lock(i.mutex);
+    ++i.telemetry.failures;
+    i.telemetry.diagnostic = "Vulkan import did not preserve acquire synchronization";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
 
   std::scoped_lock lock(i.mutex);
   ++i.telemetry.vulkan_imports;
   if (frame.acquire_fence_fd >= 0) ++i.telemetry.sync_fd_imports;
-  i.telemetry.diagnostic = "AHardwareBuffer validated for Vulkan external-memory import";
+  i.telemetry.diagnostic = "AHardwareBuffer imported as renderer-owned Vulkan image";
   return DIGITOR_RESULT_OK;
 #endif
 }
@@ -182,10 +198,25 @@ DigitorResult AndroidNativeZeroCopyBindings::import_gles(
   return DIGITOR_RESULT_UNSUPPORTED;
 #else
   auto& i = *impl_;
-  if (!i.config.allow_gles_external_image || !i.config.egl.display ||
-      !i.egl_create_image || !i.gl_image_target || !frame.hardware_buffer)
+  if (!i.config.allow_gles_external_image || !i.config.egl.display || !frame.hardware_buffer)
     return DIGITOR_RESULT_UNSUPPORTED;
 
+  if (i.native_gles_import) {
+    const auto result = i.native_gles_import(frame, out);
+    if (result != DIGITOR_RESULT_OK) return result;
+    if (out.backend != AndroidZeroCopyBackend::opengl_es || !out.image || !out.image_view ||
+        !out.lifetime || out.width != frame.width || out.height != frame.height ||
+        out.timestamp_us != frame.timestamp_us || out.frame_identity != frame.frame_identity) {
+      out = {};
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+    std::scoped_lock lock(i.mutex);
+    ++i.telemetry.egl_imports;
+    i.telemetry.diagnostic = "AHardwareBuffer imported by renderer-owned GLES binding";
+    return DIGITOR_RESULT_OK;
+  }
+
+  if (!i.egl_create_image || !i.gl_image_target) return DIGITOR_RESULT_UNSUPPORTED;
   const EGLint attrs[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
   auto display = static_cast<EGLDisplay>(i.config.egl.display);
   auto image = i.egl_create_image(display, EGL_NO_CONTEXT,
@@ -272,7 +303,7 @@ DigitorResult AndroidNativeZeroCopyBindings::convert(
 
 DigitorResult AndroidNativeZeroCopyBindings::submit_encoder(
     const ProcessedGpuFramePtr& frame) noexcept {
-  if (!frame || !frame->ready() ||
+  if (!frame || !frame->ready() || frame->backend() == DIGITOR_RENDERER_CPU ||
       frame->metadata().format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto result = impl_->encoder_submit(frame);
@@ -291,28 +322,32 @@ AndroidZeroCopyBinding AndroidNativeZeroCopyBindings::binding(
   b.import_vulkan = [keep](const AndroidHardwareBufferFrame& f,
                            AndroidImportedImage& o) noexcept {
     AndroidNativeZeroCopyBindings x(keep->config, keep->vulkan_dispatch,
-                                    keep->gles_dispatch, keep->encoder_submit);
+                                    keep->gles_dispatch, keep->encoder_submit,
+                                    keep->native_vulkan_import, keep->native_gles_import);
     x.impl_ = keep;
     return x.import_vulkan(f, o);
   };
   b.import_gles = [keep](const AndroidHardwareBufferFrame& f,
                          AndroidImportedImage& o) noexcept {
     AndroidNativeZeroCopyBindings x(keep->config, keep->vulkan_dispatch,
-                                    keep->gles_dispatch, keep->encoder_submit);
+                                    keep->gles_dispatch, keep->encoder_submit,
+                                    keep->native_vulkan_import, keep->native_gles_import);
     x.impl_ = keep;
     return x.import_gles(f, o);
   };
   b.convert_to_rgba16f = [keep](const AndroidImportedImage& f,
                                 ProcessedGpuFramePtr& o) noexcept {
     AndroidNativeZeroCopyBindings x(keep->config, keep->vulkan_dispatch,
-                                    keep->gles_dispatch, keep->encoder_submit);
+                                    keep->gles_dispatch, keep->encoder_submit,
+                                    keep->native_vulkan_import, keep->native_gles_import);
     x.impl_ = keep;
     return x.convert(f, o);
   };
   b.preview_consumer = std::move(preview_consumer);
   b.encoder_consumer = [keep](const ProcessedGpuFramePtr& f) noexcept {
     AndroidNativeZeroCopyBindings x(keep->config, keep->vulkan_dispatch,
-                                    keep->gles_dispatch, keep->encoder_submit);
+                                    keep->gles_dispatch, keep->encoder_submit,
+                                    keep->native_vulkan_import, keep->native_gles_import);
     x.impl_ = keep;
     return x.submit_encoder(f);
   };
@@ -329,4 +364,4 @@ bool AndroidNativeZeroCopyBindings::gpu_only() const noexcept {
   return impl_->telemetry.cpu_copies == 0;
 }
 
-} // namespace digitor
+}  // namespace digitor
