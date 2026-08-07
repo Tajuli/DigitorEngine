@@ -189,7 +189,7 @@ jobs:
         run: flutter pub get
       - name: Check formatting
         working-directory: dart/digitor_engine_ffi
-        run: dart format --output=show --set-exit-if-changed .
+        run: dart format --output=none --set-exit-if-changed .
       - name: Analyze
         working-directory: dart/digitor_engine_ffi
         run: flutter analyze --fatal-infos --fatal-warnings
