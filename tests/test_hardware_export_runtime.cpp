@@ -55,21 +55,14 @@ int main() {
   assert(!supports(*qsv, ExportCodec::av1));
   assert(supports(*software, ExportCodec::h264));
   assert(supports(*software, ExportCodec::hevc));
-  assert(!supports(*software, ExportCodec::av1));
-  assert(!supports(*software, ExportCodec::prores));
 
   int attempts = 0;
-  ProcessExecutor process = [&attempts](const std::vector<std::string>& args) {
+  ProcessExecutor failing_hardware = [&attempts](const std::vector<std::string>&) {
     ++attempts;
-    bool software = false;
-    for (const auto& arg : args) if (arg == "libx264") software = true;
-    if (!software) return 1;
-    std::ofstream out(args.back(), std::ios::binary);
-    out << "encoded";
-    return out ? 0 : 2;
+    return 1;
   };
 
-  HardwareAwareExportRuntime runtime("ffmpeg", probe, process);
+  HardwareAwareExportRuntime runtime("ffmpeg", probe, failing_hardware);
   TranscodeRequest request;
   request.input_path = root / "input.mp4";
   request.output_path = root / "output.mp4";
@@ -78,13 +71,34 @@ int main() {
   request.profile.allow_software_fallback = true;
   std::ofstream(request.input_path) << "source";
 
-  const auto result = runtime.execute(request);
-  assert(result.success);
-  assert(result.requested_backend == EncoderBackend::nvenc);
-  assert(result.executed_backend == EncoderBackend::software);
-  assert(result.used_fallback);
-  assert(attempts == 2);
-  assert(std::filesystem::exists(request.output_path));
+  const auto failed = runtime.execute(request);
+  assert(!failed.success);
+  assert(failed.requested_backend == EncoderBackend::nvenc);
+  assert(failed.executed_backend == EncoderBackend::nvenc);
+  assert(!failed.used_fallback);
+  assert(attempts == 1);
+  assert(!std::filesystem::exists(request.output_path));
+
+  // CPU fallback remains valid when no compatible GPU/hardware encoder exists
+  // at selection time.
+  TextCommandExecutor software_only = [](const std::vector<std::string>&, std::string& output) {
+    output = "Encoders:\n V..... libx264 libx264 H.264 encoder\n";
+    return 0;
+  };
+  int software_attempts = 0;
+  ProcessExecutor software_process = [&software_attempts](const std::vector<std::string>& args) {
+    ++software_attempts;
+    std::ofstream out(args.back(), std::ios::binary);
+    out << "encoded";
+    return out ? 0 : 2;
+  };
+  HardwareAwareExportRuntime fallback_runtime("ffmpeg", software_only, software_process);
+  const auto fallback = fallback_runtime.execute(request);
+  assert(fallback.success);
+  assert(fallback.requested_backend == EncoderBackend::software);
+  assert(fallback.executed_backend == EncoderBackend::software);
+  assert(fallback.used_fallback);
+  assert(software_attempts == 1);
 
   TextCommandExecutor missing = [](const std::vector<std::string>&, std::string&) { return 127; };
   const auto unavailable = probe_ffmpeg_encoder_inventory("missing", missing);

@@ -1,16 +1,41 @@
 #include "digitor/timeline_render_runtime.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace digitor {
+namespace {
+
+std::size_t parallel_scale_rgba(std::vector<float>& rgba, float weight) {
+  if (rgba.empty() || weight == 1.0F) return 1;
+  constexpr std::size_t kMinValuesPerTask = 64U * 1024U;
+  auto& executor = shared_cpu_executor();
+  executor.parallel_for(
+      rgba.size(), kMinValuesPerTask,
+      [&](std::size_t begin, std::size_t end) {
+        for (std::size_t i = begin; i < end; ++i) rgba[i] *= weight;
+      });
+  return std::max<std::size_t>(1, executor.telemetry().last_task_count);
+}
+
+bool exact_cpu_pixels_equal(const RenderVideoFrame& a,
+                            const RenderVideoFrame& b) noexcept {
+  if (a.width != b.width || a.height != b.height || a.rgba.size() != b.rgba.size())
+    return false;
+  if (a.rgba.empty()) return true;
+  return std::memcmp(a.rgba.data(), b.rgba.data(), a.rgba.size() * sizeof(float)) == 0;
+}
+
+}  // namespace
 
 bool RenderVideoFrame::valid() const noexcept {
   if (width == 0 || height == 0) return false;
   if (gpu) {
     const auto& metadata = gpu->metadata();
-    return gpu->ready() && metadata.width == width && metadata.height == height;
+    return rgba.empty() && gpu->ready() && metadata.width == width && metadata.height == height;
   }
   const auto pixels = static_cast<std::size_t>(width) * height;
   return pixels <= std::numeric_limits<std::size_t>::max() / 4U &&
@@ -21,12 +46,14 @@ TimelineRenderRuntime::TimelineRenderRuntime(TimelineRenderExecutor executor,
                                              TimelineRenderCallbacks callbacks,
                                              std::size_t memory_cache_bytes,
                                              std::size_t gpu_cache_frames,
-                                             std::size_t gpu_cache_bytes)
+                                             std::size_t gpu_cache_bytes,
+                                             RenderResidencyPolicy residency_policy)
     : executor_(std::move(executor)),
       callbacks_(std::move(callbacks)),
       cache_(memory_cache_bytes),
       gpu_cache_capacity_(gpu_cache_frames),
-      gpu_cache_budget_bytes_(gpu_cache_bytes) {}
+      gpu_cache_budget_bytes_(gpu_cache_bytes),
+      residency_policy_(residency_policy) {}
 
 std::size_t TimelineRenderRuntime::estimate_gpu_bytes(const RenderVideoFrame& frame) noexcept {
   if (!frame.gpu || !frame.width || !frame.height) return 0;
@@ -49,30 +76,43 @@ bool TimelineRenderRuntime::gpu_frame_compatible(const RenderVideoFrame& frame,
                                                   std::int64_t timestamp_us,
                                                   std::string& diagnostic) noexcept {
   if (!frame.gpu || !target.gpu || !frame.rgba.empty() || !target.rgba.empty()) {
-    diagnostic = "strict GPU boundary contains CPU pixel storage"; return false;
+    diagnostic = "strict GPU boundary contains CPU pixel storage";
+    return false;
+  }
+  if (frame.gpu->backend() == DIGITOR_RENDERER_CPU ||
+      target.gpu->backend() == DIGITOR_RENDERER_CPU) {
+    diagnostic = "GPU timeline received a CPU renderer frame";
+    return false;
   }
   if (!frame.gpu->context_live() || !target.gpu->context_live()) {
-    diagnostic = "GPU context destroyed or stale"; return false;
+    diagnostic = "GPU context destroyed or stale";
+    return false;
   }
   if (frame.gpu->backend() != target.gpu->backend()) {
-    diagnostic = "GPU backend mismatch"; return false;
+    diagnostic = "GPU backend mismatch";
+    return false;
   }
   if (!frame.gpu->same_context(*target.gpu)) {
-    diagnostic = "GPU device/context mismatch"; return false;
+    diagnostic = "GPU device/context mismatch";
+    return false;
   }
   const auto& metadata = frame.gpu->metadata();
   const auto& target_metadata = target.gpu->metadata();
   if (metadata.width != target_metadata.width || metadata.height != target_metadata.height) {
-    diagnostic = "GPU dimensions mismatch"; return false;
+    diagnostic = "GPU dimensions mismatch";
+    return false;
   }
   if (metadata.format != target_metadata.format) {
-    diagnostic = "GPU working pixel format mismatch"; return false;
+    diagnostic = "GPU working pixel format mismatch";
+    return false;
   }
   if (metadata.color_metadata.empty() || target_metadata.color_metadata.empty()) {
-    diagnostic = "GPU color metadata missing"; return false;
+    diagnostic = "GPU color metadata missing";
+    return false;
   }
   if (metadata.timestamp != 0 && metadata.timestamp != timestamp_us) {
-    diagnostic = "GPU timestamp mismatch"; return false;
+    diagnostic = "GPU timestamp mismatch";
+    return false;
   }
   return true;
 }
@@ -168,12 +208,21 @@ TimelineRenderResult TimelineRenderRuntime::render(TimelineExecutionMode mode,
                                          timeline_revision, render_revision);
   result.plan_identity = plan.identity;
 
+  const bool gpu_available = static_cast<bool>(callbacks_.create_gpu_target);
+  if (residency_policy_ == RenderResidencyPolicy::require_gpu && !gpu_available) {
+    result.diagnostic = "strict GPU render requested but no GPU target provider is available";
+    return result;
+  }
+  const bool gpu_path = residency_policy_ != RenderResidencyPolicy::cpu_only && gpu_available;
+  result.used_cpu_fallback =
+      residency_policy_ == RenderResidencyPolicy::gpu_first_cpu_fallback && !gpu_path;
+
   RenderVideoFrame composite;
-  const bool gpu_path = static_cast<bool>(callbacks_.create_gpu_target);
   if (gpu_path) {
     auto target = callbacks_.create_gpu_target(width, height, timeline_us);
-    if (!target || !target->gpu_resident() || !target->valid()) {
-      result.diagnostic = "GPU target creation failed or returned a non-resident frame";
+    if (!target || !target->gpu_resident() || !target->valid() ||
+        !target->gpu || target->gpu->backend() == DIGITOR_RENDERER_CPU) {
+      result.diagnostic = "selected GPU target creation failed; runtime CPU fallback is prohibited";
       return result;
     }
     composite = std::move(*target);
@@ -186,6 +235,7 @@ TimelineRenderResult TimelineRenderRuntime::render(TimelineExecutionMode mode,
     composite.height = height;
     composite.rgba.assign(static_cast<std::size_t>(width) * height * 4U, 0.0F);
     composite.provenance = "timeline-clear:cpu-linear-rgba";
+    result.cpu_worker_threads = 1;
   }
 
   for (const auto& layer : plan.video_layers) {
@@ -248,12 +298,10 @@ TimelineRenderResult TimelineRenderRuntime::render(TimelineExecutionMode mode,
       }
     }
 
-    // GPU compositors consume layer.opacity and layer.transition_weight directly.
-    // No pixel is read back or multiplied on the CPU. The CPU fallback retains
-    // deterministic linear-float behavior for validation and unsupported devices.
     if (!gpu_path) {
       const auto weight = static_cast<float>(layer.opacity * layer.transition_weight);
-      for (auto& value : frame->rgba) value *= weight;
+      result.cpu_worker_threads = std::max(result.cpu_worker_threads,
+                                           parallel_scale_rgba(frame->rgba, weight));
     }
 
     if (!callbacks_.composite(layer, *frame, composite) || !composite.valid()) {
@@ -293,8 +341,58 @@ TimelineRenderResult TimelineRenderRuntime::render(TimelineExecutionMode mode,
   result.video = std::move(composite);
   result.gpu_resident = result.video.gpu_resident();
   result.success = true;
-  result.diagnostic = gpu_path ? "completed:gpu-resident" : "completed:cpu-fallback";
+  result.diagnostic = gpu_path ? "completed:gpu-resident"
+                               : result.used_cpu_fallback
+                                     ? "completed:multithreaded-cpu-fallback"
+                                     : "completed:cpu-only";
   return result;
+}
+
+PreviewExportParityResult TimelineRenderRuntime::verify_preview_export_parity(
+    std::int64_t timeline_us,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint64_t timeline_revision,
+    std::uint64_t render_revision,
+    std::size_t audio_frames) {
+  PreviewExportParityResult parity;
+  auto preview = render(TimelineExecutionMode::preview, timeline_us, width, height,
+                        timeline_revision, render_revision, audio_frames, false);
+  if (!preview.success) {
+    parity.diagnostic = "preview parity render failed: " + preview.diagnostic;
+    return parity;
+  }
+  auto export_frame = render(TimelineExecutionMode::export_render, timeline_us, width, height,
+                             timeline_revision, render_revision, audio_frames, false);
+  if (!export_frame.success) {
+    parity.diagnostic = "export parity render failed: " + export_frame.diagnostic;
+    return parity;
+  }
+  if (preview.video.storage() != export_frame.video.storage()) {
+    parity.verified = true;
+    parity.equivalent = false;
+    parity.diagnostic = "preview/export residency differs";
+    return parity;
+  }
+  if (!preview.video.gpu_resident()) {
+    parity.verified = true;
+    parity.equivalent = exact_cpu_pixels_equal(preview.video, export_frame.video);
+    parity.diagnostic = parity.equivalent ? "exact CPU pixel parity verified"
+                                          : "CPU preview/export pixels differ";
+    return parity;
+  }
+  if (!callbacks_.compare_gpu_frames) {
+    parity.diagnostic = "GPU pixel parity requires a backend validation comparator";
+    return parity;
+  }
+  std::string diagnostic;
+  parity.equivalent = callbacks_.compare_gpu_frames(preview.video, export_frame.video, diagnostic);
+  parity.verified = true;
+  parity.diagnostic = diagnostic.empty()
+                          ? (parity.equivalent ? "GPU pixel parity verified"
+                                               : "GPU preview/export pixels differ")
+                          : std::move(diagnostic);
+  return parity;
 }
 
 void TimelineRenderRuntime::invalidate_clip(const std::string& clip_id) {
@@ -304,8 +402,9 @@ void TimelineRenderRuntime::invalidate_clip(const std::string& clip_id) {
     if (iterator->first.clip_id == clip_id) {
       gpu_cache_bytes_ -= iterator->second.estimated_bytes;
       iterator = gpu_cache_.erase(iterator);
+    } else {
+      ++iterator;
     }
-    else ++iterator;
   }
 }
 
@@ -324,7 +423,8 @@ void TimelineRenderRuntime::notify_gpu_memory_pressure(std::size_t new_budget_by
     std::scoped_lock lock(gpu_cache_mutex_);
     gpu_cache_budget_bytes_ = new_budget_bytes;
     evict_gpu_cache_locked();
-  } catch (...) {}
+  } catch (...) {
+  }
 }
 
 std::size_t TimelineRenderRuntime::gpu_cache_bytes() const noexcept {

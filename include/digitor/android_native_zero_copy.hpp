@@ -10,16 +10,16 @@
 namespace digitor {
 
 struct AndroidVulkanNativeContext {
-  void* instance{};          // VkInstance
-  void* physical_device{};   // VkPhysicalDevice
-  void* device{};            // VkDevice
-  void* queue{};             // VkQueue
+  void* instance{};
+  void* physical_device{};
+  void* device{};
+  void* queue{};
   std::uint32_t queue_family_index{};
 };
 
 struct AndroidEglNativeContext {
-  void* display{};           // EGLDisplay
-  void* context{};           // EGLContext
+  void* display{};
+  void* context{};
 };
 
 struct AndroidNativeInteropConfig {
@@ -50,11 +50,13 @@ using AndroidMediaCodecSurfaceSubmit = std::function<DigitorResult(
     const ProcessedGpuFramePtr&)>;
 
 class AndroidNativeZeroCopyBindings final {
-public:
+ public:
   AndroidNativeZeroCopyBindings(AndroidNativeInteropConfig,
                                 AndroidVulkanRgba16fDispatch,
                                 AndroidGlesRgba16fDispatch,
-                                AndroidMediaCodecSurfaceSubmit);
+                                AndroidMediaCodecSurfaceSubmit,
+                                AndroidVulkanImport native_vulkan_import = {},
+                                AndroidGlesImport native_gles_import = {});
   ~AndroidNativeZeroCopyBindings();
 
   AndroidNativeZeroCopyBindings(const AndroidNativeZeroCopyBindings&) = delete;
@@ -76,9 +78,9 @@ public:
   [[nodiscard]] AndroidNativeInteropTelemetry telemetry() const;
   [[nodiscard]] bool gpu_only() const noexcept;
 
-private:
+ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };
 
-} // namespace digitor
+}  // namespace digitor

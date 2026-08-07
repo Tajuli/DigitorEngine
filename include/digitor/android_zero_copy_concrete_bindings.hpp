@@ -14,7 +14,7 @@ struct AndroidMediaCodecDecoderConfig {
   std::uint32_t width{};
   std::uint32_t height{};
   std::uint32_t bit_depth{8};
-  void* output_surface{}; // ANativeWindow*
+  void* output_surface{};
   bool require_hardware_codec{true};
   bool require_ahardwarebuffer{true};
 };
@@ -24,7 +24,7 @@ using AndroidCodecSurfaceAcquire = std::function<DigitorResult(
     std::shared_ptr<void>& lifetime)>;
 
 class AndroidMediaCodecSurfaceDecoder final {
-public:
+ public:
   AndroidMediaCodecSurfaceDecoder(AndroidMediaCodecDecoderConfig,
                                   AndroidCodecSurfaceAcquire);
   ~AndroidMediaCodecSurfaceDecoder();
@@ -32,49 +32,54 @@ public:
   [[nodiscard]] DigitorResult acquire(std::int64_t timestamp_us,
                                       AndroidHardwareBufferFrame&) noexcept;
   [[nodiscard]] AndroidMediaCodecAcquire callback();
-private:
+ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };
 
 struct AndroidVulkanExternalImportConfig {
-  void* instance{};        // VkInstance
-  void* physical_device{}; // VkPhysicalDevice
-  void* device{};          // VkDevice
-  void* queue{};           // VkQueue
+  void* instance{};
+  void* physical_device{};
+  void* device{};
+  void* queue{};
   std::uint32_t queue_family{};
   bool require_sampler_ycbcr_conversion{true};
   bool require_external_fence_fd{true};
+  // Backend owner supplies the real AHardwareBuffer -> VkImage/VkDeviceMemory
+  // import because these resources must belong to the renderer's VkDevice.
+  AndroidVulkanImport import_ahardware_buffer;
 };
 
 class AndroidVulkanHardwareBufferImporter final {
-public:
+ public:
   explicit AndroidVulkanHardwareBufferImporter(AndroidVulkanExternalImportConfig);
   ~AndroidVulkanHardwareBufferImporter();
   [[nodiscard]] DigitorResult initialize() noexcept;
   [[nodiscard]] DigitorResult import(const AndroidHardwareBufferFrame&,
                                      AndroidImportedImage&) noexcept;
   [[nodiscard]] AndroidVulkanImport callback();
-private:
+ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };
 
 struct AndroidGlesExternalImageConfig {
-  void* egl_display{}; // EGLDisplay
-  void* egl_context{}; // EGLContext
+  void* egl_display{};
+  void* egl_context{};
   bool require_native_fence_sync{true};
+  // Backend owner supplies AHardwareBuffer -> EGLImage/external texture import.
+  AndroidGlesImport import_ahardware_buffer;
 };
 
 class AndroidGlesHardwareBufferImporter final {
-public:
+ public:
   explicit AndroidGlesHardwareBufferImporter(AndroidGlesExternalImageConfig);
   ~AndroidGlesHardwareBufferImporter();
   [[nodiscard]] DigitorResult initialize() noexcept;
   [[nodiscard]] DigitorResult import(const AndroidHardwareBufferFrame&,
                                      AndroidImportedImage&) noexcept;
   [[nodiscard]] AndroidGlesImport callback();
-private:
+ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };
@@ -84,12 +89,12 @@ using AndroidImportedYuvDispatch = std::function<DigitorResult(
     std::uint32_t bit_depth, ProcessedGpuFramePtr&)>;
 
 class AndroidGpuYuvConverter final {
-public:
+ public:
   explicit AndroidGpuYuvConverter(AndroidImportedYuvDispatch);
   [[nodiscard]] DigitorResult convert(const AndroidImportedImage&,
                                       ProcessedGpuFramePtr&) noexcept;
   [[nodiscard]] AndroidYuvToRgba16f callback();
-private:
+ private:
   AndroidImportedYuvDispatch dispatch_;
 };
 
@@ -100,14 +105,14 @@ struct AndroidHardwareEncoderConfig {
   std::uint32_t fps{30};
   std::uint32_t bitrate{20000000};
   std::uint32_t bit_depth{10};
-  void* input_surface{}; // ANativeWindow*
+  void* input_surface{};
 };
 
 using AndroidEncoderSubmit = std::function<DigitorResult(
     const ProcessedGpuFramePtr&, void* encoder_surface)>;
 
 class AndroidMediaCodecHardwareEncoder final {
-public:
+ public:
   AndroidMediaCodecHardwareEncoder(AndroidHardwareEncoderConfig,
                                    AndroidEncoderSubmit);
   ~AndroidMediaCodecHardwareEncoder();
@@ -115,7 +120,7 @@ public:
   [[nodiscard]] DigitorResult consume(const ProcessedGpuFramePtr&) noexcept;
   [[nodiscard]] AndroidGpuFrameConsumer callback();
   [[nodiscard]] DigitorResult flush() noexcept;
-private:
+ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 };
@@ -132,7 +137,7 @@ struct AndroidConcretePipelineBinding {
 };
 
 class AndroidConcreteZeroCopyPipeline final {
-public:
+ public:
   AndroidConcreteZeroCopyPipeline(AndroidZeroCopyConfig,
                                   AndroidConcretePipelineBinding);
   ~AndroidConcreteZeroCopyPipeline();
@@ -141,9 +146,9 @@ public:
   [[nodiscard]] DigitorResult export_frame(std::int64_t timestamp_us) noexcept;
   [[nodiscard]] DigitorResult preview_and_export(std::int64_t timestamp_us) noexcept;
   [[nodiscard]] AndroidZeroCopyTelemetry telemetry() const;
-private:
+ private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace digitor
+}  // namespace digitor

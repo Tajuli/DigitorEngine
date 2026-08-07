@@ -37,13 +37,12 @@ digitor::RenderVideoFrame make_gpu_frame(std::uint64_t identity,
   frame.width = width;
   frame.height = height;
   frame.gpu = std::make_shared<ProcessedGpuFrame>(
-      supplied_context ? supplied_context : &context, DIGITOR_RENDERER_CPU,
-      metadata, identity, std::move(native),
-      std::move(ready), false);
+      supplied_context ? supplied_context : &context, DIGITOR_RENDERER_D3D12,
+      metadata, identity, std::move(native), std::move(ready), false);
   frame.provenance = provenance;
   return frame;
 }
-}
+}  // namespace
 
 int main() {
   using namespace digitor;
@@ -59,6 +58,8 @@ int main() {
   std::unordered_map<std::string, ClipExecutionOverrides> overrides;
   overrides["overlay"].opacity = 0.5;
   TimelineRenderExecutor executor(project, overrides);
+  require(executor.preview_export_plan_equivalent(500'000, 2, 1, 1, 1),
+          "preview/export scheduling plan differs");
 
   int decode_calls = 0;
   TimelineRenderCallbacks callbacks;
@@ -92,6 +93,8 @@ int main() {
   const auto preview = runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 4);
   require(preview.success, "preview render failed");
   require(!preview.gpu_resident, "CPU fallback unexpectedly reported GPU residency");
+  require(preview.used_cpu_fallback, "GPU-unavailable render did not report CPU fallback");
+  require(preview.cpu_worker_threads >= 1, "CPU fallback did not report a worker");
   require(preview.decoded_video_layers == 2, "video layers were not decoded");
   require(preview.cache_misses == 2 && preview.cache_hits == 0, "initial cache accounting failed");
   require(preview.audio.interleaved_stereo.size() == 8, "audio mix was not produced");
@@ -103,6 +106,17 @@ int main() {
   require(preview.plan_identity == exported.plan_identity, "preview/export plan identity differs");
   require(preview.video.rgba == exported.video.rgba, "preview/export pixels differ");
   require(decode_calls == 2, "cached export decoded video again");
+
+  const auto cpu_parity = runtime.verify_preview_export_parity(500'000, 2, 1, 1, 1);
+  require(cpu_parity.verified && cpu_parity.equivalent,
+          "exact CPU preview/export pixel parity was not verified");
+
+  TimelineRenderRuntime strict_gpu_without_provider(
+      executor, callbacks, 1024, 0, 0, RenderResidencyPolicy::require_gpu);
+  const auto strict_missing = strict_gpu_without_provider.render(
+      TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
+  require(!strict_missing.success,
+          "strict GPU render silently fell back to CPU without a GPU provider");
 
   runtime.invalidate_clip("overlay");
   const auto invalidated = runtime.render(TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 4);
@@ -138,12 +152,24 @@ int main() {
     return true;
   };
   gpu_callbacks.cancelled = [] { return false; };
+  gpu_callbacks.compare_gpu_frames = [](const RenderVideoFrame& preview_frame,
+                                        const RenderVideoFrame& export_frame,
+                                        std::string& diagnostic) {
+    const bool equal = preview_frame.gpu && export_frame.gpu &&
+                       preview_frame.gpu->backend() == export_frame.gpu->backend() &&
+                       preview_frame.width == export_frame.width &&
+                       preview_frame.height == export_frame.height &&
+                       preview_frame.provenance == export_frame.provenance;
+    diagnostic = equal ? "test backend parity verified" : "test backend parity mismatch";
+    return equal;
+  };
 
   TimelineRenderRuntime gpu_runtime(executor, gpu_callbacks, 1, 4);
   const auto gpu_preview = gpu_runtime.render(
       TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
   require(gpu_preview.success && gpu_preview.gpu_resident,
           "GPU preview did not remain resident");
+  require(!gpu_preview.used_cpu_fallback, "GPU preview reported CPU fallback");
   require(gpu_preview.video.rgba.empty(), "GPU preview performed CPU readback");
   require(gpu_preview.cache_misses == 2 && gpu_preview.cache_hits == 0,
           "GPU initial cache accounting failed");
@@ -161,6 +187,26 @@ int main() {
               composited_identities[1] == composited_identities[3],
           "preview/export did not reuse identical GPU frame handles");
 
+  const auto gpu_parity = gpu_runtime.verify_preview_export_parity(500'000, 2, 1, 1, 1);
+  require(gpu_parity.verified && gpu_parity.equivalent,
+          "GPU parity comparator was not required/executed");
+
+  auto no_compare = gpu_callbacks;
+  no_compare.compare_gpu_frames = {};
+  TimelineRenderRuntime unverified_gpu_runtime(executor, no_compare, 1, 4);
+  const auto unverified = unverified_gpu_runtime.verify_preview_export_parity(500'000, 2, 1, 1, 1);
+  require(!unverified.verified,
+          "GPU parity was falsely verified without backend pixel comparison");
+
+  auto failing_target = gpu_callbacks;
+  failing_target.create_gpu_target = [](std::uint32_t, std::uint32_t, std::int64_t)
+      -> std::optional<RenderVideoFrame> { return std::nullopt; };
+  TimelineRenderRuntime fail_closed_runtime(executor, failing_target, 1, 4);
+  const auto fail_closed = fail_closed_runtime.render(
+      TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
+  require(!fail_closed.success && !fail_closed.used_cpu_fallback,
+          "selected GPU failure silently fell back to CPU");
+
   gpu_runtime.invalidate_clip("overlay");
   const auto gpu_invalidated = gpu_runtime.render(
       TimelineExecutionMode::preview, 500'000, 2, 1, 1, 1, 0);
@@ -168,8 +214,6 @@ int main() {
   require(gpu_invalidated.cache_hits == 1 && gpu_invalidated.cache_misses == 1,
           "GPU clip invalidation failed");
 
-  // A resident handle from a different logical device/context must never be
-  // accepted merely because its backend enum and dimensions match.
   static int foreign_context;
   auto mismatched_callbacks = gpu_callbacks;
   mismatched_callbacks.decode_video = [](const VideoExecutionLayer& layer, bool) {
@@ -183,8 +227,6 @@ int main() {
               mismatched.diagnostic.find("device/context mismatch") != std::string::npos,
           "cross-device GPU frame was not rejected");
 
-  // RGBA32F 2x1 frames consume 32 bytes. A 32-byte budget therefore retains
-  // only the most recently used layer even when the frame-count cap is higher.
   int budget_decodes = 0;
   auto budget_callbacks = gpu_callbacks;
   budget_callbacks.decode_video = [&](const VideoExecutionLayer& layer, bool) {

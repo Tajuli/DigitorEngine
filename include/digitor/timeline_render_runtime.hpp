@@ -16,13 +16,16 @@ namespace digitor {
 
 enum class RenderFrameStorage : std::uint8_t { cpu_linear_rgba, gpu_resident };
 
+enum class RenderResidencyPolicy : std::uint8_t {
+  gpu_first_cpu_fallback,
+  require_gpu,
+  cpu_only,
+};
+
 struct RenderVideoFrame {
   std::uint32_t width{};
   std::uint32_t height{};
   std::vector<float> rgba;
-  // Keep provenance as the fourth aggregate field for source compatibility
-  // with existing CPU frame producers. GPU storage is appended so legacy
-  // {width, height, rgba, provenance} initializers remain valid.
   std::string provenance;
   ProcessedGpuFramePtr gpu;
 
@@ -43,12 +46,20 @@ struct TimelineRenderResult {
   bool cancelled{};
   bool used_proxy{};
   bool gpu_resident{};
+  bool used_cpu_fallback{};
+  std::size_t cpu_worker_threads{};
   std::size_t decoded_video_layers{};
   std::size_t cache_hits{};
   std::size_t cache_misses{};
   RenderVideoFrame video;
   RenderAudioBlock audio;
   std::string plan_identity;
+  std::string diagnostic;
+};
+
+struct PreviewExportParityResult {
+  bool verified{};
+  bool equivalent{};
   std::string diagnostic;
 };
 
@@ -61,9 +72,12 @@ struct TimelineRenderCallbacks {
                                                 std::uint32_t height,
                                                 std::int64_t timestamp_us)> create_gpu_target;
   std::function<bool()> cancelled;
-  // A completion/fence query. Returning false pins the cache entry until the
-  // backend reports that all submitted GPU work using it has completed.
   std::function<bool(const ProcessedGpuFrame&)> gpu_frame_evictable;
+  // Production GPU parity must be measured by the backend using a deterministic
+  // validation readback/hash path. Absence of this callback is never treated as
+  // proof that preview and export pixels are equivalent.
+  std::function<bool(const RenderVideoFrame&, const RenderVideoFrame&, std::string& diagnostic)>
+      compare_gpu_frames;
 };
 
 class TimelineRenderRuntime {
@@ -72,7 +86,9 @@ class TimelineRenderRuntime {
                         TimelineRenderCallbacks callbacks,
                         std::size_t memory_cache_bytes = 64U * 1024U * 1024U,
                         std::size_t gpu_cache_frames = 16U,
-                        std::size_t gpu_cache_bytes = 256U * 1024U * 1024U);
+                        std::size_t gpu_cache_bytes = 256U * 1024U * 1024U,
+                        RenderResidencyPolicy residency_policy =
+                            RenderResidencyPolicy::gpu_first_cpu_fallback);
 
   [[nodiscard]] TimelineRenderResult render(TimelineExecutionMode mode,
                                             std::int64_t timeline_us,
@@ -83,10 +99,21 @@ class TimelineRenderRuntime {
                                             std::size_t audio_frames = 1024,
                                             bool allow_proxy = true);
 
+  [[nodiscard]] PreviewExportParityResult verify_preview_export_parity(
+      std::int64_t timeline_us,
+      std::uint32_t width,
+      std::uint32_t height,
+      std::uint64_t timeline_revision,
+      std::uint64_t render_revision,
+      std::size_t audio_frames = 0);
+
   void invalidate_clip(const std::string& clip_id);
   void clear_cache() noexcept;
   void notify_gpu_memory_pressure(std::size_t new_budget_bytes) noexcept;
   [[nodiscard]] std::size_t gpu_cache_bytes() const noexcept;
+  [[nodiscard]] RenderResidencyPolicy residency_policy() const noexcept {
+    return residency_policy_;
+  }
 
  private:
   struct GpuCacheEntry {
@@ -104,6 +131,7 @@ class TimelineRenderRuntime {
   std::uint64_t gpu_cache_clock_{};
   std::unordered_map<RenderCacheKey, GpuCacheEntry, RenderCacheKeyHash> gpu_cache_;
   mutable std::mutex gpu_cache_mutex_;
+  RenderResidencyPolicy residency_policy_{RenderResidencyPolicy::gpu_first_cpu_fallback};
 
   [[nodiscard]] bool is_cancelled() const;
   [[nodiscard]] static std::vector<std::uint8_t> pack_frame(const RenderVideoFrame& frame);

@@ -54,7 +54,6 @@ struct ClipExecutionOverrides {
 };
 
 struct VideoExecutionLayer {
-  // Original fields remain first for source compatibility with aggregate users.
   std::string clip_id;
   std::size_t track_index{};
   std::int64_t timeline_us{};
@@ -62,8 +61,6 @@ struct VideoExecutionLayer {
   double opacity{1.0};
   double transition_weight{1.0};
   RenderCacheKey cache_key;
-
-  // Shared video/still-image visual animation state.
   std::int64_t clip_local_time_us{};
   VisualTransform transform{};
 };
@@ -102,11 +99,24 @@ class TimelineRenderExecutor {
                                                  std::uint64_t timeline_revision,
                                                  std::uint64_t render_revision) const;
 
+  // This compares scheduling/transform/cache inputs only. Pixel equivalence is
+  // verified by TimelineRenderRuntime::verify_preview_export_parity().
+  [[nodiscard]] bool preview_export_plan_equivalent(std::int64_t timeline_us,
+                                                    std::uint32_t width,
+                                                    std::uint32_t height,
+                                                    std::uint64_t timeline_revision,
+                                                    std::uint64_t render_revision) const;
+
+  // Compatibility alias retained for existing callers; do not use this as a
+  // pixel-accuracy qualification signal.
   [[nodiscard]] bool preview_export_equivalent(std::int64_t timeline_us,
                                                std::uint32_t width,
                                                std::uint32_t height,
                                                std::uint64_t timeline_revision,
-                                               std::uint64_t render_revision) const;
+                                               std::uint64_t render_revision) const {
+    return preview_export_plan_equivalent(timeline_us, width, height,
+                                          timeline_revision, render_revision);
+  }
 
  private:
   TimelineProjectModel project_;

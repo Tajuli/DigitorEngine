@@ -153,22 +153,14 @@ HardwareExportResult HardwareAwareExportRuntime::execute(
   result.process_exit_code = transcode.exit_code;
   result.diagnostic = transcode.diagnostic;
 
-  if (!transcode.success && selection.backend != EncoderBackend::software &&
-      request.profile.allow_software_fallback) {
-    auto fallback_profile = request.profile;
-    fallback_profile.prefer_hardware = false;
-    TranscodeRequest fallback_request = request;
-    fallback_request.profile = fallback_profile;
-    const auto software_selection = EncoderSelector::select(fallback_profile, capabilities);
-    if (software_selection.supported && software_selection.backend == EncoderBackend::software) {
-      auto fallback = runtime.transcode(fallback_request, EncoderBackend::software);
-      result.success = fallback.success;
-      result.executed_backend = EncoderBackend::software;
-      result.used_fallback = true;
-      result.process_exit_code = fallback.exit_code;
-      result.diagnostic = fallback.success ? "hardware encoder failed; software fallback succeeded"
-                                           : "hardware and software encoder attempts failed";
-    }
+  // GPU-first contract: software fallback is a selection-time decision only
+  // when no compatible hardware encoder exists. Once a hardware backend has
+  // been selected and execution starts, a runtime failure must fail closed;
+  // silently re-running the export through CPU would break determinism and
+  // hide driver/device failures.
+  if (!transcode.success && selection.backend != EncoderBackend::software) {
+    result.used_fallback = false;
+    result.diagnostic = "selected hardware encoder failed; runtime software fallback prohibited";
   }
   return result;
 }
