@@ -1,0 +1,45 @@
+name: FFI diagnostics temp
+
+on:
+  push:
+    branches:
+      - agent/internal-digitor-integration
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter pub get
+      - name: Format package
+        working-directory: dart/digitor_engine_ffi
+        run: dart format lib
+      - name: Analyze package
+        shell: bash
+        run: |
+          set +e
+          cd dart/digitor_engine_ffi
+          flutter analyze --fatal-infos > "$GITHUB_WORKSPACE/ffi-analyze.txt" 2>&1
+          echo "$?" > "$GITHUB_WORKSPACE/ffi-analyze-exit.txt"
+          exit 0
+      - name: Collect formatted sources
+        shell: bash
+        run: |
+          mkdir -p ffi-diagnostics/lib/src
+          cp dart/digitor_engine_ffi/lib/digitor_engine_ffi.dart ffi-diagnostics/lib/
+          cp dart/digitor_engine_ffi/lib/src/native_engine.dart ffi-diagnostics/lib/src/
+          cp dart/digitor_engine_ffi/lib/src/node_graph.dart ffi-diagnostics/lib/src/
+          cp ffi-analyze.txt ffi-analyze-exit.txt ffi-diagnostics/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-diagnostics
+          path: ffi-diagnostics
