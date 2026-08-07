@@ -7,39 +7,75 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  diagnose-and-fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
       - name: Resolve package
         working-directory: dart/digitor_engine_ffi
         run: flutter pub get
-      - name: Format package
+      - name: Format package before fixes
+        working-directory: dart/digitor_engine_ffi
+        run: dart format lib
+      - name: Apply analyzer fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('dart/digitor_engine_ffi/lib/src/node_graph.dart')
+          text = path.read_text()
+
+          replacements = {
+              'DigitorNativeNodeGraph._(this._library, this._handle)':
+                  'DigitorNativeNodeGraph._(DynamicLibrary library, this._handle)',
+              '_library.lookupFunction': 'library.lookupFunction',
+              '  final DynamicLibrary _library;\n': '',
+              "      if (out.value == nullptr)\n        throw const DigitorEngineException('nodeGraphCreate', 100);":
+                  "      if (out.value == nullptr) {\n        throw const DigitorEngineException('nodeGraphCreate', 100);\n      }",
+              '      for (final pointer in allocations) calloc.free(pointer);':
+                  '      for (final pointer in allocations) {\n        calloc.free(pointer);\n      }',
+              "    if (values.length < 2)\n      throw ArgumentError.value(\n          values.length, 'values', 'A 1D LUT needs at least two values.');":
+                  "    if (values.length < 2) {\n      throw ArgumentError.value(\n          values.length, 'values', 'A 1D LUT needs at least two values.');\n    }",
+              "    if (value.points.length < 2)\n      throw ArgumentError('Every RGB curve channel needs at least two points.');":
+                  "    if (value.points.length < 2) {\n      throw ArgumentError('Every RGB curve channel needs at least two points.');\n    }",
+              "    if (_disposed || _handle == nullptr)\n      throw StateError('DigitorNativeNodeGraph is disposed.');":
+                  "    if (_disposed || _handle == nullptr) {\n      throw StateError('DigitorNativeNodeGraph is disposed.');\n    }",
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'expected source pattern not found: {old!r}')
+              text = text.replace(old, new)
+
+          path.write_text(text)
+          PY
+      - name: Format package after fixes
         working-directory: dart/digitor_engine_ffi
         run: dart format lib
       - name: Analyze package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter analyze --fatal-infos
+      - name: Test package
+        working-directory: dart/digitor_engine_ffi
+        run: flutter test
+      - name: Commit verified FFI fixes
         shell: bash
         run: |
-          set +e
-          cd dart/digitor_engine_ffi
-          flutter analyze --fatal-infos > "$GITHUB_WORKSPACE/ffi-analyze.txt" 2>&1
-          echo "$?" > "$GITHUB_WORKSPACE/ffi-analyze-exit.txt"
-          exit 0
-      - name: Collect formatted sources
-        shell: bash
-        run: |
-          mkdir -p ffi-diagnostics/lib/src
-          cp dart/digitor_engine_ffi/lib/digitor_engine_ffi.dart ffi-diagnostics/lib/
-          cp dart/digitor_engine_ffi/lib/src/native_engine.dart ffi-diagnostics/lib/src/
-          cp dart/digitor_engine_ffi/lib/src/node_graph.dart ffi-diagnostics/lib/src/
-          cp ffi-analyze.txt ffi-analyze-exit.txt ffi-diagnostics/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffi-diagnostics
-          path: ffi-diagnostics
+          if git diff --quiet -- dart/digitor_engine_ffi/lib; then
+            echo 'No FFI source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dart/digitor_engine_ffi/lib
+          git commit -m 'Fix Flutter FFI formatting and analyzer issues'
+          git push origin HEAD:agent/internal-digitor-integration
