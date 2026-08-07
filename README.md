@@ -2,7 +2,7 @@
 
 DigitorEngine is a C++20, GPU-first rendering and media-engine foundation for the Digitor cross-platform video editor.
 
-Current package version: **5.40.0**.
+Current package version: **0.0.1**.
 
 The repository contains substantial source implementations for rendering, color processing, node execution, timeline editing, media decode, playback, export orchestration, audio/video synchronization, and Flutter-facing runtime integration. It is not yet claimed as universally production-qualified on all Windows, Android, macOS, and iOS hardware. Real-device performance, driver interoperability, native texture registration, and long-duration stress validation remain release gates.
 
@@ -21,7 +21,11 @@ Media source
   -> shared production export path
 ```
 
-The engine follows a GPU-first policy. CPU implementations remain available as explicit reference or fallback paths where permitted, but a selected GPU production path must not silently switch to CPU after a backend failure.
+### Production execution policy
+
+DigitorEngine is GPU-first, not GPU-only. Production backend selection must prefer a supported GPU backend. A multithreaded CPU implementation is the fallback only when no usable GPU backend can be selected or initialized for the device. Once a GPU backend has been selected, a later GPU execution failure must be surfaced as an error and must not silently switch the active job to CPU.
+
+Color processing is required to be deterministic and per-pixel accurate for the same input, parameters, color-space state, and render mode. Preview and export must use equivalent color math and are release-qualified with numerical/per-pixel parity checks. A single-thread CPU fallback or a preview/export color mismatch is not release-qualified behavior.
 
 ## Implemented subsystems
 
@@ -90,7 +94,7 @@ The generic FFmpeg `VideoDecoder` may still transfer some hardware frames into C
 
 ### Unified real-media Flutter runtime
 
-Version 5.40 adds `UnifiedRealMediaRuntime`, which reuses the existing production components rather than rewriting them:
+v0.0.1 includes `UnifiedRealMediaRuntime`, which reuses the existing production components rather than rewriting them:
 
 ```text
 timeline timestamp
@@ -199,6 +203,8 @@ Source-level implementation and contract tests do not by themselves prove device
 - long playback and export stress testing
 - thermal, latency, dropped-frame, and memory benchmarks
 - Flutter plugin texture-registration and lifecycle validation
+- proof that CPU fallback is multithreaded and occurs only when no usable GPU backend can be selected
+- per-pixel color parity evidence between preview and export for qualified color operations
 
 No README claim should be interpreted as evidence that every backend is already qualified on every device.
 
@@ -216,7 +222,7 @@ Useful source-backed documents include:
 - `docs/color_science.md`
 - `docs/roadmap.md`
 
-Some older milestone documents are historical records. The current source tree, CMake targets, public headers, tests, and this README take precedence for version 5.40 behavior.
+Some older milestone documents are historical records. The current source tree, CMake targets, public headers, tests, and this README take precedence for v0.0.1 behavior.
 
 ## Public API and compatibility
 
