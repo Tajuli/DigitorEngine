@@ -16,6 +16,7 @@ enum DigitorBackend {
   cpu(100);
 
   const DigitorBackend(this.nativeValue);
+
   final int nativeValue;
 
   static DigitorBackend fromNative(int value) => values.firstWhere(
@@ -29,10 +30,63 @@ enum DigitorPreviewMode {
   nativeGpuStrict(1);
 
   const DigitorPreviewMode(this.nativeValue);
+
   final int nativeValue;
 }
 
-enum DigitorExportFormat { mp4, mov, mkv, pngSequence, tiffSequence, exrSequence }
+enum DigitorNativeTextureBackend {
+  none(0),
+  d3d11(1),
+  d3d12(2),
+  vulkan(3),
+  metal(4),
+  openGles(5),
+  androidHardwareBuffer(6),
+  cpuRgba8(100);
+
+  const DigitorNativeTextureBackend(this.nativeValue);
+
+  final int nativeValue;
+
+  static DigitorNativeTextureBackend fromNative(int value) => values.firstWhere(
+        (backend) => backend.nativeValue == value,
+        orElse: () => none,
+      );
+}
+
+enum DigitorNativeTextureHandleType {
+  none(0),
+  dxgiSharedHandle(1),
+  d3d11Texture(2),
+  d3d12Resource(3),
+  vkImage(4),
+  metalTexture(5),
+  cvPixelBuffer(6),
+  androidHardwareBuffer(7),
+  eglImage(8),
+  glTexture(9),
+  cpuPointer(100);
+
+  const DigitorNativeTextureHandleType(this.nativeValue);
+
+  final int nativeValue;
+
+  static DigitorNativeTextureHandleType fromNative(int value) =>
+      values.firstWhere(
+        (type) => type.nativeValue == value,
+        orElse: () => none,
+      );
+}
+
+enum DigitorExportFormat {
+  mp4,
+  mov,
+  mkv,
+  pngSequence,
+  tiffSequence,
+  exrSequence,
+}
+
 enum DigitorVideoCodec { h264, h265, av1 }
 
 final class DigitorEngineException implements Exception {
@@ -105,6 +159,8 @@ final class DigitorPreviewCapabilities {
     required this.protectedContentSupported,
     required this.resizeSupported,
     required this.backend,
+    required this.handleType,
+    required this.supportedPixelFormats,
     required this.selectedMode,
     required this.reasonUnavailable,
   });
@@ -117,7 +173,9 @@ final class DigitorPreviewCapabilities {
   final bool hdrSupported;
   final bool protectedContentSupported;
   final bool resizeSupported;
-  final DigitorBackend backend;
+  final DigitorNativeTextureBackend backend;
+  final DigitorNativeTextureHandleType handleType;
+  final int supportedPixelFormats;
   final DigitorPreviewMode selectedMode;
   final String reasonUnavailable;
 }
@@ -137,24 +195,28 @@ final class DigitorExportProgress {
 /// High-level owner for the process-wide DigitorEngine runtime.
 ///
 /// Native binaries are built and bundled automatically by the package build
-/// hook. Call [initialize] once near app startup, create sessions from this
-/// instance, and [close] it during app shutdown.
+/// hook. Call [initialize] near app startup, create sessions from this instance,
+/// and [close] it during app shutdown.
 final class DigitorEngine {
   DigitorEngine._(this._ownsInitialization);
 
-  static String get version {
-    final pointer = digitorGetVersion();
-    if (pointer == nullptr) {
-      throw const DigitorEngineException('getVersion', 100);
-    }
-    return pointer.toDartString();
-  }
+  /// Version of the public Flutter SDK contract in this repository release.
+  static const String version = '0.0.1';
 
+  static DigitorEngine? _current;
+
+  /// Initializes the process-wide engine once per Dart isolate.
+  ///
+  /// Repeated calls return the currently open facade rather than creating a
+  /// second owner that could shut the native singleton down prematurely.
   static DigitorEngine initialize({
     DigitorBackend preferredBackend = DigitorBackend.automatic,
     bool enableValidation = false,
     bool allowCpuFallback = true,
   }) {
+    final current = _current;
+    if (current != null && !current._closed) return current;
+
     final config = calloc<DigitorEngineConfigNative>();
     try {
       config.ref
@@ -165,7 +227,9 @@ final class DigitorEngine {
       if (result != 0 && result != 3) {
         throw DigitorEngineException('initialize', result);
       }
-      return DigitorEngine._(result == 0);
+      final engine = DigitorEngine._(result == 0);
+      _current = engine;
+      return engine;
     } finally {
       calloc.free(config);
     }
@@ -197,10 +261,9 @@ final class DigitorEngine {
 
   /// Creates the Flutter-safe asynchronous compatibility SDK session.
   ///
-  /// The current native C API reports whether a production native-GPU Flutter
-  /// presenter is bound through [DigitorSession.previewCapabilities]. Until it
-  /// is, [DigitorSession.preview] is the explicit CPU-readable compatibility
-  /// path and must not be described as zero-copy GPU presentation.
+  /// Query [DigitorSession.previewCapabilities] before attempting a strict
+  /// native-GPU presentation path. [DigitorSession.preview] intentionally
+  /// returns a Dart-owned copy of the CPU-readable compatibility buffer.
   DigitorSession createSession() {
     _ensureOpen();
     final session = DigitorSession._create(() {});
@@ -218,6 +281,7 @@ final class DigitorEngine {
       _check('shutdown', digitorShutdown());
     }
     _closed = true;
+    if (identical(_current, this)) _current = null;
   }
 
   void _ensureOpen() {
@@ -248,6 +312,7 @@ final class DigitorSession {
 
   void setColor(DigitorColorControls controls) {
     _ensureAlive();
+    _ensureIdle();
     final native = calloc<DigitorColorControlsNative>();
     try {
       native.ref
@@ -279,9 +344,10 @@ final class DigitorSession {
         digitorSdkQueryNativePreview(_handle, native),
       );
       final value = native.ref;
-      final mode = value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue
-          ? DigitorPreviewMode.nativeGpuStrict
-          : DigitorPreviewMode.compatibility;
+      final selectedMode =
+          value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue
+              ? DigitorPreviewMode.nativeGpuStrict
+              : DigitorPreviewMode.compatibility;
       return DigitorPreviewCapabilities(
         nativeGpuPreviewAvailable: value.nativeGpuPreviewAvailable != 0,
         trueSharedResourceZeroCopy: value.trueSharedResourceZeroCopy != 0,
@@ -291,8 +357,10 @@ final class DigitorSession {
         hdrSupported: value.hdrSupported != 0,
         protectedContentSupported: value.protectedContentSupported != 0,
         resizeSupported: value.resizeSupported != 0,
-        backend: DigitorBackend.fromNative(value.backend),
-        selectedMode: mode,
+        backend: DigitorNativeTextureBackend.fromNative(value.backend),
+        handleType: DigitorNativeTextureHandleType.fromNative(value.handleType),
+        supportedPixelFormats: value.supportedPixelFormats,
+        selectedMode: selectedMode,
         reasonUnavailable: _readInt8Array(value.reasonUnavailable, 192),
       );
     } finally {
@@ -302,9 +370,16 @@ final class DigitorSession {
 
   Future<void> seek(int frame) {
     if (frame < 0) throw ArgumentError.value(frame, 'frame');
-    return _runCompletion(
-      'seek',
-      (callback) => digitorSdkSeekAsync(_handle, frame, callback, nullptr),
+    return _track(
+      () => _invokeCompletion(
+        'seek',
+        (callback) => digitorSdkSeekAsync(
+          _handle,
+          frame,
+          callback,
+          nullptr,
+        ),
+      ),
     );
   }
 
@@ -312,44 +387,51 @@ final class DigitorSession {
     required int frame,
     required int width,
     required int height,
-  }) async {
+  }) {
     if (frame < 0) throw ArgumentError.value(frame, 'frame');
     if (width <= 0) throw ArgumentError.value(width, 'width');
     if (height <= 0) throw ArgumentError.value(height, 'height');
 
-    await _runCompletion(
-      'preview',
-      (callback) => digitorSdkPreviewAsync(
-        _handle,
-        frame,
-        width,
-        height,
-        callback,
-        nullptr,
-      ),
-    );
+    return _track(() async {
+      await _invokeCompletion(
+        'preview',
+        (callback) => digitorSdkPreviewAsync(
+          _handle,
+          frame,
+          width,
+          height,
+          callback,
+          nullptr,
+        ),
+      );
 
-    final texture = calloc<DigitorNativeTextureNative>();
-    try {
-      _check('getNativeTexture', digitorSdkGetNativeTexture(_handle, texture));
-      final value = texture.ref;
-      if (value.pixels == nullptr || value.rowBytes <= 0 || value.height <= 0) {
-        throw const DigitorEngineException('getNativeTexture', 100);
+      final texture = calloc<DigitorNativeTextureNative>();
+      try {
+        _check(
+          'getNativeTexture',
+          digitorSdkGetNativeTexture(_handle, texture),
+        );
+        final value = texture.ref;
+        if (value.pixels == nullptr ||
+            value.rowBytes <= 0 ||
+            value.height <= 0) {
+          throw const DigitorEngineException('getNativeTexture', 100);
+        }
+        final byteLength = value.rowBytes * value.height;
+        final rgba = Uint8List.fromList(
+          value.pixels.cast<Uint8>().asTypedList(byteLength),
+        );
+        return DigitorPreviewFrame(
+          rgba: rgba,
+          width: value.width,
+          height: value.height,
+          rowBytes: value.rowBytes,
+          generation: value.generation,
+        );
+      } finally {
+        calloc.free(texture);
       }
-      final byteLength = value.rowBytes * value.height;
-      final rgba = Uint8List.fromList(
-        value.pixels.cast<Uint8>().asTypedList(byteLength),
-      );
-      return DigitorPreviewFrame(
-        rgba: rgba,
-        width: value.width,
-        height: value.height,
-        rowBytes: value.rowBytes,
-        generation: value.generation,
-      );
-    } finally {
-      calloc.free(texture);
-    }
+    });
   }
 
   Future<void> export({
@@ -370,8 +452,48 @@ final class DigitorSession {
     if (width <= 0) throw ArgumentError.value(width, 'width');
     if (height <= 0) throw ArgumentError.value(height, 'height');
 
+    return _track(
+      () => _startExport(
+        path: path,
+        firstFrame: firstFrame,
+        lastFrame: lastFrame,
+        width: width,
+        height: height,
+        format: format,
+        codec: codec,
+        onProgress: onProgress,
+      ),
+    );
+  }
+
+  void cancel() {
     _ensureAlive();
-    _ensureIdle();
+    _check('cancel', digitorSdkCancel(_handle));
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    final active = _activeOperation;
+    if (active != null) {
+      _check('cancelBeforeDispose', digitorSdkCancel(_handle));
+      await active;
+    }
+    _check('sdkDestroy', digitorSdkDestroy(_handle));
+    _handle = nullptr;
+    _disposed = true;
+    _onDisposed();
+  }
+
+  Future<void> _startExport({
+    required String path,
+    required int firstFrame,
+    required int lastFrame,
+    required int width,
+    required int height,
+    required DigitorExportFormat format,
+    required DigitorVideoCodec codec,
+    required void Function(DigitorExportProgress progress)? onProgress,
+  }) {
     final nativePath = path.toNativeUtf8();
     NativeCallable<DigitorProgressNative>? progressCallback;
     if (onProgress != null) {
@@ -392,11 +514,11 @@ final class DigitorSession {
 
     final completer = Completer<void>();
     late final NativeCallable<DigitorCompletionNative> completion;
-    var completed = false;
+    var finished = false;
     completion = NativeCallable<DigitorCompletionNative>.listener(
       (int result, Pointer<Void> _) {
-        if (completed) return;
-        completed = true;
+        if (finished) return;
+        finished = true;
         completion.close();
         progressCallback?.close();
         calloc.free(nativePath);
@@ -424,54 +546,26 @@ final class DigitorSession {
       nullptr,
     );
     if (immediate != 0) {
-      completed = true;
+      finished = true;
       completion.close();
       progressCallback?.close();
       calloc.free(nativePath);
       throw DigitorEngineException('export', immediate);
     }
-
-    return _track(completer.future);
+    return completer.future;
   }
 
-  void cancel() {
-    _ensureAlive();
-    _check('cancel', digitorSdkCancel(_handle));
-  }
-
-  Future<void> dispose() async {
-    if (_disposed) return;
-    final active = _activeOperation;
-    if (active != null) {
-      final result = digitorSdkCancel(_handle);
-      if (result != 0) {
-        throw DigitorEngineException('cancelBeforeDispose', result);
-      }
-      try {
-        await active;
-      } on DigitorEngineException {
-        // Cancellation/failure is an expected terminal state while disposing.
-      }
-    }
-    _check('sdkDestroy', digitorSdkDestroy(_handle));
-    _handle = nullptr;
-    _disposed = true;
-    _onDisposed();
-  }
-
-  Future<void> _runCompletion(
+  Future<void> _invokeCompletion(
     String operation,
     int Function(Pointer<NativeFunction<DigitorCompletionNative>>) invoke,
   ) {
-    _ensureAlive();
-    _ensureIdle();
     final completer = Completer<void>();
     late final NativeCallable<DigitorCompletionNative> callback;
-    var completed = false;
+    var finished = false;
     callback = NativeCallable<DigitorCompletionNative>.listener(
       (int result, Pointer<Void> _) {
-        if (completed) return;
-        completed = true;
+        if (finished) return;
+        finished = true;
         callback.close();
         if (result == 0) {
           completer.complete();
@@ -483,22 +577,34 @@ final class DigitorSession {
 
     final immediate = invoke(callback.nativeFunction);
     if (immediate != 0) {
-      completed = true;
+      finished = true;
       callback.close();
       throw DigitorEngineException(operation, immediate);
     }
-    return _track(completer.future);
+    return completer.future;
   }
 
-  Future<void> _track(Future<void> operation) {
-    late final Future<void> tracked;
-    tracked = operation.whenComplete(() {
-      if (identical(_activeOperation, tracked)) {
-        _activeOperation = null;
-      }
+  Future<T> _track<T>(Future<T> Function() start) {
+    _ensureAlive();
+    _ensureIdle();
+
+    final gate = Completer<void>();
+    final active = gate.future;
+    _activeOperation = active;
+
+    late final Future<T> operation;
+    try {
+      operation = start();
+    } catch (_) {
+      if (!gate.isCompleted) gate.complete();
+      if (identical(_activeOperation, active)) _activeOperation = null;
+      rethrow;
+    }
+
+    return operation.whenComplete(() {
+      if (!gate.isCompleted) gate.complete();
+      if (identical(_activeOperation, active)) _activeOperation = null;
     });
-    _activeOperation = tracked;
-    return tracked;
   }
 
   void _ensureAlive() {
