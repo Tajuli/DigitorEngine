@@ -1,10 +1,10 @@
 Pod::Spec.new do |s|
   s.name = 'digitor_engine_ffi'
-  s.version = '5.7.0'
+  s.version = '0.0.1'
   s.summary = 'DigitorEngine Flutter FFI integration.'
   s.description = 'Builds and links the DigitorEngine C ABI into macOS applications.'
   s.homepage = 'https://github.com/Tajuli/DigitorEngine'
-  s.license = { :type => 'Proprietary', :file => '../../../LICENSE' }
+  s.license = { :type => 'MIT', :file => '../../../LICENSE' }
   s.author = { 'DigitorEngine' => 'hello@primedigitor.com' }
   s.source = { :path => '.' }
   s.platform = :osx, '11.0'
