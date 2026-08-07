@@ -2,7 +2,7 @@
 
 Drop-in Flutter/Dart FFI integration for DigitorEngine.
 
-The package uses Flutter/Dart native-assets build hooks to compile and bundle the native `digitor_engine` shared library with the consuming app. Consumer applications do not need to copy DLL/SO files or add DigitorEngine CMake targets manually.
+The package uses Dart/Flutter native-assets build hooks to compile and bundle the native `digitor_engine` shared library with the consuming app. Consumer applications do not need to copy the DigitorEngine DLL/SO/dylib or manually add the DigitorEngine CMake target.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ Then run:
 flutter pub get
 ```
 
-The package build hook builds and bundles the native library for the app's target OS and architecture.
+`flutter run`, `flutter build`, and `flutter test` invoke the package build hook automatically. The hook builds the engine for the app's actual target OS, architecture, Android API, or Apple SDK and bundles the resulting native library.
 
 ## Minimal usage
 
@@ -78,6 +78,8 @@ Future<void> useEngine() async {
 }
 ```
 
+`DigitorEngine.initialize()` is idempotent inside one Dart isolate. Sessions created by the facade are tracked and are disposed automatically by `engine.close()` if the app has not already disposed them.
+
 ## Compatibility preview
 
 `DigitorSession.preview()` exposes the existing CPU-readable compatibility preview as a Dart-owned RGBA byte buffer:
@@ -94,7 +96,22 @@ final Uint8List rgba = frame.rgba;
 
 This compatibility path is intentionally **not** presented as a zero-copy native GPU texture. Check `session.previewCapabilities` before selecting a native-GPU presentation path. `DigitorPreviewMode.nativeGpuStrict` remains fail-closed when a production Flutter texture registrar/presenter is not bound by the native platform integration.
 
-## Export
+## FFmpeg media/export support
+
+The base package deliberately has no hidden system dependency. It builds DigitorEngine without FFmpeg unless the root Flutter app explicitly supplies an FFmpeg development SDK.
+
+To enable the engine's FFmpeg-backed real export path, configure the root app `pubspec.yaml`:
+
+```yaml
+hooks:
+  user_defines:
+    digitor_engine_ffi:
+      ffmpeg_root: C:/DigitorSDK/ffmpeg
+```
+
+Relative paths are resolved relative to the root `pubspec.yaml`. When `ffmpeg_root` is supplied, the build fails immediately if the required FFmpeg headers/libraries are not present instead of silently producing an export-disabled engine. Use an FFmpeg SDK built for the same target OS and architecture. If that SDK uses shared FFmpeg libraries rather than static libraries, those runtime dependencies must also be packaged by the application/platform distribution.
+
+With FFmpeg enabled:
 
 ```dart
 await session.export(
@@ -111,7 +128,7 @@ await session.export(
 );
 ```
 
-Call `session.cancel()` to request cancellation of the active asynchronous session operation.
+Without FFmpeg, the engine core, renderer selection, SDK session, color controls, and compatibility preview remain available; real FFmpeg export is unavailable by design. Call `session.cancel()` to request cancellation of the active asynchronous session operation.
 
 ## Backend selection
 
@@ -131,6 +148,7 @@ The engine's production policy remains GPU-first. Once a GPU backend has been se
 - Initialize the process-wide engine before creating sessions.
 - Keep a session alive until its async operation completes or is cancelled.
 - Do not start two async operations on the same session concurrently.
+- Mutation methods reject calls while a session operation is active.
 - Dispose sessions before closing the engine.
 - `DigitorEngine.close()` also disposes sessions created by that instance.
 - A compatibility preview copies native RGBA data before returning, so the returned `Uint8List` is independent of the next native preview request.
