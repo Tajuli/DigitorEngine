@@ -7,6 +7,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace digitor {
 
