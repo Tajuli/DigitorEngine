@@ -29,10 +29,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected='0.0.1'
           test -f cmake/DigitorEngineVersion.cmake
-          grep -q 'DIGITOR_ENGINE_VERSION "5.51.0"' cmake/DigitorEngineVersion.cmake
+          grep -q "DIGITOR_ENGINE_VERSION \"${expected}\"" cmake/DigitorEngineVersion.cmake
+          grep -q 'DIGITOR_ENGINE_SOVERSION "0"' cmake/DigitorEngineVersion.cmake
+          grep -q "Current package version: \*\*${expected}\*\*" README.md
+          grep -q "^version: ${expected}$" dart/digitor_engine_ffi/pubspec.yaml
+          grep -q "s.version = '${expected}'" dart/digitor_engine_ffi/ios/digitor_engine_ffi.podspec
+          grep -q "s.version = '${expected}'" dart/digitor_engine_ffi/macos/digitor_engine_ffi.podspec
+          grep -q "s.license = { :type => 'MIT'" dart/digitor_engine_ffi/ios/digitor_engine_ffi.podspec
+          grep -q "s.license = { :type => 'MIT'" dart/digitor_engine_ffi/macos/digitor_engine_ffi.podspec
           grep -q 'include("${CMAKE_CURRENT_LIST_DIR}/cmake/DigitorEngineVersion.cmake")' CMakeLists.txt
           grep -q 'digitor_get_version' include/digitor/digitor.h
+      - name: Validate production execution policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'GPU-first, not GPU-only' README.md
+          grep -q 'multithreaded CPU implementation is the fallback only when no usable GPU backend' README.md
+          grep -q 'must not silently switch the active job to CPU' README.md
+          grep -q 'per-pixel accurate' README.md
+          grep -q 'Preview and export must use equivalent color math' README.md
       - name: Validate app integration boundaries
         shell: bash
         run: |
