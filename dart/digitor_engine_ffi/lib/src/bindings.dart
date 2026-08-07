@@ -149,16 +149,14 @@ final class DigitorTimelineBindings {
             library.lookupFunction<DigitorPublishNative, DigitorPublishDart>(
           'digitor_timeline_session_publish',
         ),
-        play =
-            library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
+        play = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_play',
         ),
         pause =
             library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_pause',
         ),
-        stop =
-            library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
+        stop = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
           'digitor_timeline_session_stop',
         ),
         seek = library.lookupFunction<DigitorSeekNative, DigitorSeekDart>(
