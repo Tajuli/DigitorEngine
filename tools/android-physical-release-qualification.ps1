@@ -3,7 +3,7 @@ param(
   [string]$Configuration = 'Release',
   [string]$FfmpegRoot = $env:DIGITOR_FFMPEG_ROOT,
   [string]$AndroidSdkRoot = $env:ANDROID_SDK_ROOT,
-  [string]$AndroidNdkRoot = $env:ANDROID_NDK_HOME
+  [string]$AndroidNdkRoot = $(if ($env:ANDROID_NDK_HOME) { $env:ANDROID_NDK_HOME } else { $env:ANDROID_NDK_ROOT })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,14 +65,15 @@ if ([string]::IsNullOrWhiteSpace($AndroidNdkRoot) -or -not (Test-Path $AndroidNd
   }
 }
 if ([string]::IsNullOrWhiteSpace($AndroidNdkRoot) -or -not (Test-Path $AndroidNdkRoot)) {
-  throw 'Android NDK was not found. Install it with Android Studio SDK Manager or set ANDROID_NDK_HOME.'
+  throw 'Android NDK was not found. Install it with Android Studio SDK Manager or set ANDROID_NDK_HOME/ANDROID_NDK_ROOT.'
 }
 $Toolchain = Join-Path $AndroidNdkRoot 'build\cmake\android.toolchain.cmake'
 if (-not (Test-Path $Toolchain)) { throw "Android NDK CMake toolchain missing: $Toolchain" }
 
 $Glslc = Join-Path $AndroidNdkRoot 'shader-tools\windows-x86_64\glslc.exe'
 if (-not (Test-Path $Glslc)) {
-  $Glslc = (Get-Command glslc -ErrorAction SilentlyContinue).Source
+  $glslcCommand = Get-Command glslc -ErrorAction SilentlyContinue
+  if ($glslcCommand) { $Glslc = $glslcCommand.Source }
 }
 if ([string]::IsNullOrWhiteSpace($Glslc) -or -not (Test-Path $Glslc)) {
   throw 'glslc was not found in the Android NDK or PATH.'
@@ -130,22 +131,19 @@ try {
   Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
   Invoke-Logged 'configure-android-harness' {
     cmake -S tests/android_physical_runtime -B $BuildDir -G Ninja `
-      -DCMAKE_TOOLCHAIN_FILE="$Toolchain" `
+      -DCMAKE_TOOLCHAIN_FILE=$Toolchain `
       -DANDROID_ABI=arm64-v8a `
       -DANDROID_PLATFORM=android-31 `
       -DANDROID_STL=c++_static `
-      -DCMAKE_BUILD_TYPE=$Configuration
+      -DCMAKE_BUILD_TYPE=$Configuration `
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
   }
   Invoke-Logged 'build-android-harness' {
-    cmake --build $BuildDir --config $Configuration --parallel
+    cmake --build $BuildDir --parallel
   }
 
-  $exeCandidates = @(
-    (Join-Path $BuildDir 'digitor_android_physical_runtime'),
-    (Join-Path $BuildDir "$Configuration\digitor_android_physical_runtime")
-  )
-  $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $exe) { throw 'Android physical qualification executable was not produced.' }
+  $exe = Join-Path $BuildDir 'digitor_android_physical_runtime'
+  if (-not (Test-Path $exe)) { throw 'Android physical qualification executable was not produced.' }
 
   $Remote = '/data/local/tmp/digitor-android-qualification'
   adb -s $serial shell "rm -rf $Remote && mkdir -p $Remote" | Out-Null
