@@ -1,12 +1,12 @@
 #pragma once
 
-#include <cstdlib>
 #include <fcntl.h>
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaExtractor.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <mutex>
 #include <vector>
 
 inline media_status_t digitor_media_extractor_set_data_source_fd(
@@ -33,16 +33,28 @@ inline media_status_t digitor_media_extractor_set_data_source_fd(
 
 // AImageReader_delete() returns every acquired AImage to the system. The
 // qualification harness intentionally carries one acquired AImage/AHB out of
-// decode_one_frame() so Vulkan can import it afterwards. Defer reader deletion
-// until process shutdown, after the DecodedFrame's AImage has been destroyed.
-// This preserves the Android NDK lifetime contract without changing production
-// engine code or weakening the qualification criteria.
+// decode_one_frame() so Vulkan can import it afterwards. Retain readers until
+// the qualification body has returned and its DecodedFrame/AImage has been
+// destroyed, then release them explicitly from qualification_entry.cpp.
+//
+// Do not use atexit() here. Android media/runtime teardown may already have
+// destroyed internal synchronization objects by the time atexit callbacks run,
+// which can trigger FORTIFY "pthread_mutex_lock called on a destroyed mutex".
+inline std::mutex& digitor_deferred_image_readers_mutex() {
+  // Deliberately process-lifetime storage: qualification_entry.cpp performs
+  // deterministic media cleanup before main returns, so no static destructor
+  // needs to participate in Android runtime shutdown ordering.
+  static auto* mutex = new std::mutex();
+  return *mutex;
+}
+
 inline std::vector<AImageReader*>& digitor_deferred_image_readers() {
   static auto* readers = new std::vector<AImageReader*>();
   return *readers;
 }
 
 inline void digitor_release_deferred_image_readers() {
+  std::lock_guard<std::mutex> lock(digitor_deferred_image_readers_mutex());
   auto& readers = digitor_deferred_image_readers();
   for (auto* reader : readers) {
     if (reader) AImageReader_delete(reader);
@@ -52,9 +64,8 @@ inline void digitor_release_deferred_image_readers() {
 
 inline void digitor_defer_image_reader_delete(AImageReader* reader) {
   if (!reader) return;
-  auto& readers = digitor_deferred_image_readers();
-  if (readers.empty()) std::atexit(digitor_release_deferred_image_readers);
-  readers.push_back(reader);
+  std::lock_guard<std::mutex> lock(digitor_deferred_image_readers_mutex());
+  digitor_deferred_image_readers().push_back(reader);
 }
 
 #define AMediaExtractor_setDataSource(extractor, path) \

@@ -7,6 +7,15 @@ if(NOT TARGET digitor_engine)
     message(FATAL_ERROR "Digitor native image runtime requires the digitor_engine target")
 endif()
 
+# The historical monolithic C API translation unit still contains an obsolete
+# hard-coded version function. Rename that symbol only for this source file and
+# provide the canonical public implementation from version_c_api.cpp. This keeps
+# the established C API source otherwise untouched while making runtime version
+# reporting follow the v0.0.1 package contract.
+set_source_files_properties(src/ffi/digitor_c_api.cpp PROPERTIES
+    COMPILE_DEFINITIONS "digitor_get_version=digitor_get_version_legacy")
+target_sources(digitor_engine PRIVATE src/ffi/version_c_api.cpp)
+
 if(WIN32)
     target_link_libraries(digitor_engine PRIVATE windowscodecs propsys)
 elseif(APPLE)
