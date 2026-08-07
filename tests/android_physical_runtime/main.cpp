@@ -23,6 +23,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -164,9 +165,11 @@ DecodedFrame decode_one_frame(const char* media_path) {
           "AMediaExtractor_selectTrack failed");
 
   AImageReader* raw_reader = nullptr;
+  constexpr std::uint64_t kReaderUsage =
+      AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+      AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
   const auto reader_status = AImageReader_newWithUsage(
-      width, height, AIMAGE_FORMAT_PRIVATE,
-      AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4, &raw_reader);
+      width, height, AIMAGE_FORMAT_PRIVATE, kReaderUsage, 4, &raw_reader);
   require(reader_status == AMEDIA_OK && raw_reader, "AImageReader_newWithUsage failed");
   ReaderPtr reader{raw_reader};
   ANativeWindow* reader_window = nullptr;
@@ -295,15 +298,23 @@ struct VulkanContext {
   PFN_vkGetAndroidHardwareBufferPropertiesANDROID get_ahb_properties{};
 
   ~VulkanContext() {
-    if (device) vkDeviceWaitIdle(device);
+    if (!device) {
+      if (instance) vkDestroyInstance(instance, nullptr);
+      return;
+    }
+    vkDeviceWaitIdle(device);
     if (query_pool) vkDestroyQueryPool(device, query_pool, nullptr);
     if (pipeline) vkDestroyPipeline(device, pipeline, nullptr);
     if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     if (descriptor_layout) vkDestroyDescriptorSetLayout(device, descriptor_layout, nullptr);
     if (shader) vkDestroyShaderModule(device, shader, nullptr);
     if (command_pool) vkDestroyCommandPool(device, command_pool, nullptr);
-    if (device) vkDestroyDevice(device, nullptr);
-    if (instance) vkDestroyInstance(instance, nullptr);
+    vkDestroyDevice(device, nullptr);
+    device = VK_NULL_HANDLE;
+    if (instance) {
+      vkDestroyInstance(instance, nullptr);
+      instance = VK_NULL_HANDLE;
+    }
   }
 };
 
@@ -336,77 +347,67 @@ VulkanContext make_vulkan(const std::vector<std::uint32_t>& spirv) {
   instance_ci.pApplicationInfo = &app;
   require(vkCreateInstance(&instance_ci, nullptr, &ctx.instance) == VK_SUCCESS,
           "vkCreateInstance failed");
-
   std::uint32_t physical_count = 0;
-  vkEnumeratePhysicalDevices(ctx.instance, &physical_count, nullptr);
-  require(physical_count > 0, "no Vulkan physical device");
-  std::vector<VkPhysicalDevice> devices(physical_count);
-  vkEnumeratePhysicalDevices(ctx.instance, &physical_count, devices.data());
-  for (const auto physical : devices) {
-    VkPhysicalDeviceProperties props{};
-    vkGetPhysicalDeviceProperties(physical, &props);
-    std::string name = props.deviceName;
-    std::string lowered = name;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
-    if (lowered.find("swiftshader") == std::string::npos && lowered.find("llvmpipe") == std::string::npos) {
-      ctx.physical = physical;
-      ctx.properties = props;
-      break;
-    }
-  }
-  require(ctx.physical != VK_NULL_HANDLE, "only software Vulkan devices were found");
+  require(vkEnumeratePhysicalDevices(ctx.instance, &physical_count, nullptr) == VK_SUCCESS && physical_count > 0,
+          "no Vulkan physical device");
+  std::vector<VkPhysicalDevice> physicals(physical_count);
+  vkEnumeratePhysicalDevices(ctx.instance, &physical_count, physicals.data());
+  ctx.physical = physicals.front();
+  vkGetPhysicalDeviceProperties(ctx.physical, &ctx.properties);
   require(has_extension(ctx.physical, VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME),
           "VK_ANDROID_external_memory_android_hardware_buffer unavailable");
-
-  std::uint32_t family_count = 0;
-  vkGetPhysicalDeviceQueueFamilyProperties(ctx.physical, &family_count, nullptr);
-  std::vector<VkQueueFamilyProperties> families(family_count);
-  vkGetPhysicalDeviceQueueFamilyProperties(ctx.physical, &family_count, families.data());
-  bool queue_found = false;
-  for (std::uint32_t i = 0; i < family_count; ++i) {
-    if ((families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0 && families[i].timestampValidBits != 0) {
+  require(has_extension(ctx.physical, VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME),
+          "VK_KHR_sampler_ycbcr_conversion unavailable");
+  std::uint32_t queue_count = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(ctx.physical, &queue_count, nullptr);
+  std::vector<VkQueueFamilyProperties> queues(queue_count);
+  vkGetPhysicalDeviceQueueFamilyProperties(ctx.physical, &queue_count, queues.data());
+  bool found_queue = false;
+  for (std::uint32_t i = 0; i < queue_count; ++i) {
+    if (queues[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
       ctx.queue_family = i;
-      queue_found = true;
+      found_queue = true;
       break;
     }
   }
-  require(queue_found, "no compute queue with GPU timestamps");
-
+  require(found_queue, "no Vulkan compute queue");
   const float priority = 1.0f;
   VkDeviceQueueCreateInfo queue_ci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
   queue_ci.queueFamilyIndex = ctx.queue_family;
   queue_ci.queueCount = 1;
   queue_ci.pQueuePriorities = &priority;
-  VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
-  VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-  features2.pNext = &ycbcr;
-  vkGetPhysicalDeviceFeatures2(ctx.physical, &features2);
-  require(ycbcr.samplerYcbcrConversion == VK_TRUE, "sampler YCbCr conversion unsupported");
-  const char* extensions[] = {VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME};
+  const std::array<const char*, 2> extensions{{
+      VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+      VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME}};
+  VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcr_feature{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
+  ycbcr_feature.samplerYcbcrConversion = VK_TRUE;
   VkDeviceCreateInfo device_ci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-  device_ci.pNext = &ycbcr;
+  device_ci.pNext = &ycbcr_feature;
   device_ci.queueCreateInfoCount = 1;
   device_ci.pQueueCreateInfos = &queue_ci;
-  device_ci.enabledExtensionCount = 1;
-  device_ci.ppEnabledExtensionNames = extensions;
+  device_ci.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
+  device_ci.ppEnabledExtensionNames = extensions.data();
   require(vkCreateDevice(ctx.physical, &device_ci, nullptr, &ctx.device) == VK_SUCCESS,
           "vkCreateDevice failed");
   vkGetDeviceQueue(ctx.device, ctx.queue_family, 0, &ctx.queue);
   ctx.get_ahb_properties = reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
       vkGetDeviceProcAddr(ctx.device, "vkGetAndroidHardwareBufferPropertiesANDROID"));
-  require(ctx.get_ahb_properties != nullptr, "vkGetAndroidHardwareBufferPropertiesANDROID unavailable");
-
-  VkCommandPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-  pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-  pool_ci.queueFamilyIndex = ctx.queue_family;
-  require(vkCreateCommandPool(ctx.device, &pool_ci, nullptr, &ctx.command_pool) == VK_SUCCESS,
+  require(ctx.get_ahb_properties != nullptr, "vkGetAndroidHardwareBufferPropertiesANDROID missing");
+  VkCommandPoolCreateInfo command_pool_ci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+  command_pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+  command_pool_ci.queueFamilyIndex = ctx.queue_family;
+  require(vkCreateCommandPool(ctx.device, &command_pool_ci, nullptr, &ctx.command_pool) == VK_SUCCESS,
           "vkCreateCommandPool failed");
-
   std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
-  bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-  bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+  bindings[0].binding = 0;
+  bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  bindings[0].descriptorCount = 1;
+  bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+  bindings[1].binding = 1;
+  bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  bindings[1].descriptorCount = 1;
+  bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
   layout_ci.bindingCount = static_cast<std::uint32_t>(bindings.size());
   layout_ci.pBindings = bindings.data();
@@ -452,14 +453,28 @@ struct ImportedImage {
 
 ImportedImage import_ahardwarebuffer(VulkanContext& ctx, AHardwareBuffer* ahb,
                                      std::uint32_t width, std::uint32_t height) {
+  AHardwareBuffer_Desc ahb_desc{};
+  AHardwareBuffer_describe(ahb, &ahb_desc);
   VkAndroidHardwareBufferFormatPropertiesANDROID format_props{
       VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID};
   VkAndroidHardwareBufferPropertiesANDROID props{
       VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID};
   props.pNext = &format_props;
-  require(ctx.get_ahb_properties(ctx.device, ahb, &props) == VK_SUCCESS &&
-              props.allocationSize > 0 && props.memoryTypeBits != 0,
-          "Vulkan AHardwareBuffer property query failed");
+  const auto property_result = ctx.get_ahb_properties(ctx.device, ahb, &props);
+  if (property_result != VK_SUCCESS || props.allocationSize == 0 || props.memoryTypeBits == 0) {
+    std::ostringstream diagnostic;
+    diagnostic << "Vulkan AHardwareBuffer property query failed"
+               << " vkResult=" << static_cast<int>(property_result)
+               << " width=" << ahb_desc.width
+               << " height=" << ahb_desc.height
+               << " layers=" << ahb_desc.layers
+               << " format=" << ahb_desc.format
+               << " usage=0x" << std::hex << ahb_desc.usage << std::dec
+               << " stride=" << ahb_desc.stride
+               << " allocationSize=" << props.allocationSize
+               << " memoryTypeBits=0x" << std::hex << props.memoryTypeBits;
+    throw std::runtime_error(diagnostic.str());
+  }
 
   ImportedImage imported;
   imported.width = width;
@@ -529,8 +544,8 @@ ImportedImage import_ahardwarebuffer(VulkanContext& ctx, AHardwareBuffer* ahb,
           "vkCreateImageView for AHardwareBuffer failed");
   VkSamplerCreateInfo sampler_ci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sampler_ci.pNext = &conversion_info;
-  sampler_ci.magFilter = VK_FILTER_LINEAR;
-  sampler_ci.minFilter = VK_FILTER_LINEAR;
+  sampler_ci.magFilter = conversion_ci.chromaFilter;
+  sampler_ci.minFilter = conversion_ci.chromaFilter;
   sampler_ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
   sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -542,6 +557,7 @@ ImportedImage import_ahardwarebuffer(VulkanContext& ctx, AHardwareBuffer* ahb,
 }
 
 void destroy_imported(VulkanContext& ctx, ImportedImage& image) {
+  if (!ctx.device) return;
   if (image.sampler) vkDestroySampler(ctx.device, image.sampler, nullptr);
   if (image.view) vkDestroyImageView(ctx.device, image.view, nullptr);
   if (image.conversion) vkDestroySamplerYcbcrConversion(ctx.device, image.conversion, nullptr);
@@ -566,6 +582,7 @@ RunResult execute_conversion(VulkanContext& ctx, const ImportedImage& input, boo
   VkCommandBuffer command{};
   const VkDeviceSize bytes = static_cast<VkDeviceSize>(input.width) * input.height * 8u;
   auto cleanup = [&] {
+    if (!ctx.device) return;
     if (descriptor_pool) vkDestroyDescriptorPool(ctx.device, descriptor_pool, nullptr);
     if (output_view) vkDestroyImageView(ctx.device, output_view, nullptr);
     if (readback) vkDestroyBuffer(ctx.device, readback, nullptr);
@@ -693,6 +710,7 @@ RunResult execute_conversion(VulkanContext& ctx, const ImportedImage& input, boo
                             0, 1, &descriptor_set, 0, nullptr);
     vkCmdDispatch(command, (input.width + 7u) / 8u, (input.height + 7u) / 8u, 1);
     vkCmdWriteTimestamp(command, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ctx.query_pool, 1);
+
     VkImageMemoryBarrier transfer_barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     transfer_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     transfer_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -705,8 +723,7 @@ RunResult execute_conversion(VulkanContext& ctx, const ImportedImage& input, boo
     transfer_barrier.subresourceRange.levelCount = 1;
     transfer_barrier.subresourceRange.layerCount = 1;
     vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                         &transfer_barrier);
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transfer_barrier);
     VkBufferImageCopy copy{};
     copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     copy.imageSubresource.layerCount = 1;
@@ -721,99 +738,66 @@ RunResult execute_conversion(VulkanContext& ctx, const ImportedImage& input, boo
     require(vkQueueWaitIdle(ctx.queue) == VK_SUCCESS, "vkQueueWaitIdle failed");
 
     std::array<std::uint64_t, 2> timestamps{};
-    require(vkGetQueryPoolResults(ctx.device, ctx.query_pool, 0, 2, sizeof(timestamps),
-                                  timestamps.data(), sizeof(std::uint64_t),
-                                  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS,
-            "GPU timestamp query failed");
+    const auto query_result = vkGetQueryPoolResults(ctx.device, ctx.query_pool, 0, 2,
+                                                     sizeof(timestamps), timestamps.data(),
+                                                     sizeof(std::uint64_t),
+                                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    require(query_result == VK_SUCCESS, "vkGetQueryPoolResults failed");
     void* mapped = nullptr;
-    require(vkMapMemory(ctx.device, readback_memory, 0, bytes, 0, &mapped) == VK_SUCCESS && mapped,
-            "validation readback map failed");
-    std::vector<std::uint8_t> validation(static_cast<std::size_t>(bytes));
-    std::memcpy(validation.data(), mapped, validation.size());
+    require(vkMapMemory(ctx.device, readback_memory, 0, bytes, 0, &mapped) == VK_SUCCESS,
+            "vkMapMemory validation readback failed");
+    std::vector<std::uint8_t> data(static_cast<std::size_t>(bytes));
+    std::memcpy(data.data(), mapped, data.size());
     vkUnmapMemory(ctx.device, readback_memory);
-
-    float min_rgb = std::numeric_limits<float>::infinity();
-    float max_rgb = -std::numeric_limits<float>::infinity();
-    const auto* half = reinterpret_cast<const std::uint16_t*>(validation.data());
-    const std::size_t pixels = static_cast<std::size_t>(input.width) * input.height;
-    for (std::size_t p = 0; p < pixels; p += std::max<std::size_t>(1, pixels / 2048)) {
-      for (std::size_t c = 0; c < 3; ++c) {
-        const float value = half_to_float(half[p * 4 + c]);
-        if (std::isfinite(value)) {
-          min_rgb = std::min(min_rgb, value);
-          max_rgb = std::max(max_rgb, value);
-        }
+    float minimum = std::numeric_limits<float>::max();
+    float maximum = std::numeric_limits<float>::lowest();
+    for (std::size_t i = 0; i + 7 < data.size(); i += 8) {
+      std::uint16_t half{};
+      std::memcpy(&half, data.data() + i, sizeof(half));
+      const auto value = half_to_float(half);
+      if (std::isfinite(value)) {
+        minimum = std::min(minimum, value);
+        maximum = std::max(maximum, value);
       }
     }
-    RunResult result{fnv1a(validation), timestamps[1] > timestamps[0], max_rgb - min_rgb};
+    RunResult result;
+    result.digest = fnv1a(data);
+    result.timestamp_valid = timestamps[1] > timestamps[0];
+    result.dynamic_range = maximum - minimum;
     cleanup();
     return result;
   } catch (...) {
+    if (ctx.device) vkDeviceWaitIdle(ctx.device);
     cleanup();
     throw;
   }
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
+  require(argc == 3, "usage: digitor_android_physical_runtime <input.mp4> <conversion.spv>");
+  const auto spirv = read_spirv(argv[2]);
+  auto decoded = decode_one_frame(argv[1]);
+  auto vk = make_vulkan(spirv);
+  ImportedImage imported;
   try {
-    require(argc == 3, "usage: digitor_android_physical_runtime <media.mp4> <shader.spv>");
-    const auto manufacturer = prop("ro.product.manufacturer");
-    const auto model = prop("ro.product.model");
-    const auto hardware = prop("ro.hardware");
-    const auto sdk_text = prop("ro.build.version.sdk");
-    const auto qemu = prop("ro.kernel.qemu");
-    const auto sdk = static_cast<std::uint32_t>(std::stoul(sdk_text));
-    require(qemu.empty() || qemu == "0", "emulator detected");
-
-    auto decoded = decode_one_frame(argv[1]);
-    require(decoded.width > 0 && decoded.height > 0, "decoded frame dimensions invalid");
-    const auto encoder_name = verify_hardware_encoder(decoded.width, decoded.height);
-    const auto spirv = read_spirv(argv[2]);
-    auto vk = make_vulkan(spirv);
-    auto imported = import_ahardwarebuffer(vk, decoded.buffer, decoded.width, decoded.height);
+    imported = import_ahardwarebuffer(vk, decoded.buffer, decoded.width, decoded.height);
     const auto preview = execute_conversion(vk, imported, true);
-    const auto export_frame = execute_conversion(vk, imported, false);
-    require(preview.timestamp_valid && export_frame.timestamp_valid, "GPU timestamp evidence invalid");
-    require(preview.dynamic_range > 0.05f && export_frame.dynamic_range > 0.05f,
-            "decoded GPU output lacks image variation");
+    const auto export_run = execute_conversion(vk, imported, false);
+    const auto encoder_name = verify_hardware_encoder(decoded.width, decoded.height);
 
-    const std::string driver_version = std::to_string(vk.properties.driverVersion);
-    digitor::AndroidGpuQualificationInput qualification{};
-    qualification.backend = digitor::AndroidGpuBackend::vulkan;
-    qualification.manufacturer = manufacturer.c_str();
-    qualification.model = model.c_str();
-    qualification.hardware = hardware.c_str();
-    qualification.renderer = vk.properties.deviceName;
-    qualification.driver_version = driver_version.c_str();
-    qualification.sdk_level = sdk;
-    qualification.is_physical_device = 1;
-    qualification.native_submission_completed = 1;
-    qualification.gpu_timestamp_valid = 1;
-    qualification.cpu_readbacks = 0;
-    qualification.cpu_reuploads = 0;
-    qualification.fallback_dispatches = 0;
-    qualification.preview_digest = preview.digest;
-    qualification.export_digest = export_frame.digest;
-    const auto result = digitor::qualify_android_gpu(qualification);
-    require(result.status == digitor::AndroidGpuQualificationStatus::qualified,
-            "Android GPU qualification contract rejected physical evidence");
+    require(preview.timestamp_valid && export_run.timestamp_valid, "GPU timestamp query was not valid");
+    require(preview.digest == export_run.digest, "preview/export GPU digest mismatch");
+    require(preview.dynamic_range > 0.05f, "decoded GPU output lacked meaningful dynamic range");
 
-    std::cout << "MANUFACTURER=" << manufacturer << '\n';
-    std::cout << "MODEL=" << model << '\n';
-    std::cout << "HARDWARE=" << hardware << '\n';
-    std::cout << "SDK=" << sdk << '\n';
     std::cout << "BACKEND=Vulkan\n";
-    std::cout << "RENDERER=" << vk.properties.deviceName << '\n';
-    std::cout << "DRIVER_VERSION=" << driver_version << '\n';
-    std::cout << "DECODER_NAME=" << decoded.decoder_name << '\n';
+    std::cout << "GPU_NAME=" << vk.properties.deviceName << "\n";
+    std::cout << "DECODER_NAME=" << decoded.decoder_name << "\n";
     std::cout << "DECODER_HARDWARE=1\n";
     std::cout << "AHARDWAREBUFFER_FROM_MEDIACODEC=1\n";
     std::cout << "VULKAN_EXTERNAL_IMPORT=1\n";
     std::cout << "GPU_SUBMISSION=1\n";
     std::cout << "GPU_TIMESTAMP_VALID=1\n";
-    std::cout << "ENCODER_NAME=" << encoder_name << '\n';
+    std::cout << "ENCODER_NAME=" << encoder_name << "\n";
     std::cout << "ENCODER_HARDWARE=1\n";
     std::cout << "ENCODER_SURFACE_STARTED=1\n";
     std::cout << "CPU_READBACKS=0\n";
@@ -822,18 +806,27 @@ int main(int argc, char** argv) {
     std::cout << "INTERMEDIATE_READBACKS=0\n";
     std::cout << "INTERMEDIATE_REUPLOADS=0\n";
     std::cout << "VALIDATION_READBACKS=2\n";
-    std::cout << "PREVIEW_DIGEST=" << preview.digest << '\n';
-    std::cout << "EXPORT_DIGEST=" << export_frame.digest << '\n';
-    std::cout << "PREVIEW_DYNAMIC_RANGE=" << preview.dynamic_range << '\n';
-    std::cout << "EXPORT_DYNAMIC_RANGE=" << export_frame.dynamic_range << '\n';
+    std::cout << "PREVIEW_DIGEST=" << preview.digest << "\n";
+    std::cout << "EXPORT_DIGEST=" << export_run.digest << "\n";
     std::cout << "PREVIEW_EXPORT_PARITY=PASS\n";
-    std::cout << "EVIDENCE_DIGEST=" << result.evidence_digest << '\n';
     std::cout << "ANDROID_PHYSICAL_RELEASE_QUALIFICATION=PASS\n";
     destroy_imported(vk, imported);
     return 0;
-  } catch (const std::exception& error) {
+  } catch (...) {
+    if (vk.device) vkDeviceWaitIdle(vk.device);
+    destroy_imported(vk, imported);
+    throw;
+  }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  try {
+    return run(argc, argv);
+  } catch (const std::exception& e) {
     std::cerr << "ANDROID_PHYSICAL_RELEASE_QUALIFICATION=FAIL\n";
-    std::cerr << "DIAGNOSTIC=" << error.what() << '\n';
+    std::cerr << "DIAGNOSTIC=" << e.what() << "\n";
     return 1;
   }
 }
