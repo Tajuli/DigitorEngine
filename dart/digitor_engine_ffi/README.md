@@ -40,7 +40,7 @@ try {
   final endpoints = graph.endpoints();
   final node = graph.addSerialAfter(endpoints.input, name: 'Grade');
   graph.select(node);
-  graph.addPrimaryWheels(const DigitorPrimaryWheels());
+  graph.addPrimaryWheels(DigitorEngine.identityPrimaryWheels);
 
   print(graph.recipeIdentity());
 } finally {
@@ -48,6 +48,8 @@ try {
   engine.shutdown();
 }
 ```
+
+`DigitorEngine.identityPrimaryWheels` uses the native identity convention: Lift and Offset master values are `0`, while Gamma and Gain master values are `1`.
 
 ## Renderer policy
 
