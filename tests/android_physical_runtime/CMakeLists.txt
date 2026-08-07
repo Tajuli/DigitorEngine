@@ -7,9 +7,12 @@ endif()
 
 # Compile the existing qualification entrypoint under an internal name so the
 # wrapper can deterministically release retained AImageReader objects before
-# process/runtime teardown begins.
+# process/runtime teardown begins. The API<28 compatibility branch of main.cpp
+# cannot call AMediaCodec_getName(), so its codec parameter is intentionally
+# unused there; scope that warning relaxation to this one source file only.
 set_source_files_properties(main.cpp PROPERTIES
-  COMPILE_DEFINITIONS "main=digitor_android_physical_runtime_main")
+  COMPILE_DEFINITIONS "main=digitor_android_physical_runtime_main"
+  COMPILE_OPTIONS "-Wno-unused-parameter")
 
 add_executable(digitor_android_physical_runtime
   qualification_entry.cpp
