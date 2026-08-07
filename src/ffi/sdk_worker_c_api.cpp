@@ -69,6 +69,9 @@ extern "C" int32_t digitor_sdk_worker_start(DigitorSdkWorkerHandle* handle) {
   auto retained = retain(handle);
   if (!retained) return 0;
   try {
+    // Start must serialize with destroy because std::thread construction and
+    // join touch the worker's thread object. Retained shared ownership keeps
+    // the opaque handle alive after the registry lock is released.
     std::scoped_lock lock(retained->api_mutex);
     if (!retained->active || !retained->worker) return 0;
     return retained->worker->start() ? 1 : 0;
@@ -79,10 +82,12 @@ extern "C" int32_t digitor_sdk_worker_start(DigitorSdkWorkerHandle* handle) {
 
 extern "C" int32_t digitor_sdk_worker_cancel(DigitorSdkWorkerHandle* handle) {
   auto retained = retain(handle);
-  if (!retained) return 0;
+  if (!retained || !retained->worker) return 0;
   try {
-    std::scoped_lock lock(retained->api_mutex);
-    if (!retained->active || !retained->worker) return 0;
+    // SdkMediaWorker::cancel() may synchronously deliver the completion
+    // callback. Do not hold api_mutex across user callbacks: a callback is
+    // allowed to re-enter the C API (including destroy) without deadlocking.
+    // The retained shared_ptr guarantees handle/worker lifetime for this call.
     return retained->worker->cancel() ? 1 : 0;
   } catch (...) {
     return 0;
@@ -102,6 +107,8 @@ extern "C" void digitor_sdk_worker_destroy(DigitorSdkWorkerHandle* handle) {
   }
 
   try {
+    // Registry removal makes all new API calls fail retention. The API lock
+    // waits for any in-flight start() to finish before dispose/join begins.
     std::scoped_lock lock(retained->api_mutex);
     if (!retained->active || !retained->worker) return;
     retained->active = false;
