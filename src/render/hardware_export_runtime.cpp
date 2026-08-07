@@ -34,10 +34,49 @@ bool has_encoder(const RuntimeEncoderInventory& inventory, const char* name) noe
 }
 
 void add_capability(std::vector<EncoderCapability>& out, EncoderBackend backend,
-                    std::vector<ExportCodec> codecs, bool ten_bit, bool available) {
-  if (!available) return;
+                    std::vector<ExportCodec> codecs, bool ten_bit) {
+  if (codecs.empty()) return;
   out.push_back({backend, std::move(codecs), 8192, 8192, ten_bit,
                  backend != EncoderBackend::software, true});
+}
+
+std::vector<ExportCodec> nvenc_codecs(const RuntimeEncoderInventory& inventory) {
+  std::vector<ExportCodec> codecs;
+  if (has_encoder(inventory, "h264_nvenc")) codecs.push_back(ExportCodec::h264);
+  if (has_encoder(inventory, "hevc_nvenc")) codecs.push_back(ExportCodec::hevc);
+  if (has_encoder(inventory, "av1_nvenc")) codecs.push_back(ExportCodec::av1);
+  return codecs;
+}
+
+std::vector<ExportCodec> qsv_codecs(const RuntimeEncoderInventory& inventory) {
+  std::vector<ExportCodec> codecs;
+  if (has_encoder(inventory, "h264_qsv")) codecs.push_back(ExportCodec::h264);
+  if (has_encoder(inventory, "hevc_qsv")) codecs.push_back(ExportCodec::hevc);
+  if (has_encoder(inventory, "av1_qsv")) codecs.push_back(ExportCodec::av1);
+  return codecs;
+}
+
+std::vector<ExportCodec> videotoolbox_codecs(const RuntimeEncoderInventory& inventory) {
+  std::vector<ExportCodec> codecs;
+  if (has_encoder(inventory, "h264_videotoolbox")) codecs.push_back(ExportCodec::h264);
+  if (has_encoder(inventory, "hevc_videotoolbox")) codecs.push_back(ExportCodec::hevc);
+  return codecs;
+}
+
+std::vector<ExportCodec> mediacodec_codecs(const RuntimeEncoderInventory& inventory) {
+  std::vector<ExportCodec> codecs;
+  if (has_encoder(inventory, "h264_mediacodec")) codecs.push_back(ExportCodec::h264);
+  if (has_encoder(inventory, "hevc_mediacodec")) codecs.push_back(ExportCodec::hevc);
+  return codecs;
+}
+
+std::vector<ExportCodec> software_codecs(const RuntimeEncoderInventory& inventory) {
+  std::vector<ExportCodec> codecs;
+  if (has_encoder(inventory, "libx264")) codecs.push_back(ExportCodec::h264);
+  if (has_encoder(inventory, "libx265")) codecs.push_back(ExportCodec::hevc);
+  if (has_encoder(inventory, "libaom-av1")) codecs.push_back(ExportCodec::av1);
+  if (has_encoder(inventory, "prores_ks")) codecs.push_back(ExportCodec::prores);
+  return codecs;
 }
 
 }  // namespace
@@ -74,21 +113,11 @@ std::vector<EncoderCapability> capabilities_from_inventory(
     const RuntimeEncoderInventory& inventory) noexcept {
   std::vector<EncoderCapability> result;
   if (!inventory.ffmpeg_available) return result;
-  add_capability(result, EncoderBackend::nvenc, {ExportCodec::h264, ExportCodec::hevc, ExportCodec::av1},
-                 true, has_encoder(inventory, "h264_nvenc") || has_encoder(inventory, "hevc_nvenc") ||
-                           has_encoder(inventory, "av1_nvenc"));
-  add_capability(result, EncoderBackend::quick_sync,
-                 {ExportCodec::h264, ExportCodec::hevc, ExportCodec::av1}, true,
-                 has_encoder(inventory, "h264_qsv") || has_encoder(inventory, "hevc_qsv") ||
-                     has_encoder(inventory, "av1_qsv"));
-  add_capability(result, EncoderBackend::video_toolbox, {ExportCodec::h264, ExportCodec::hevc}, true,
-                 has_encoder(inventory, "h264_videotoolbox") || has_encoder(inventory, "hevc_videotoolbox"));
-  add_capability(result, EncoderBackend::media_codec, {ExportCodec::h264, ExportCodec::hevc}, true,
-                 has_encoder(inventory, "h264_mediacodec") || has_encoder(inventory, "hevc_mediacodec"));
-  add_capability(result, EncoderBackend::software,
-                 {ExportCodec::h264, ExportCodec::hevc, ExportCodec::av1, ExportCodec::prores}, true,
-                 has_encoder(inventory, "libx264") || has_encoder(inventory, "libx265") ||
-                     has_encoder(inventory, "libaom-av1") || has_encoder(inventory, "prores_ks"));
+  add_capability(result, EncoderBackend::nvenc, nvenc_codecs(inventory), true);
+  add_capability(result, EncoderBackend::quick_sync, qsv_codecs(inventory), true);
+  add_capability(result, EncoderBackend::video_toolbox, videotoolbox_codecs(inventory), true);
+  add_capability(result, EncoderBackend::media_codec, mediacodec_codecs(inventory), true);
+  add_capability(result, EncoderBackend::software, software_codecs(inventory), true);
   return result;
 }
 

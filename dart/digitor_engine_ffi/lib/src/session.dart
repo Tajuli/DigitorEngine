@@ -173,8 +173,7 @@ final class DigitorTimelineSession {
     try {
       _check('getStatus', _bindings.getStatus(_handle, value));
       final s = value.ref;
-      final state =
-          s.playbackState >= 0 &&
+      final state = s.playbackState >= 0 &&
               s.playbackState < DigitorPlaybackState.values.length
           ? DigitorPlaybackState.values[s.playbackState]
           : DigitorPlaybackState.stopped;

@@ -6,6 +6,8 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 struct DigitorGpuImageSession {
     std::mutex mutex;
@@ -29,6 +31,20 @@ struct DigitorGpuImageSession {
 namespace {
 
 constexpr uint32_t kDiagnosticCapacity = 512;
+constexpr const char* kRetiredDiagnostic = "GPU image session handle is retired";
+std::mutex g_session_registry_mutex;
+std::unordered_set<DigitorGpuImageSession*> g_sessions;
+std::unordered_map<DigitorGpuImageSession*, std::string> g_retired_sessions;
+
+bool registered_session(const DigitorGpuImageSession* session) noexcept {
+    return session != nullptr &&
+           g_sessions.contains(const_cast<DigitorGpuImageSession*>(session));
+}
+
+bool retired_session(const DigitorGpuImageSession* session) noexcept {
+    return session != nullptr &&
+           g_retired_sessions.contains(const_cast<DigitorGpuImageSession*>(session));
+}
 
 bool valid_gpu_descriptor(const DigitorNativeGpuTextureDescriptor& value,
                           const DigitorGpuImageSessionHost& host) noexcept {
@@ -72,7 +88,7 @@ DigitorResult fail(DigitorGpuImageSession* session, DigitorResult result,
 DigitorResult validate_session(DigitorGpuImageSession* session) noexcept {
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     if (!session->active) {
-        session->last_error = "GPU image session handle is retired";
+        session->last_error = kRetiredDiagnostic;
         return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
     return DIGITOR_RESULT_OK;
@@ -172,6 +188,16 @@ DigitorResult digitor_gpu_image_session_create(
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         }
         session->has_source = true;
+        auto* handle = session.get();
+        {
+            std::lock_guard registry_lock(g_session_registry_mutex);
+            g_retired_sessions.erase(handle);
+            if (!g_sessions.insert(handle).second) {
+                release_texture(*session, session->source);
+                session->has_source = false;
+                return DIGITOR_RESULT_INTERNAL_ERROR;
+            }
+        }
         *out_session = session.release();
         return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
@@ -184,16 +210,22 @@ DigitorResult digitor_gpu_image_session_create(
 DigitorResult digitor_gpu_image_session_destroy(DigitorGpuImageSession* session) {
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
-        std::lock_guard lock(session->mutex);
-        if (!session->active) return DIGITOR_RESULT_RESOURCE_IN_USE;
-        invalidate_cache(*session);
-        if (session->has_source) release_texture(*session, session->source);
-        session->has_source = false;
-        session->active = false;
-        session->last_error = "GPU image session handle is retired";
-        /* Keep the small tombstone allocation alive so stale and double-destroy
-         * handles are rejected deterministically instead of dereferencing freed
-         * memory across the C/FFI boundary. */
+        std::unique_lock registry_lock(g_session_registry_mutex);
+        if (!registered_session(session)) {
+            return retired_session(session) ? DIGITOR_RESULT_RESOURCE_IN_USE
+                                            : DIGITOR_RESULT_RESOURCE_IN_USE;
+        }
+        {
+            std::lock_guard session_lock(session->mutex);
+            if (!session->active) return DIGITOR_RESULT_RESOURCE_IN_USE;
+            invalidate_cache(*session);
+            if (session->has_source) release_texture(*session, session->source);
+            session->has_source = false;
+            session->active = false;
+            g_sessions.erase(session);
+            g_retired_sessions[session] = kRetiredDiagnostic;
+        }
+        delete session;
         return DIGITOR_RESULT_OK;
     } catch (...) {
         return DIGITOR_RESULT_INTERNAL_ERROR;
@@ -204,7 +236,9 @@ DigitorResult digitor_gpu_image_session_set_graph_revision(
     DigitorGpuImageSession* session, uint64_t revision) {
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
-        std::lock_guard lock(session->mutex);
+        std::lock_guard registry_lock(g_session_registry_mutex);
+        if (!registered_session(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
         const auto valid = validate_session(session);
         if (valid != DIGITOR_RESULT_OK) return valid;
         session->graph_revision = revision;
@@ -218,7 +252,9 @@ DigitorResult digitor_gpu_image_session_set_parameter_revision(
     DigitorGpuImageSession* session, uint64_t revision) {
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
-        std::lock_guard lock(session->mutex);
+        std::lock_guard registry_lock(g_session_registry_mutex);
+        if (!registered_session(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
         const auto valid = validate_session(session);
         if (valid != DIGITOR_RESULT_OK) return valid;
         session->parameter_revision = revision;
@@ -234,16 +270,17 @@ DigitorResult digitor_gpu_image_session_render(
     DigitorNativeGpuTextureDescriptor* out_texture) {
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
-        std::lock_guard lock(session->mutex);
+        std::lock_guard registry_lock(g_session_registry_mutex);
+        if (!registered_session(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
         const auto valid = validate_session(session);
         if (valid != DIGITOR_RESULT_OK) return valid;
         return render_locked(*session, mode, width, height, timestamp_us,
                              out_texture);
     } catch (const std::bad_alloc&) {
-        return fail(session, DIGITOR_RESULT_OUT_OF_MEMORY, "out of memory");
+        return DIGITOR_RESULT_OUT_OF_MEMORY;
     } catch (...) {
-        return fail(session, DIGITOR_RESULT_INTERNAL_ERROR,
-                    "unexpected exception at GPU image C boundary");
+        return DIGITOR_RESULT_INTERNAL_ERROR;
     }
 }
 
@@ -257,7 +294,9 @@ DigitorResult digitor_gpu_image_session_export(
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(session->mutex);
+        std::lock_guard registry_lock(g_session_registry_mutex);
+        if (!registered_session(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
         const auto valid = validate_session(session);
         if (valid != DIGITOR_RESULT_OK) return valid;
         DigitorNativeGpuTextureDescriptor output{};
@@ -275,10 +314,9 @@ DigitorResult digitor_gpu_image_session_export(
         session->last_error.clear();
         return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
-        return fail(session, DIGITOR_RESULT_OUT_OF_MEMORY, "out of memory");
+        return DIGITOR_RESULT_OUT_OF_MEMORY;
     } catch (...) {
-        return fail(session, DIGITOR_RESULT_INTERNAL_ERROR,
-                    "unexpected exception at GPU image export boundary");
+        return DIGITOR_RESULT_INTERNAL_ERROR;
     }
 }
 
@@ -286,8 +324,18 @@ DigitorResult digitor_gpu_image_session_get_last_error(
     DigitorGpuImageSession* session, char* buffer, uint32_t* inout_size) {
     if (!session || !inout_size) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
-        std::lock_guard lock(session->mutex);
-        const auto required = static_cast<uint32_t>(session->last_error.size() + 1);
+        std::lock_guard registry_lock(g_session_registry_mutex);
+        const std::string* diagnostic = nullptr;
+        std::unique_lock<std::mutex> session_lock;
+        if (registered_session(session)) {
+            session_lock = std::unique_lock<std::mutex>(session->mutex);
+            diagnostic = &session->last_error;
+        } else {
+            const auto retired = g_retired_sessions.find(session);
+            if (retired == g_retired_sessions.end()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+            diagnostic = &retired->second;
+        }
+        const auto required = static_cast<uint32_t>(diagnostic->size() + 1);
         if (!buffer) {
             *inout_size = required;
             return DIGITOR_RESULT_OK;
@@ -296,7 +344,7 @@ DigitorResult digitor_gpu_image_session_get_last_error(
             *inout_size = required;
             return DIGITOR_RESULT_INVALID_ARGUMENT;
         }
-        std::memcpy(buffer, session->last_error.c_str(), required);
+        std::memcpy(buffer, diagnostic->c_str(), required);
         *inout_size = required;
         return DIGITOR_RESULT_OK;
     } catch (...) {

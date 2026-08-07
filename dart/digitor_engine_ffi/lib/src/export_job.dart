@@ -5,7 +5,14 @@ import 'package:ffi/ffi.dart';
 
 import 'library_loader.dart';
 
-enum DigitorExportJobState { idle, running, paused, completed, cancelled, failed }
+enum DigitorExportJobState {
+  idle,
+  running,
+  paused,
+  completed,
+  cancelled,
+  failed
+}
 
 final class DigitorExportJobConfig {
   const DigitorExportJobConfig({
@@ -147,7 +154,7 @@ final class DigitorExportJob {
     DynamicLibrary? library,
     String? libraryPath,
   }) : _library =
-           library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
+            library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
     _bind();
     final native = calloc<_NativeConfig>();
     final strings = <Pointer<Utf8>>[

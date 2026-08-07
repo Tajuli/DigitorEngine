@@ -67,6 +67,7 @@ jobs:
       - name: Configure
         run: >-
           cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
           -DDIGITOR_BUILD_TESTS=ON
           -DDIGITOR_BUILD_EXAMPLES=OFF
           -DDIGITOR_ENABLE_FFMPEG=OFF

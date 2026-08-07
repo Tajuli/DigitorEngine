@@ -9,7 +9,8 @@ final class DigitorSdkSessionNative extends Opaque {}
 
 typedef _CompletionNative = Void Function(Int32, Pointer<Void>);
 typedef _ProgressNative = Void Function(Double, Int64, Int64, Pointer<Void>);
-typedef _CreateNative = Int32 Function(Pointer<Pointer<DigitorSdkSessionNative>>);
+typedef _CreateNative = Int32 Function(
+    Pointer<Pointer<DigitorSdkSessionNative>>);
 typedef _CreateDart = int Function(Pointer<Pointer<DigitorSdkSessionNative>>);
 typedef _DestroyNative = Int32 Function(Pointer<DigitorSdkSessionNative>);
 typedef _DestroyDart = int Function(Pointer<DigitorSdkSessionNative>);

@@ -17,6 +17,17 @@ NativeMediaSurfacePtr surface(NativeMediaHandleType handle = NativeMediaHandleTy
   return std::make_shared<NativeMediaSurface>(d,
       std::static_pointer_cast<void>(std::make_shared<int>(7)));
 }
+
+ProcessedGpuFramePtr make_frame(const ZeroCopyImportRequest& request,
+                                DigitorRendererBackend backend) {
+  static int mock_context;
+  const auto& d = request.surface->descriptor();
+  GpuFrameMetadata metadata{d.width, d.height, DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,
+                            GpuFrameAlpha::straight, d.timestamp_us, "linear-rgba"};
+  return std::make_shared<ProcessedGpuFrame>(
+      &mock_context, backend, metadata, 77, request.surface,
+      std::make_shared<std::atomic_bool>(true), false);
+}
 }
 
 int main() {
@@ -41,8 +52,17 @@ int main() {
 
   NativeSurfaceImportTarget vk{}; vk.backend = DIGITOR_RENDERER_VULKAN;
   r = import_native_media_surface(surface(), vk);
-  assert(r.failure == NativeSurfaceImportFailure::backend_mismatch);
+  assert(r.failure == NativeSurfaceImportFailure::backend_unavailable);
   assert(r.diagnostic.find("Vulkan") != std::string::npos);
+
+  vk.windows_vulkan = [](const ZeroCopyImportRequest& request,
+                         ProcessedGpuFramePtr& frame) {
+    frame = make_frame(request, DIGITOR_RENDERER_VULKAN);
+    return DIGITOR_RESULT_OK;
+  };
+  r = import_native_media_surface(surface(), vk);
+  assert(r && r.frame->backend() == DIGITOR_RENDERER_VULKAN);
+  assert(r.frame->metadata().timestamp == 42000);
 
   // Strict import cannot fall through to CPU: an absent production importer is
   // a structured failure and never a placeholder ProcessedGpuFrame.
@@ -54,12 +74,7 @@ int main() {
   NativeSurfaceImportTarget android{}; android.backend = DIGITOR_RENDERER_VULKAN;
   android.android = [](const ZeroCopyImportRequest& request,
                        ProcessedGpuFramePtr& frame) {
-    static int mock_context;
-    const auto& d=request.surface->descriptor();
-    GpuFrameMetadata metadata{d.width,d.height,DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,
-                              GpuFrameAlpha::straight,d.timestamp_us,"linear-rgba"};
-    frame=std::make_shared<ProcessedGpuFrame>(&mock_context,DIGITOR_RENDERER_VULKAN,
-        metadata,77,request.surface,std::make_shared<std::atomic_bool>(true),false);
+    frame = make_frame(request, DIGITOR_RENDERER_VULKAN);
     return DIGITOR_RESULT_OK;
   };
   r=import_native_media_surface(surface(NativeMediaHandleType::ahardware_buffer,

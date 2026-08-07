@@ -1,10 +1,27 @@
 #include "digitor/hardware_export_runtime.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 
 using namespace digitor;
+
+namespace {
+const EncoderCapability* find_capability(const std::vector<EncoderCapability>& capabilities,
+                                         EncoderBackend backend) {
+  const auto it = std::find_if(capabilities.begin(), capabilities.end(),
+                               [backend](const EncoderCapability& capability) {
+                                 return capability.backend == backend;
+                               });
+  return it == capabilities.end() ? nullptr : &*it;
+}
+
+bool supports(const EncoderCapability& capability, ExportCodec codec) {
+  return std::find(capability.codecs.begin(), capability.codecs.end(), codec) !=
+         capability.codecs.end();
+}
+}  // namespace
 
 int main() {
   const auto root = std::filesystem::temp_directory_path() / "digitor_hw_export_test";
@@ -25,6 +42,21 @@ int main() {
   assert(inventory.encoder_names.size() == 4);
   const auto capabilities = capabilities_from_inventory(inventory);
   assert(capabilities.size() == 3);
+
+  const auto* nvenc = find_capability(capabilities, EncoderBackend::nvenc);
+  const auto* qsv = find_capability(capabilities, EncoderBackend::quick_sync);
+  const auto* software = find_capability(capabilities, EncoderBackend::software);
+  assert(nvenc && qsv && software);
+  assert(supports(*nvenc, ExportCodec::h264));
+  assert(!supports(*nvenc, ExportCodec::hevc));
+  assert(!supports(*nvenc, ExportCodec::av1));
+  assert(!supports(*qsv, ExportCodec::h264));
+  assert(supports(*qsv, ExportCodec::hevc));
+  assert(!supports(*qsv, ExportCodec::av1));
+  assert(supports(*software, ExportCodec::h264));
+  assert(supports(*software, ExportCodec::hevc));
+  assert(!supports(*software, ExportCodec::av1));
+  assert(!supports(*software, ExportCodec::prores));
 
   int attempts = 0;
   ProcessExecutor process = [&attempts](const std::vector<std::string>& args) {

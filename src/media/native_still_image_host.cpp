@@ -20,11 +20,11 @@ bool limits_valid(const NativeStillImageLimits& limits) noexcept {
          limits.tile_height <= limits.max_dimension;
 }
 
-bool cancelled(const NativeStillImageProgress& progress) noexcept {
+bool host_cancelled(const NativeStillImageProgress& progress) noexcept {
   return progress.cancelled && progress.cancelled->load();
 }
 
-void report(const NativeStillImageProgress& progress, float value) {
+void host_report(const NativeStillImageProgress& progress, float value) {
   if (progress.report) progress.report(value);
 }
 
@@ -81,11 +81,11 @@ NativeStillImageHostResult make_native_still_image_host(
       [state](const std::string& path, std::int64_t timestamp,
               std::string& diagnostic)
           -> std::optional<ProcessedGpuFramePtr> {
-    if (cancelled(state->config.progress)) {
+    if (host_cancelled(state->config.progress)) {
       diagnostic = "still-image decode cancelled";
       return std::nullopt;
     }
-    report(state->config.progress, 0.02F);
+    host_report(state->config.progress, 0.02F);
     NativeStillImageInfo info;
     ProcessedGpuFramePtr frame;
     const auto decode_result =
@@ -110,7 +110,7 @@ NativeStillImageHostResult make_native_still_image_host(
       std::lock_guard lock(state->mutex);
       state->info = std::move(info);
     }
-    report(state->config.progress, 0.20F);
+    host_report(state->config.progress, 0.20F);
     return frame;
   };
 
@@ -119,7 +119,7 @@ NativeStillImageHostResult make_native_still_image_host(
               std::uint32_t height, std::int64_t timestamp,
               ProcessedGpuFramePtr& output, std::string& diagnostic) {
     output.reset();
-    if (cancelled(state->config.progress)) {
+    if (host_cancelled(state->config.progress)) {
       diagnostic = "still-image resize cancelled";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
@@ -131,7 +131,7 @@ NativeStillImageHostResult make_native_still_image_host(
     }
     const auto resize_result = state->config.services.resize_gpu(
         source, width, height, timestamp, output, diagnostic);
-    if (resize_result == DIGITOR_RESULT_OK) report(state->config.progress, 0.35F);
+    if (resize_result == DIGITOR_RESULT_OK) host_report(state->config.progress, 0.35F);
     return resize_result;
   };
 
@@ -139,14 +139,14 @@ NativeStillImageHostResult make_native_still_image_host(
       [state](const GpuImageSessionProcessRequest& request,
               ProcessedGpuFramePtr& output, std::string& diagnostic) {
     output.reset();
-    if (cancelled(state->config.progress)) {
+    if (host_cancelled(state->config.progress)) {
       diagnostic = "still-image processing cancelled";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
     const auto process_result =
         state->config.services.process_graph(request, output, diagnostic);
     if (process_result == DIGITOR_RESULT_OK) {
-      report(state->config.progress,
+      host_report(state->config.progress,
              request.mode == GpuImageSessionRenderMode::preview ? 1.0F : 0.80F);
     }
     return process_result;
@@ -155,7 +155,7 @@ NativeStillImageHostResult make_native_still_image_host(
   result.host.image_io.encode_image =
       [state](const ProcessedGpuFramePtr& frame, const std::string& output_path,
               const ImageExportOptions& options) {
-    if (cancelled(state->config.progress)) {
+    if (host_cancelled(state->config.progress)) {
       return ImageIoResult{DIGITOR_RESULT_RESOURCE_IN_USE,
                            "still-image export cancelled"};
     }
@@ -170,10 +170,10 @@ NativeStillImageHostResult make_native_still_image_host(
           DIGITOR_RESULT_INVALID_ARGUMENT,
           "JPEG export cannot preserve alpha; choose a flatten policy first"};
     }
-    report(state->config.progress, 0.85F);
+    host_report(state->config.progress, 0.85F);
     auto encode_result = state->config.services.encode_from_gpu(
         frame, output_path, options, info, state->config.progress);
-    if (encode_result) report(state->config.progress, 1.0F);
+    if (encode_result) host_report(state->config.progress, 1.0F);
     return encode_result;
   };
 

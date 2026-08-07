@@ -294,9 +294,13 @@ std::vector<GpuFailurePoint> validation_failure_points(
     DigitorRendererBackend backend) {
   using F = GpuFailurePoint;
   switch (backend) {
+    case DIGITOR_RENDERER_METAL:
+      // Metal shared buffers expose CPU-visible memory through MTLBuffer.contents;
+      // there is no explicit map operation. Qualify the actual failure boundary
+      // immediately before the CPU-visible validation copy instead.
+      return {F::ValidationCpuCopy};
     case DIGITOR_RENDERER_VULKAN:
     case DIGITOR_RENDERER_D3D12:
-    case DIGITOR_RENDERER_METAL:
     case DIGITOR_RENDERER_OPENGL_ES:
       return {F::ValidationReadbackMap};
     default:

@@ -1,5 +1,6 @@
 #include "core/render_context.hpp"
 
+#include <cstring>
 #include <limits>
 #include <new>
 
@@ -24,8 +25,16 @@ DigitorResult RenderContext::create_texture(const DigitorTextureDesc& desc, Text
         (desc.usage & ~kTextureUsageMask) != 0) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
+
+    // The public C ABI can receive arbitrary bytes from foreign callers. Reading
+    // an out-of-range C enum directly is undefined behaviour under UBSan, so
+    // validate its object representation before any typed enum access occurs.
+    static_assert(sizeof(DigitorPixelFormat) <= sizeof(uint32_t));
+    uint32_t raw_format = 0;
+    std::memcpy(&raw_format, &desc.format, sizeof(DigitorPixelFormat));
+
     std::size_t bytes_per_pixel = 0;
-    switch (desc.format) {
+    switch (raw_format) {
         case DIGITOR_PIXEL_FORMAT_RGBA8_UNORM:
         case DIGITOR_PIXEL_FORMAT_BGRA8_UNORM: bytes_per_pixel = 4; break;
         case DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT: bytes_per_pixel = 8; break;

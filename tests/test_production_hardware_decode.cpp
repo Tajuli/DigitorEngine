@@ -1,3 +1,4 @@
+#include "digitor/hardware_media_end_to_end.hpp"
 #include "digitor/production_hardware_decode.hpp"
 
 #include <atomic>
@@ -100,5 +101,61 @@ int main() {
     assert(import_failure.decode(0, frame, &diagnostic) == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
 
     assert(session.seek(1000000, &diagnostic) == DIGITOR_RESULT_OK);
+
+    ProductionHardwareDecodeSession e2e_decoder(
+        std::make_unique<FakeDecoder>(),
+        [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
+            output = make_gpu_frame(request.surface->descriptor().timestamp_us);
+            return DIGITOR_RESULT_OK;
+        }, options);
+
+    HardwareEncodeConfig encode_config{};
+    encode_config.backend = EncoderBackend::nvenc;
+    encode_config.output_path = "qualified-output.mp4";
+    encode_config.duration_us = 66666;
+    encode_config.profile.width = 1920;
+    encode_config.profile.height = 1080;
+    encode_config.profile.fps_num = 30;
+    encode_config.profile.fps_den = 1;
+    encode_config.profile.codec = ExportCodec::h264;
+
+    std::uint64_t submitted = 0;
+    HardwareEncoderCallbacks callbacks{};
+    callbacks.open = [](const HardwareEncodeConfig&, std::string&) {
+        return DIGITOR_RESULT_OK;
+    };
+    callbacks.submit_gpu_frame = [&](const HardwareEncodeFrame& input, std::string&) {
+        assert(input.frame && input.frame->backend() == DIGITOR_RENDERER_D3D12);
+        ++submitted;
+        return DIGITOR_RESULT_OK;
+    };
+    callbacks.drain = [](std::string&) { return DIGITOR_RESULT_OK; };
+    callbacks.finalize_atomic = [](std::string&) { return DIGITOR_RESULT_OK; };
+    callbacks.cancel = [] {};
+
+    ProductionHardwareEncodeSession e2e_encoder(encode_config, callbacks);
+    HardwareMediaEndToEndSession e2e(
+        e2e_decoder, e2e_encoder,
+        [](const ProductionDecodedFrame& decoded, ProcessedGpuFramePtr& output,
+           std::string&) {
+            output = make_gpu_frame(decoded.pts);
+            return DIGITOR_RESULT_OK;
+        });
+    assert(e2e.start(&diagnostic) == DIGITOR_RESULT_OK);
+    assert(e2e.process_frame(0, true, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(e2e.process_frame(1, false, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(e2e.finish(&diagnostic) == DIGITOR_RESULT_OK);
+    assert(submitted == 2);
+    const auto& e2e_q = e2e.qualification();
+    assert(e2e_q.passed());
+    assert(e2e_q.decoded_frames == 2);
+    assert(e2e_q.processed_frames == 2);
+    assert(e2e_q.encoded_frames == 2);
+    assert(e2e_q.native_decoder_surface_retained);
+    assert(e2e_q.decode_zero_copy);
+    assert(e2e_q.renderer_backend_continuity);
+    assert(e2e_q.timestamp_parity);
+    assert(e2e_q.encode_zero_copy);
+
     return 0;
 }
