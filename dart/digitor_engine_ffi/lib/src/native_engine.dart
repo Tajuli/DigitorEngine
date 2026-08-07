@@ -103,7 +103,8 @@ typedef _InitializeNative = Int32 Function(Pointer<_DigitorEngineConfigNative>);
 typedef _InitializeDart = int Function(Pointer<_DigitorEngineConfigNative>);
 typedef _ShutdownNative = Int32 Function();
 typedef _ShutdownDart = int Function();
-typedef _RendererInfoNative = Int32 Function(Pointer<_DigitorRendererInfoNative>);
+typedef _RendererInfoNative = Int32 Function(
+    Pointer<_DigitorRendererInfoNative>);
 typedef _RendererInfoDart = int Function(Pointer<_DigitorRendererInfoNative>);
 
 /// Process-wide DigitorEngine lifecycle adapter.
@@ -117,7 +118,8 @@ final class DigitorNativeEngine {
       : _version = library.lookupFunction<_VersionNative, _VersionDart>(
           'digitor_get_version',
         ),
-        _initialize = library.lookupFunction<_InitializeNative, _InitializeDart>(
+        _initialize =
+            library.lookupFunction<_InitializeNative, _InitializeDart>(
           'digitor_initialize',
         ),
         _shutdown = library.lookupFunction<_ShutdownNative, _ShutdownDart>(
@@ -128,7 +130,8 @@ final class DigitorNativeEngine {
           'digitor_get_renderer_info',
         );
 
-  factory DigitorNativeEngine.open({String? libraryPath}) => DigitorNativeEngine._(
+  factory DigitorNativeEngine.open({String? libraryPath}) =>
+      DigitorNativeEngine._(
         DigitorLibraryLoader.open(overridePath: libraryPath),
       );
 
@@ -142,7 +145,8 @@ final class DigitorNativeEngine {
   String get version => _version().toDartString();
 
   DigitorRendererInformation initialize({
-    DigitorEngineConfiguration configuration = const DigitorEngineConfiguration(),
+    DigitorEngineConfiguration configuration =
+        const DigitorEngineConfiguration(),
   }) {
     if (_initialized) return rendererInformation();
 

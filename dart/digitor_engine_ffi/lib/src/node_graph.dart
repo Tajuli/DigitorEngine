@@ -15,7 +15,10 @@ final class DigitorNodePosition {
 
 final class DigitorRgbValue {
   const DigitorRgbValue(this.r, this.g, this.b);
-  const DigitorRgbValue.identity() : r = 0, g = 0, b = 0;
+  const DigitorRgbValue.identity()
+      : r = 0,
+        g = 0,
+        b = 0;
   final double r;
   final double g;
   final double b;
@@ -375,27 +378,35 @@ typedef _GraphCreateN = Int32 Function(Pointer<Pointer<Void>>);
 typedef _GraphCreateD = int Function(Pointer<Pointer<Void>>);
 typedef _GraphDestroyN = Int32 Function(Pointer<Void>);
 typedef _GraphDestroyD = int Function(Pointer<Void>);
-typedef _GetEndpointsN = Int32 Function(Pointer<Void>, Pointer<Uint64>, Pointer<Uint64>);
-typedef _GetEndpointsD = int Function(Pointer<Void>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _GetEndpointsN = Int32 Function(
+    Pointer<Void>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _GetEndpointsD = int Function(
+    Pointer<Void>, Pointer<Uint64>, Pointer<Uint64>);
 typedef _NodeN = Int32 Function(Pointer<Void>, Uint64);
 typedef _NodeD = int Function(Pointer<Void>, int);
 typedef _NodeBoolN = Int32 Function(Pointer<Void>, Uint64, Uint8);
 typedef _NodeBoolD = int Function(Pointer<Void>, int, int);
 typedef _PositionN = Int32 Function(Pointer<Void>, Uint64, _NativeNodePosition);
 typedef _PositionD = int Function(Pointer<Void>, int, _NativeNodePosition);
-typedef _AddSerialN = Int32 Function(Pointer<Void>, Uint64, Pointer<Utf8>, Pointer<Uint64>);
-typedef _AddSerialD = int Function(Pointer<Void>, int, Pointer<Utf8>, Pointer<Uint64>);
-typedef _AddParallelN = Int32 Function(Pointer<Void>, Uint64, Pointer<Utf8>, Pointer<Utf8>, Pointer<Uint64>, Pointer<Uint64>);
-typedef _AddParallelD = int Function(Pointer<Void>, int, Pointer<Utf8>, Pointer<Utf8>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _AddSerialN = Int32 Function(
+    Pointer<Void>, Uint64, Pointer<Utf8>, Pointer<Uint64>);
+typedef _AddSerialD = int Function(
+    Pointer<Void>, int, Pointer<Utf8>, Pointer<Uint64>);
+typedef _AddParallelN = Int32 Function(Pointer<Void>, Uint64, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Uint64>, Pointer<Uint64>);
+typedef _AddParallelD = int Function(Pointer<Void>, int, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Uint64>, Pointer<Uint64>);
 typedef _ConnectN = Int32 Function(Pointer<Void>, Uint64, Uint64);
 typedef _ConnectD = int Function(Pointer<Void>, int, int);
-typedef _PrimaryN = Int32 Function(Pointer<Void>, Pointer<_NativePrimaryWheels>);
+typedef _PrimaryN = Int32 Function(
+    Pointer<Void>, Pointer<_NativePrimaryWheels>);
 typedef _PrimaryD = int Function(Pointer<Void>, Pointer<_NativePrimaryWheels>);
 typedef _LogN = Int32 Function(Pointer<Void>, Pointer<_NativeLogWheels>);
 typedef _LogD = int Function(Pointer<Void>, Pointer<_NativeLogWheels>);
 typedef _CurvesN = Int32 Function(Pointer<Void>, Pointer<_NativeRgbCurves>);
 typedef _CurvesD = int Function(Pointer<Void>, Pointer<_NativeRgbCurves>);
-typedef _QualifierN = Int32 Function(Pointer<Void>, Pointer<_NativeHslQualifier>);
+typedef _QualifierN = Int32 Function(
+    Pointer<Void>, Pointer<_NativeHslQualifier>);
 typedef _QualifierD = int Function(Pointer<Void>, Pointer<_NativeHslQualifier>);
 typedef _Lut1dN = Int32 Function(Pointer<Void>, Pointer<_NativeLut1d>);
 typedef _Lut1dD = int Function(Pointer<Void>, Pointer<_NativeLut1d>);
@@ -405,48 +416,74 @@ typedef _EffectN = Int32 Function(Pointer<Void>, Pointer<_NativeEffect>);
 typedef _EffectD = int Function(Pointer<Void>, Pointer<_NativeEffect>);
 typedef _WindowN = Int32 Function(Pointer<Void>, Pointer<_NativePowerWindow>);
 typedef _WindowD = int Function(Pointer<Void>, Pointer<_NativePowerWindow>);
-typedef _TextN = Int32 Function(Pointer<Void>, Pointer<Char>, Uint64, Pointer<Uint64>);
-typedef _TextD = int Function(Pointer<Void>, Pointer<Char>, int, Pointer<Uint64>);
+typedef _TextN = Int32 Function(
+    Pointer<Void>, Pointer<Char>, Uint64, Pointer<Uint64>);
+typedef _TextD = int Function(
+    Pointer<Void>, Pointer<Char>, int, Pointer<Uint64>);
 
 final class DigitorNativeNodeGraph {
-  DigitorNativeNodeGraph._(this._library, this._handle)
-      : _destroy = _library.lookupFunction<_GraphDestroyN, _GraphDestroyD>('digitor_node_graph_destroy'),
-        _getEndpoints = _library.lookupFunction<_GetEndpointsN, _GetEndpointsD>('digitor_node_graph_get_endpoints'),
-        _select = _library.lookupFunction<_NodeN, _NodeD>('digitor_node_graph_select'),
-        _addSerial = _library.lookupFunction<_AddSerialN, _AddSerialD>('digitor_node_graph_add_serial_after'),
-        _addParallel = _library.lookupFunction<_AddParallelN, _AddParallelD>('digitor_node_graph_add_parallel_after'),
-        _remove = _library.lookupFunction<_NodeN, _NodeD>('digitor_node_graph_remove'),
-        _connect = _library.lookupFunction<_ConnectN, _ConnectD>('digitor_node_graph_connect'),
-        _disconnect = _library.lookupFunction<_ConnectN, _ConnectD>('digitor_node_graph_disconnect'),
-        _position = _library.lookupFunction<_PositionN, _PositionD>('digitor_node_graph_set_position'),
-        _enabled = _library.lookupFunction<_NodeBoolN, _NodeBoolD>('digitor_node_graph_set_enabled'),
-        _bypassed = _library.lookupFunction<_NodeBoolN, _NodeBoolD>('digitor_node_graph_set_bypassed'),
-        _clear = _library.lookupFunction<_NodeN, _NodeD>('digitor_node_graph_clear_operations'),
-        _primary = _library.lookupFunction<_PrimaryN, _PrimaryD>('digitor_node_graph_add_primary_wheels'),
-        _log = _library.lookupFunction<_LogN, _LogD>('digitor_node_graph_add_log_wheels'),
-        _curves = _library.lookupFunction<_CurvesN, _CurvesD>('digitor_node_graph_add_rgb_curves'),
-        _qualifier = _library.lookupFunction<_QualifierN, _QualifierD>('digitor_node_graph_add_hsl_qualifier'),
-        _lut1d = _library.lookupFunction<_Lut1dN, _Lut1dD>('digitor_node_graph_add_lut1d'),
-        _lut3d = _library.lookupFunction<_Lut3dN, _Lut3dD>('digitor_node_graph_add_lut3d'),
-        _effect = _library.lookupFunction<_EffectN, _EffectD>('digitor_node_graph_add_effect'),
-        _window = _library.lookupFunction<_WindowN, _WindowD>('digitor_node_graph_add_power_window'),
-        _identity = _library.lookupFunction<_TextN, _TextD>('digitor_node_graph_recipe_identity'),
-        _json = _library.lookupFunction<_TextN, _TextD>('digitor_node_graph_to_json');
+  DigitorNativeNodeGraph._(DynamicLibrary library, this._handle)
+      : _destroy = library.lookupFunction<_GraphDestroyN, _GraphDestroyD>(
+            'digitor_node_graph_destroy'),
+        _getEndpoints = library.lookupFunction<_GetEndpointsN, _GetEndpointsD>(
+            'digitor_node_graph_get_endpoints'),
+        _select =
+            library.lookupFunction<_NodeN, _NodeD>('digitor_node_graph_select'),
+        _addSerial = library.lookupFunction<_AddSerialN, _AddSerialD>(
+            'digitor_node_graph_add_serial_after'),
+        _addParallel = library.lookupFunction<_AddParallelN, _AddParallelD>(
+            'digitor_node_graph_add_parallel_after'),
+        _remove =
+            library.lookupFunction<_NodeN, _NodeD>('digitor_node_graph_remove'),
+        _connect = library
+            .lookupFunction<_ConnectN, _ConnectD>('digitor_node_graph_connect'),
+        _disconnect = library.lookupFunction<_ConnectN, _ConnectD>(
+            'digitor_node_graph_disconnect'),
+        _position = library.lookupFunction<_PositionN, _PositionD>(
+            'digitor_node_graph_set_position'),
+        _enabled = library.lookupFunction<_NodeBoolN, _NodeBoolD>(
+            'digitor_node_graph_set_enabled'),
+        _bypassed = library.lookupFunction<_NodeBoolN, _NodeBoolD>(
+            'digitor_node_graph_set_bypassed'),
+        _clear = library.lookupFunction<_NodeN, _NodeD>(
+            'digitor_node_graph_clear_operations'),
+        _primary = library.lookupFunction<_PrimaryN, _PrimaryD>(
+            'digitor_node_graph_add_primary_wheels'),
+        _log = library
+            .lookupFunction<_LogN, _LogD>('digitor_node_graph_add_log_wheels'),
+        _curves = library.lookupFunction<_CurvesN, _CurvesD>(
+            'digitor_node_graph_add_rgb_curves'),
+        _qualifier = library.lookupFunction<_QualifierN, _QualifierD>(
+            'digitor_node_graph_add_hsl_qualifier'),
+        _lut1d = library
+            .lookupFunction<_Lut1dN, _Lut1dD>('digitor_node_graph_add_lut1d'),
+        _lut3d = library
+            .lookupFunction<_Lut3dN, _Lut3dD>('digitor_node_graph_add_lut3d'),
+        _effect = library.lookupFunction<_EffectN, _EffectD>(
+            'digitor_node_graph_add_effect'),
+        _window = library.lookupFunction<_WindowN, _WindowD>(
+            'digitor_node_graph_add_power_window'),
+        _identity = library.lookupFunction<_TextN, _TextD>(
+            'digitor_node_graph_recipe_identity'),
+        _json = library
+            .lookupFunction<_TextN, _TextD>('digitor_node_graph_to_json');
 
   factory DigitorNativeNodeGraph.create({String? libraryPath}) {
     final library = DigitorLibraryLoader.open(overridePath: libraryPath);
-    final create = library.lookupFunction<_GraphCreateN, _GraphCreateD>('digitor_node_graph_create');
+    final create = library.lookupFunction<_GraphCreateN, _GraphCreateD>(
+        'digitor_node_graph_create');
     final out = calloc<Pointer<Void>>();
     try {
       _check('nodeGraphCreate', create(out));
-      if (out.value == nullptr) throw const DigitorEngineException('nodeGraphCreate', 100);
+      if (out.value == nullptr) {
+        throw const DigitorEngineException('nodeGraphCreate', 100);
+      }
       return DigitorNativeNodeGraph._(library, out.value);
     } finally {
       calloc.free(out);
     }
   }
 
-  final DynamicLibrary _library;
   Pointer<Void> _handle;
   bool _disposed = false;
   final _GraphDestroyD _destroy;
@@ -490,7 +527,8 @@ final class DigitorNativeNodeGraph {
     _check('nodeGraphSelect', _select(_handle, node));
   }
 
-  DigitorNodeId addSerialAfter(DigitorNodeId after, {String name = 'Serial Node'}) {
+  DigitorNodeId addSerialAfter(DigitorNodeId after,
+      {String name = 'Serial Node'}) {
     _ensureAlive();
     final nativeName = name.toNativeUtf8();
     final out = calloc<Uint64>();
@@ -514,7 +552,10 @@ final class DigitorNativeNodeGraph {
     final first = calloc<Uint64>();
     final second = calloc<Uint64>();
     try {
-      _check('nodeGraphAddParallel', _addParallel(_handle, after, firstNameNative, secondNameNative, first, second));
+      _check(
+          'nodeGraphAddParallel',
+          _addParallel(_handle, after, firstNameNative, secondNameNative, first,
+              second));
       return (first: first.value, second: second.value);
     } finally {
       malloc.free(firstNameNative);
@@ -623,7 +664,9 @@ final class DigitorNativeNodeGraph {
       native.ref.lutSize = value.lutSize;
       _check('nodeGraphRgbCurves', _curves(_handle, native));
     } finally {
-      for (final pointer in allocations) calloc.free(pointer);
+      for (final pointer in allocations) {
+        calloc.free(pointer);
+      }
       calloc.free(native);
     }
   }
@@ -648,8 +691,13 @@ final class DigitorNativeNodeGraph {
     }
   }
 
-  void addLut1d(List<DigitorLutColor> values, {DigitorLutInterpolation interpolation = DigitorLutInterpolation.linear}) {
-    if (values.length < 2) throw ArgumentError.value(values.length, 'values', 'A 1D LUT needs at least two values.');
+  void addLut1d(List<DigitorLutColor> values,
+      {DigitorLutInterpolation interpolation =
+          DigitorLutInterpolation.linear}) {
+    if (values.length < 2) {
+      throw ArgumentError.value(
+          values.length, 'values', 'A 1D LUT needs at least two values.');
+    }
     _ensureAlive();
     final colors = _allocateColors(values);
     final native = calloc<_NativeLut1d>();
@@ -665,7 +713,9 @@ final class DigitorNativeNodeGraph {
     }
   }
 
-  void addLut3d(int size, List<DigitorLutColor> values, {DigitorLutInterpolation interpolation = DigitorLutInterpolation.tetrahedral}) {
+  void addLut3d(int size, List<DigitorLutColor> values,
+      {DigitorLutInterpolation interpolation =
+          DigitorLutInterpolation.tetrahedral}) {
     if (size < 2 || values.length != size * size * size) {
       throw ArgumentError('3D LUT value count must equal size³.');
     }
@@ -762,15 +812,19 @@ final class DigitorNativeNodeGraph {
       ..enabled = value.enabled ? 1 : 0;
   }
 
-  static void _setRange(_NativeQualifierRange native, DigitorQualifierRange value) {
+  static void _setRange(
+      _NativeQualifierRange native, DigitorQualifierRange value) {
     native
       ..low = value.low
       ..high = value.high
       ..softness = value.softness;
   }
 
-  static void _setCurve(_NativeCurveChannel native, DigitorCurveChannel value, List<Pointer<_NativeCurvePoint>> allocations) {
-    if (value.points.length < 2) throw ArgumentError('Every RGB curve channel needs at least two points.');
+  static void _setCurve(_NativeCurveChannel native, DigitorCurveChannel value,
+      List<Pointer<_NativeCurvePoint>> allocations) {
+    if (value.points.length < 2) {
+      throw ArgumentError('Every RGB curve channel needs at least two points.');
+    }
     final points = calloc<_NativeCurvePoint>(value.points.length);
     allocations.add(points);
     for (var index = 0; index < value.points.length; index++) {
@@ -785,7 +839,8 @@ final class DigitorNativeNodeGraph {
       ..enabled = value.enabled ? 1 : 0;
   }
 
-  static Pointer<_NativeLutColor> _allocateColors(List<DigitorLutColor> values) {
+  static Pointer<_NativeLutColor> _allocateColors(
+      List<DigitorLutColor> values) {
     final pointer = calloc<_NativeLutColor>(values.length);
     for (var index = 0; index < values.length; index++) {
       final source = values[index];
@@ -799,7 +854,9 @@ final class DigitorNativeNodeGraph {
   }
 
   void _ensureAlive() {
-    if (_disposed || _handle == nullptr) throw StateError('DigitorNativeNodeGraph is disposed.');
+    if (_disposed || _handle == nullptr) {
+      throw StateError('DigitorNativeNodeGraph is disposed.');
+    }
   }
 
   static void _check(String operation, int result) {
