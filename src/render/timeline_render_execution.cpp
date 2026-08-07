@@ -136,7 +136,7 @@ TimelineExecutionPlan TimelineRenderExecutor::build_plan(
   return plan;
 }
 
-bool TimelineRenderExecutor::preview_export_equivalent(
+bool TimelineRenderExecutor::preview_export_plan_equivalent(
     std::int64_t timeline_us, std::uint32_t width, std::uint32_t height,
     std::uint64_t timeline_revision, std::uint64_t render_revision) const {
   const auto preview = build_plan(TimelineExecutionMode::preview, timeline_us, width,
