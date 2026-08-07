@@ -7,4 +7,12 @@ if("@DIGITOR_BUILT_WITH_OCIO@" STREQUAL "ON")
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/DigitorEngineTargets.cmake")
+
+# Single-config installs are produced as Release in the qualification pipeline.
+# Consumers that do not set CMAKE_BUILD_TYPE still need a concrete imported
+# location instead of an unset NOCONFIG target location.
+if(TARGET Digitor::Engine)
+    set_property(TARGET Digitor::Engine PROPERTY MAP_IMPORTED_CONFIG_NOCONFIG Release)
+endif()
+
 check_required_components(DigitorEngine)
