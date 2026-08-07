@@ -1,38 +1,24 @@
 #include "digitor/timeline_render_runtime.hpp"
+#include "digitor/cpu_parallel_executor.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
-#include <thread>
+#include <utility>
 
 namespace digitor {
 namespace {
 
 std::size_t parallel_scale_rgba(std::vector<float>& rgba, float weight) {
   if (rgba.empty() || weight == 1.0F) return 1;
-  const auto hw = std::max(1u, std::thread::hardware_concurrency());
-  constexpr std::size_t kMinValuesPerWorker = 64U * 1024U;
-  const auto useful = std::max<std::size_t>(1, rgba.size() / kMinValuesPerWorker);
-  const auto workers = std::min<std::size_t>(hw, useful);
-  if (workers <= 1) {
-    for (auto& value : rgba) value *= weight;
-    return 1;
-  }
-
-  std::vector<std::thread> threads;
-  threads.reserve(workers);
-  const auto chunk = (rgba.size() + workers - 1) / workers;
-  for (std::size_t worker = 0; worker < workers; ++worker) {
-    const auto begin = worker * chunk;
-    const auto end = std::min(rgba.size(), begin + chunk);
-    if (begin >= end) break;
-    threads.emplace_back([&rgba, begin, end, weight] {
-      for (std::size_t i = begin; i < end; ++i) rgba[i] *= weight;
-    });
-  }
-  const auto launched = threads.size();
-  for (auto& thread : threads) thread.join();
-  return std::max<std::size_t>(1, launched);
+  constexpr std::size_t kMinValuesPerTask = 64U * 1024U;
+  auto& executor = shared_cpu_executor();
+  executor.parallel_for(
+      rgba.size(), kMinValuesPerTask,
+      [&](std::size_t begin, std::size_t end) {
+        for (std::size_t i = begin; i < end; ++i) rgba[i] *= weight;
+      });
+  return std::max<std::size_t>(1, executor.telemetry().last_task_count);
 }
 
 bool exact_cpu_pixels_equal(const RenderVideoFrame& a,
@@ -91,6 +77,11 @@ bool TimelineRenderRuntime::gpu_frame_compatible(const RenderVideoFrame& frame,
                                                   std::string& diagnostic) noexcept {
   if (!frame.gpu || !target.gpu || !frame.rgba.empty() || !target.rgba.empty()) {
     diagnostic = "strict GPU boundary contains CPU pixel storage";
+    return false;
+  }
+  if (frame.gpu->backend() == DIGITOR_RENDERER_CPU ||
+      target.gpu->backend() == DIGITOR_RENDERER_CPU) {
+    diagnostic = "GPU timeline received a CPU renderer frame";
     return false;
   }
   if (!frame.gpu->context_live() || !target.gpu->context_live()) {
@@ -229,9 +220,8 @@ TimelineRenderResult TimelineRenderRuntime::render(TimelineExecutionMode mode,
   RenderVideoFrame composite;
   if (gpu_path) {
     auto target = callbacks_.create_gpu_target(width, height, timeline_us);
-    // Once a GPU provider is selected, failure is fail-closed. CPU fallback is
-    // only allowed when no GPU provider exists at selection time.
-    if (!target || !target->gpu_resident() || !target->valid()) {
+    if (!target || !target->gpu_resident() || !target->valid() ||
+        !target->gpu || target->gpu->backend() == DIGITOR_RENDERER_CPU) {
       result.diagnostic = "selected GPU target creation failed; runtime CPU fallback is prohibited";
       return result;
     }
