@@ -1,7 +1,7 @@
 # Canonical DigitorEngine package/runtime version.
 # Every top-level package, target and generated version file must consume this value.
-set(DIGITOR_ENGINE_VERSION "5.51.0")
-set(DIGITOR_ENGINE_SOVERSION "5")
+set(DIGITOR_ENGINE_VERSION "0.0.1")
+set(DIGITOR_ENGINE_SOVERSION "0")
 
 string(REPLACE "." ";" _digitor_version_parts "${DIGITOR_ENGINE_VERSION}")
 list(GET _digitor_version_parts 0 DIGITOR_ENGINE_VERSION_MAJOR)
