@@ -21,5 +21,7 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: dart format .
+      - name: Show formatter diff
+        run: git diff -- .
       - run: flutter analyze --fatal-infos
       - run: flutter test
