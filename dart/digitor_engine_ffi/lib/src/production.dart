@@ -55,7 +55,7 @@ enum DigitorNativeTextureReadiness {
 
 /// Native GPU texture returned by the production preview path.
 ///
-/// The descriptor is borrowed from [DigitorProductionSession] until
+/// The descriptor remains borrowed from [DigitorProductionSession] until
 /// [DigitorProductionSession.previewConsumed] is called for its generation.
 final class DigitorNativeGpuTextureFrame {
   const DigitorNativeGpuTextureFrame({
@@ -109,12 +109,11 @@ final class DigitorNativeGpuTextureFrame {
   final DigitorNativeTextureReadiness readiness;
 }
 
-/// Function pointers supplied by the platform Flutter embedding layer.
+/// Native callbacks supplied by the platform Flutter embedding layer.
 ///
-/// Windows/Android/iOS/macOS glue owns the real decoder/importer, selected GPU
-/// context and Flutter texture registrar. The callbacks must obey the strict
-/// GPU contract: once a GPU backend is selected they may not substitute CPU
-/// pixels after a render/import failure.
+/// The platform host owns real decode/import, renderer-context interop and
+/// Flutter texture registration. Once a GPU backend has been selected these
+/// callbacks must surface failures rather than substituting CPU pixels.
 final class DigitorProductionHost {
   const DigitorProductionHost({
     required this.openMedia,
@@ -124,12 +123,12 @@ final class DigitorProductionHost {
     required this.cancel,
     required this.closeMedia,
     required this.releaseTexture,
-    this.userData = nullptr,
+    this.userData,
     this.requiredDeviceIdentity = 0,
     this.requiredContextIdentity = 0,
   });
 
-  final Pointer<Void> userData;
+  final Pointer<Void>? userData;
   final int requiredDeviceIdentity;
   final int requiredContextIdentity;
   final Pointer<Void> openMedia;
@@ -153,26 +152,29 @@ final class DigitorProductionHost {
     native.ref
       ..structSize = sizeOf<DigitorFlutterProductionHostNative>()
       ..apiVersion = 1
-      ..userData = userData
+      ..userData = userData ?? nullptr
       ..requiredDeviceIdentity = requiredDeviceIdentity
       ..requiredContextIdentity = requiredContextIdentity
       ..openMedia = openMedia.cast<NativeFunction<DigitorFlutterOpenMediaNative>>()
-      ..renderFrame = renderFrame.cast<NativeFunction<DigitorFlutterRenderFrameNative>>()
-      ..exportMedia = exportMedia.cast<NativeFunction<DigitorFlutterExportMediaNative>>()
-      ..queryPreview = queryPreview.cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
+      ..renderFrame =
+          renderFrame.cast<NativeFunction<DigitorFlutterRenderFrameNative>>()
+      ..exportMedia =
+          exportMedia.cast<NativeFunction<DigitorFlutterExportMediaNative>>()
+      ..queryPreview =
+          queryPreview.cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
       ..cancel = cancel.cast<NativeFunction<DigitorFlutterCancelNative>>()
-      ..closeMedia = closeMedia.cast<NativeFunction<DigitorFlutterCloseMediaNative>>()
-      ..releaseTexture = releaseTexture.cast<NativeFunction<DigitorFlutterReleaseTextureNative>>();
+      ..closeMedia =
+          closeMedia.cast<NativeFunction<DigitorFlutterCloseMediaNative>>()
+      ..releaseTexture = releaseTexture
+          .cast<NativeFunction<DigitorFlutterReleaseTextureNative>>();
   }
 }
 
 /// Production media bridge shared by preview and export.
 ///
-/// This class is deliberately separate from the legacy compatibility
-/// [DigitorSession]. It never exposes a CPU preview buffer. A real platform host
-/// supplies decoder/importer + Flutter texture registration and receives the
-/// exact [DigitorNodeGraph] plus immutable graph/parameter revisions for both
-/// preview and export.
+/// Unlike the compatibility [DigitorSession], this class never exposes a CPU
+/// preview buffer. The same bound [DigitorNodeGraph] and immutable revisions are
+/// supplied to both production preview and production export callbacks.
 final class DigitorProductionSession {
   DigitorProductionSession._(this._handle);
 
@@ -181,7 +183,9 @@ final class DigitorProductionSession {
     required String mediaPath,
     DigitorNodeGraph? nodeGraph,
   }) {
-    if (mediaPath.isEmpty) throw ArgumentError.value(mediaPath, 'mediaPath');
+    if (mediaPath.isEmpty) {
+      throw ArgumentError.value(mediaPath, 'mediaPath');
+    }
     final nativeHost = calloc<DigitorFlutterProductionHostNative>();
     final path = mediaPath.toNativeUtf8();
     final out = calloc<Pointer<DigitorFlutterProductionSessionNative>>();
@@ -192,7 +196,9 @@ final class DigitorProductionSession {
         throw DigitorProductionException('create', result == 0 ? 100 : result);
       }
       final session = DigitorProductionSession._(out.value);
-      if (nodeGraph != null) session.bindNodeGraph(nodeGraph);
+      if (nodeGraph != null) {
+        session.bindNodeGraph(nodeGraph);
+      }
       return session;
     } finally {
       calloc.free(nativeHost);
@@ -208,20 +214,23 @@ final class DigitorProductionSession {
 
   DigitorNodeGraph? get nodeGraph => _graph;
 
-  /// Binds or refreshes the production graph revision used by future frames.
-  /// Call after mutating the graph and after consuming any outstanding preview.
+  /// Binds or refreshes the exact graph revisions used by future frames/jobs.
   void bindNodeGraph(DigitorNodeGraph graph) {
     _ensureAlive();
     if (_outstandingPreviewGeneration != null) {
-      throw StateError('Consume the current preview before rebinding the node graph.');
+      throw StateError(
+        'Consume the current preview before rebinding the node graph.',
+      );
     }
-    final result = digitorFlutterProductionBindNodeGraph(
-      _handle,
-      graph.nativeHandle,
-      graph.graphRevision,
-      graph.parameterRevision,
+    _check(
+      'bindNodeGraph',
+      digitorFlutterProductionBindNodeGraph(
+        _handle,
+        graph.nativeHandle,
+        graph.graphRevision,
+        graph.parameterRevision,
+      ),
     );
-    _check('bindNodeGraph', result);
     if (!identical(_graph, graph)) {
       _graph?.releaseFromProductionSession();
       graph.retainForProductionSession();
@@ -269,13 +278,21 @@ final class DigitorProductionSession {
     required int height,
   }) {
     _ensureAlive();
-    if (_graph == null) throw StateError('Bind a node graph before preview.');
+    if (_graph == null) {
+      throw StateError('Bind a node graph before preview.');
+    }
     if (_outstandingPreviewGeneration != null) {
       throw StateError('Call previewConsumed before requesting the next frame.');
     }
-    if (timestampUs < 0) throw ArgumentError.value(timestampUs, 'timestampUs');
-    if (width <= 0) throw ArgumentError.value(width, 'width');
-    if (height <= 0) throw ArgumentError.value(height, 'height');
+    if (timestampUs < 0) {
+      throw ArgumentError.value(timestampUs, 'timestampUs');
+    }
+    if (width <= 0) {
+      throw ArgumentError.value(width, 'width');
+    }
+    if (height <= 0) {
+      throw ArgumentError.value(height, 'height');
+    }
 
     final native = calloc<DigitorNativeGpuTextureDescriptorNative>();
     try {
@@ -328,10 +345,16 @@ final class DigitorProductionSession {
   void previewConsumed([int? generation]) {
     _ensureAlive();
     final expected = _outstandingPreviewGeneration;
-    if (expected == null) throw StateError('There is no outstanding preview frame.');
+    if (expected == null) {
+      throw StateError('There is no outstanding preview frame.');
+    }
     final resolved = generation ?? expected;
     if (resolved != expected) {
-      throw ArgumentError.value(generation, 'generation', 'Must match the current preview generation.');
+      throw ArgumentError.value(
+        generation,
+        'generation',
+        'Must match the current preview generation.',
+      );
     }
     _check(
       'previewConsumed',
@@ -340,9 +363,10 @@ final class DigitorProductionSession {
     _outstandingPreviewGeneration = null;
   }
 
-  /// Runs the platform production export synchronously with the exact graph
-  /// revision currently bound to this session. The host must not invoke the
-  /// progress callback after this method returns.
+  /// Runs the platform production export synchronously with the bound recipe.
+  ///
+  /// The platform host must not invoke the progress callback after this method
+  /// returns.
   void export({
     required String path,
     required int firstFrame,
@@ -354,15 +378,27 @@ final class DigitorProductionSession {
     void Function(DigitorExportProgress progress)? onProgress,
   }) {
     _ensureAlive();
-    if (_graph == null) throw StateError('Bind a node graph before export.');
+    if (_graph == null) {
+      throw StateError('Bind a node graph before export.');
+    }
     if (_outstandingPreviewGeneration != null) {
       throw StateError('Consume the current preview before starting export.');
     }
-    if (path.isEmpty) throw ArgumentError.value(path, 'path');
-    if (firstFrame < 0) throw ArgumentError.value(firstFrame, 'firstFrame');
-    if (lastFrame < firstFrame) throw ArgumentError.value(lastFrame, 'lastFrame');
-    if (width <= 0) throw ArgumentError.value(width, 'width');
-    if (height <= 0) throw ArgumentError.value(height, 'height');
+    if (path.isEmpty) {
+      throw ArgumentError.value(path, 'path');
+    }
+    if (firstFrame < 0) {
+      throw ArgumentError.value(firstFrame, 'firstFrame');
+    }
+    if (lastFrame < firstFrame) {
+      throw ArgumentError.value(lastFrame, 'lastFrame');
+    }
+    if (width <= 0) {
+      throw ArgumentError.value(width, 'width');
+    }
+    if (height <= 0) {
+      throw ArgumentError.value(height, 'height');
+    }
 
     final nativePath = path.toNativeUtf8();
     final request = calloc<DigitorFlutterExportRequestNative>();
@@ -416,7 +452,9 @@ final class DigitorProductionSession {
   }
 
   void dispose() {
-    if (_disposed) return;
+    if (_disposed) {
+      return;
+    }
     _check('destroy', digitorFlutterProductionDestroy(_handle));
     _graph?.releaseFromProductionSession();
     _graph = null;
@@ -430,11 +468,16 @@ final class DigitorProductionSession {
     final size = calloc<Uint32>();
     try {
       final first = digitorFlutterProductionGetLastError(_handle, nullptr, size);
-      if (first != 0 || size.value == 0) return '';
+      if (first != 0 || size.value == 0) {
+        return '';
+      }
       final buffer = calloc<Uint8>(size.value);
       try {
-        final result = digitorFlutterProductionGetLastError(_handle, buffer, size);
-        if (result != 0) return '';
+        final result =
+            digitorFlutterProductionGetLastError(_handle, buffer, size);
+        if (result != 0) {
+          return '';
+        }
         return buffer.cast<Utf8>().toDartString();
       } finally {
         calloc.free(buffer);
@@ -445,7 +488,9 @@ final class DigitorProductionSession {
   }
 
   void _check(String operation, int result) {
-    if (result == 0) return;
+    if (result == 0) {
+      return;
+    }
     final diagnostic = _disposed || _handle == nullptr ? '' : lastError;
     throw DigitorProductionException(operation, result, diagnostic);
   }
@@ -461,7 +506,9 @@ String _readInt8Array(Array<Int8> array, int length) {
   final bytes = <int>[];
   for (var i = 0; i < length; i++) {
     final value = array[i];
-    if (value == 0) break;
+    if (value == 0) {
+      break;
+    }
     bytes.add(value & 0xff);
   }
   return String.fromCharCodes(bytes);
