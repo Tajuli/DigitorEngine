@@ -106,5 +106,26 @@ jobs:
               'IPHONEOS_DEPLOYMENT_TARGET = 13.0;')
           PY
           flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def set_pod_platform(path, platform, version):
+              if not path.exists():
+                  raise SystemExit(f'CocoaPods Podfile was not generated after plugin registration: {path}')
+              original = path.read_text()
+              pattern = rf"^\s*#?\s*platform\s+:{platform},\s*['\"][^'\"]+['\"]\s*$"
+              replacement = f"platform :{platform}, '{version}'"
+              updated, count = re.subn(pattern, replacement, original,
+                                       flags=re.MULTILINE)
+              if count == 0:
+                  updated = replacement + '\n' + original
+              path.write_text(updated)
+
+          set_pod_platform(Path('macos/Podfile'), 'osx', '11.0')
+          set_pod_platform(Path('ios/Podfile'), 'ios', '13.0')
+          PY
+          grep -n "platform :osx, '11.0'" macos/Podfile
+          grep -n "platform :ios, '13.0'" ios/Podfile
           flutter build macos --debug
           flutter build ios --debug --no-codesign
