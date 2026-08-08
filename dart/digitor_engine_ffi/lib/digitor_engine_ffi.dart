@@ -6,6 +6,7 @@ export 'src/export_job.dart';
 export 'src/library_loader.dart' show DigitorLibraryLoader;
 export 'src/node_graph.dart';
 export 'src/production.dart';
+export 'src/production_media.dart';
 export 'src/sdk_callbacks.dart';
 export 'src/sdk_worker.dart';
 export 'src/session.dart';
