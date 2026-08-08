@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - 'dart/digitor_engine_ffi/**'
+      - 'CMakeLists.txt'
       - 'include/digitor/native_node_backend_runtime.hpp'
       - 'include/digitor/native_node_platform_factories.hpp'
+      - 'src/audio/audio_latency_probe.cpp'
       - 'src/gpu/native_node_platform_factories.cpp'
       - 'src/gpu/native_node_metal_factory.mm'
       - 'src/gpu/vulkan_backend.cpp'
