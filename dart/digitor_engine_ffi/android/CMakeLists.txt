@@ -1,13 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
-project(digitor_engine_ffi_android LANGUAGES C CXX)
+project(digitor_engine_ffi_platform_host LANGUAGES CXX)
 
-set(DIGITOR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(DIGITOR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(DIGITOR_ENABLE_FFMPEG OFF CACHE BOOL "" FORCE)
-set(DIGITOR_WARNINGS_AS_ERRORS ON CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../.. ${CMAKE_CURRENT_BINARY_DIR}/digitor_engine)
+add_library(digitor_engine_ffi_platform_host SHARED
+  src/main/cpp/platform_host_jni.cpp
+)
 
-set_target_properties(digitor_engine PROPERTIES
-  OUTPUT_NAME digitor_engine
+set_target_properties(digitor_engine_ffi_platform_host PROPERTIES
   CXX_STANDARD 20
-  CXX_STANDARD_REQUIRED YES)
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS OFF)
+
+find_library(ANDROID_LIBRARY android REQUIRED)
+target_link_libraries(digitor_engine_ffi_platform_host PRIVATE ${ANDROID_LIBRARY})
+
+# DigitorEngine is built once by hook/build.dart as a code asset. This Gradle
+# CMake target only owns Flutter's SurfaceProducer <-> ANativeWindow bridge.
