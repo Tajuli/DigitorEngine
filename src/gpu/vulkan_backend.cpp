@@ -959,14 +959,14 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
       const auto& texture = textures[texture_index++];
       resources.textures.push_back(
           {contract.bindings[i].binding,
-           static_cast<NativeNodeNativeHandle>(texture.view), width, height});
+           encode_native_node_handle(texture.view), width, height});
     }
     NativeNodePlatformFactoryContext dispatch_context{};
     dispatch_context.device = reinterpret_cast<std::uintptr_t>(d_);
     dispatch_context.command_context =
         reinterpret_cast<std::uintptr_t>(command);
     dispatch_context.descriptor_context =
-        static_cast<NativeNodeNativeHandle>(descriptor_pool);
+        encode_native_node_handle(descriptor_pool);
     if (!record_vulkan_native_node_dispatch(
             dispatch_context, pipeline, prepared.geometry, resources,
             diagnostic)) {
