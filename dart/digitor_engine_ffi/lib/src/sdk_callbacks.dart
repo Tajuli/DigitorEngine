@@ -9,39 +9,43 @@ final class DigitorSdkSessionNative extends Opaque {}
 
 typedef _CompletionNative = Void Function(Int32, Pointer<Void>);
 typedef _ProgressNative = Void Function(Double, Int64, Int64, Pointer<Void>);
-typedef _CreateNative = Int32 Function(
-    Pointer<Pointer<DigitorSdkSessionNative>>);
+typedef _CreateNative =
+    Int32 Function(Pointer<Pointer<DigitorSdkSessionNative>>);
 typedef _CreateDart = int Function(Pointer<Pointer<DigitorSdkSessionNative>>);
 typedef _DestroyNative = Int32 Function(Pointer<DigitorSdkSessionNative>);
 typedef _DestroyDart = int Function(Pointer<DigitorSdkSessionNative>);
-typedef _SeekNative = Int32 Function(
-  Pointer<DigitorSdkSessionNative>,
-  Int64,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
-typedef _SeekDart = int Function(
-  Pointer<DigitorSdkSessionNative>,
-  int,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
-typedef _PreviewNative = Int32 Function(
-  Pointer<DigitorSdkSessionNative>,
-  Int64,
-  Uint32,
-  Uint32,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
-typedef _PreviewDart = int Function(
-  Pointer<DigitorSdkSessionNative>,
-  int,
-  int,
-  int,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
+typedef _SeekNative =
+    Int32 Function(
+      Pointer<DigitorSdkSessionNative>,
+      Int64,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
+typedef _SeekDart =
+    int Function(
+      Pointer<DigitorSdkSessionNative>,
+      int,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
+typedef _PreviewNative =
+    Int32 Function(
+      Pointer<DigitorSdkSessionNative>,
+      Int64,
+      Uint32,
+      Uint32,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
+typedef _PreviewDart =
+    int Function(
+      Pointer<DigitorSdkSessionNative>,
+      int,
+      int,
+      int,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
 
 final class DigitorNativeEvent {
   const DigitorNativeEvent({

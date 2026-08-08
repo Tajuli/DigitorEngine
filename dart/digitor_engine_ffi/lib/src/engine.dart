@@ -20,9 +20,9 @@ enum DigitorBackend {
   final int nativeValue;
 
   static DigitorBackend fromNative(int value) => values.firstWhere(
-        (backend) => backend.nativeValue == value,
-        orElse: () => automatic,
-      );
+    (backend) => backend.nativeValue == value,
+    orElse: () => automatic,
+  );
 }
 
 enum DigitorPreviewMode {
@@ -49,9 +49,9 @@ enum DigitorNativeTextureBackend {
   final int nativeValue;
 
   static DigitorNativeTextureBackend fromNative(int value) => values.firstWhere(
-        (backend) => backend.nativeValue == value,
-        orElse: () => none,
-      );
+    (backend) => backend.nativeValue == value,
+    orElse: () => none,
+  );
 }
 
 enum DigitorNativeTextureHandleType {
@@ -71,11 +71,8 @@ enum DigitorNativeTextureHandleType {
 
   final int nativeValue;
 
-  static DigitorNativeTextureHandleType fromNative(int value) =>
-      values.firstWhere(
-        (type) => type.nativeValue == value,
-        orElse: () => none,
-      );
+  static DigitorNativeTextureHandleType fromNative(int value) => values
+      .firstWhere((type) => type.nativeValue == value, orElse: () => none);
 }
 
 enum DigitorExportFormat {
@@ -346,8 +343,8 @@ final class DigitorSession {
       final value = native.ref;
       final selectedMode =
           value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue
-              ? DigitorPreviewMode.nativeGpuStrict
-              : DigitorPreviewMode.compatibility;
+          ? DigitorPreviewMode.nativeGpuStrict
+          : DigitorPreviewMode.compatibility;
       return DigitorPreviewCapabilities(
         nativeGpuPreviewAvailable: value.nativeGpuPreviewAvailable != 0,
         trueSharedResourceZeroCopy: value.trueSharedResourceZeroCopy != 0,
@@ -373,12 +370,7 @@ final class DigitorSession {
     return _track(
       () => _invokeCompletion(
         'seek',
-        (callback) => digitorSdkSeekAsync(
-          _handle,
-          frame,
-          callback,
-          nullptr,
-        ),
+        (callback) => digitorSdkSeekAsync(_handle, frame, callback, nullptr),
       ),
     );
   }
@@ -497,38 +489,42 @@ final class DigitorSession {
     final nativePath = path.toNativeUtf8();
     NativeCallable<DigitorProgressNative>? progressCallback;
     if (onProgress != null) {
-      progressCallback = NativeCallable<DigitorProgressNative>.listener(
-        (double fraction, int completed, int total, Pointer<Void> _) {
-          if (!_disposed) {
-            onProgress(
-              DigitorExportProgress(
-                fraction: fraction,
-                completed: completed,
-                total: total,
-              ),
-            );
-          }
-        },
-      );
+      progressCallback = NativeCallable<DigitorProgressNative>.listener((
+        double fraction,
+        int completed,
+        int total,
+        Pointer<Void> _,
+      ) {
+        if (!_disposed) {
+          onProgress(
+            DigitorExportProgress(
+              fraction: fraction,
+              completed: completed,
+              total: total,
+            ),
+          );
+        }
+      });
     }
 
     final completer = Completer<void>();
     late final NativeCallable<DigitorCompletionNative> completion;
     var finished = false;
-    completion = NativeCallable<DigitorCompletionNative>.listener(
-      (int result, Pointer<Void> _) {
-        if (finished) return;
-        finished = true;
-        completion.close();
-        progressCallback?.close();
-        calloc.free(nativePath);
-        if (result == 0) {
-          completer.complete();
-        } else {
-          completer.completeError(DigitorEngineException('export', result));
-        }
-      },
-    );
+    completion = NativeCallable<DigitorCompletionNative>.listener((
+      int result,
+      Pointer<Void> _,
+    ) {
+      if (finished) return;
+      finished = true;
+      completion.close();
+      progressCallback?.close();
+      calloc.free(nativePath);
+      if (result == 0) {
+        completer.complete();
+      } else {
+        completer.completeError(DigitorEngineException('export', result));
+      }
+    });
 
     final Pointer<NativeFunction<DigitorProgressNative>> progressPointer =
         progressCallback?.nativeFunction ?? nullptr;
@@ -562,18 +558,19 @@ final class DigitorSession {
     final completer = Completer<void>();
     late final NativeCallable<DigitorCompletionNative> callback;
     var finished = false;
-    callback = NativeCallable<DigitorCompletionNative>.listener(
-      (int result, Pointer<Void> _) {
-        if (finished) return;
-        finished = true;
-        callback.close();
-        if (result == 0) {
-          completer.complete();
-        } else {
-          completer.completeError(DigitorEngineException(operation, result));
-        }
-      },
-    );
+    callback = NativeCallable<DigitorCompletionNative>.listener((
+      int result,
+      Pointer<Void> _,
+    ) {
+      if (finished) return;
+      finished = true;
+      callback.close();
+      if (result == 0) {
+        completer.complete();
+      } else {
+        completer.completeError(DigitorEngineException(operation, result));
+      }
+    });
 
     final immediate = invoke(callback.nativeFunction);
     if (immediate != 0) {

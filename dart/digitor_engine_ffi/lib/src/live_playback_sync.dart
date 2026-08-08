@@ -26,28 +26,31 @@ final class DigitorLivePlaybackSync {
     bool manualOverride = false,
     DynamicLibrary? library,
   }) : _library = library ?? DigitorLibraryLoader.open() {
-    _create = _library.lookupFunction<
-        Pointer<_NativeSync> Function(Int64, Int32),
-        Pointer<_NativeSync> Function(
-            int, int)>('digitor_live_playback_sync_create');
-    _destroy = _library.lookupFunction<Void Function(Pointer<_NativeSync>),
-        void Function(Pointer<_NativeSync>)>(
-      'digitor_live_playback_sync_destroy',
-    );
-    _notify = _library.lookupFunction<Void Function(Pointer<_NativeSync>),
-        void Function(Pointer<_NativeSync>)>(
-      'digitor_live_playback_sync_notify_device_change',
-    );
-    _refresh = _library.lookupFunction<
-        Int32 Function(Pointer<_NativeSync>, Int64),
-        int Function(Pointer<_NativeSync>, int)>(
-      'digitor_live_playback_sync_refresh',
-    );
-    _clock = _library.lookupFunction<
-        Int64 Function(Pointer<_NativeSync>, Int64),
-        int Function(Pointer<_NativeSync>, int)>(
-      'digitor_live_playback_sync_clock',
-    );
+    _create = _library
+        .lookupFunction<
+          Pointer<_NativeSync> Function(Int64, Int32),
+          Pointer<_NativeSync> Function(int, int)
+        >('digitor_live_playback_sync_create');
+    _destroy = _library
+        .lookupFunction<
+          Void Function(Pointer<_NativeSync>),
+          void Function(Pointer<_NativeSync>)
+        >('digitor_live_playback_sync_destroy');
+    _notify = _library
+        .lookupFunction<
+          Void Function(Pointer<_NativeSync>),
+          void Function(Pointer<_NativeSync>)
+        >('digitor_live_playback_sync_notify_device_change');
+    _refresh = _library
+        .lookupFunction<
+          Int32 Function(Pointer<_NativeSync>, Int64),
+          int Function(Pointer<_NativeSync>, int)
+        >('digitor_live_playback_sync_refresh');
+    _clock = _library
+        .lookupFunction<
+          Int64 Function(Pointer<_NativeSync>, Int64),
+          int Function(Pointer<_NativeSync>, int)
+        >('digitor_live_playback_sync_clock');
     _handle = _create(manualOffsetUs, manualOverride ? 1 : 0);
     if (_handle == nullptr) {
       throw StateError('Failed to create live playback sync controller.');

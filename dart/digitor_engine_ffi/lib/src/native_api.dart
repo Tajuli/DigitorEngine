@@ -116,12 +116,8 @@ final class DigitorNativePreviewCapabilitiesNative extends Struct {
 }
 
 typedef DigitorCompletionNative = Void Function(Int32, Pointer<Void>);
-typedef DigitorProgressNative = Void Function(
-  Double,
-  Int64,
-  Int64,
-  Pointer<Void>,
-);
+typedef DigitorProgressNative =
+    Void Function(Double, Int64, Int64, Pointer<Void>);
 
 @Native<Pointer<Utf8> Function()>(symbol: 'digitor_get_version')
 external Pointer<Utf8> digitorGetVersion();
@@ -152,24 +148,23 @@ external int digitorSdkCreate(
 external int digitorSdkDestroy(Pointer<DigitorSdkSessionNative> session);
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      DigitorColorControlsNative,
-    )>(symbol: 'digitor_sdk_set_color')
+  Int32 Function(Pointer<DigitorSdkSessionNative>, DigitorColorControlsNative)
+>(symbol: 'digitor_sdk_set_color')
 external int digitorSdkSetColor(
   Pointer<DigitorSdkSessionNative> session,
   DigitorColorControlsNative controls,
 );
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      Int64,
-      Uint32,
-      Uint32,
-      Pointer<NativeFunction<DigitorCompletionNative>>,
-      Pointer<Void>,
-    )>(symbol: 'digitor_sdk_preview_async')
+  Int32 Function(
+    Pointer<DigitorSdkSessionNative>,
+    Int64,
+    Uint32,
+    Uint32,
+    Pointer<NativeFunction<DigitorCompletionNative>>,
+    Pointer<Void>,
+  )
+>(symbol: 'digitor_sdk_preview_async')
 external int digitorSdkPreviewAsync(
   Pointer<DigitorSdkSessionNative> session,
   int frame,
@@ -180,12 +175,13 @@ external int digitorSdkPreviewAsync(
 );
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      Int64,
-      Pointer<NativeFunction<DigitorCompletionNative>>,
-      Pointer<Void>,
-    )>(symbol: 'digitor_sdk_seek_async')
+  Int32 Function(
+    Pointer<DigitorSdkSessionNative>,
+    Int64,
+    Pointer<NativeFunction<DigitorCompletionNative>>,
+    Pointer<Void>,
+  )
+>(symbol: 'digitor_sdk_seek_async')
 external int digitorSdkSeekAsync(
   Pointer<DigitorSdkSessionNative> session,
   int frame,
@@ -194,10 +190,11 @@ external int digitorSdkSeekAsync(
 );
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      Pointer<DigitorNativeTextureNative>,
-    )>(symbol: 'digitor_sdk_get_native_texture')
+  Int32 Function(
+    Pointer<DigitorSdkSessionNative>,
+    Pointer<DigitorNativeTextureNative>,
+  )
+>(symbol: 'digitor_sdk_get_native_texture')
 external int digitorSdkGetNativeTexture(
   Pointer<DigitorSdkSessionNative> session,
   Pointer<DigitorNativeTextureNative> outTexture,
@@ -212,29 +209,31 @@ external int digitorSdkSetPreviewMode(
 );
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      Pointer<DigitorNativePreviewCapabilitiesNative>,
-    )>(symbol: 'digitor_sdk_query_native_preview')
+  Int32 Function(
+    Pointer<DigitorSdkSessionNative>,
+    Pointer<DigitorNativePreviewCapabilitiesNative>,
+  )
+>(symbol: 'digitor_sdk_query_native_preview')
 external int digitorSdkQueryNativePreview(
   Pointer<DigitorSdkSessionNative> session,
   Pointer<DigitorNativePreviewCapabilitiesNative> outCapabilities,
 );
 
 @Native<
-    Int32 Function(
-      Pointer<DigitorSdkSessionNative>,
-      Pointer<Utf8>,
-      Int32,
-      Int32,
-      Int64,
-      Int64,
-      Uint32,
-      Uint32,
-      Pointer<NativeFunction<DigitorProgressNative>>,
-      Pointer<NativeFunction<DigitorCompletionNative>>,
-      Pointer<Void>,
-    )>(symbol: 'digitor_sdk_export_async')
+  Int32 Function(
+    Pointer<DigitorSdkSessionNative>,
+    Pointer<Utf8>,
+    Int32,
+    Int32,
+    Int64,
+    Int64,
+    Uint32,
+    Uint32,
+    Pointer<NativeFunction<DigitorProgressNative>>,
+    Pointer<NativeFunction<DigitorCompletionNative>>,
+    Pointer<Void>,
+  )
+>(symbol: 'digitor_sdk_export_async')
 external int digitorSdkExportAsync(
   Pointer<DigitorSdkSessionNative> session,
   Pointer<Utf8> path,

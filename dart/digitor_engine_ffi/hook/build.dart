@@ -75,20 +75,16 @@ Future<void> main(List<String> arguments) async {
     ];
 
     await _run(cmake, configureArguments, workingDirectory: engineRoot);
-    await _run(
-      cmake,
-      <String>[
-        '--build',
-        buildDirectory.toFilePath(),
-        '--config',
-        'Release',
-        '--target',
-        'digitor_engine',
-        '--parallel',
-        '2',
-      ],
-      workingDirectory: engineRoot,
-    );
+    await _run(cmake, <String>[
+      '--build',
+      buildDirectory.toFilePath(),
+      '--config',
+      'Release',
+      '--target',
+      'digitor_engine',
+      '--parallel',
+      '2',
+    ], workingDirectory: engineRoot);
 
     final library = File.fromUri(libraryUri);
     if (!await library.exists()) {
@@ -166,22 +162,20 @@ Uri _androidNdkRoot(Uri compiler) {
 }
 
 String _androidAbi(String architecture) => switch (architecture) {
-      'arm' => 'armeabi-v7a',
-      'arm64' => 'arm64-v8a',
-      'ia32' => 'x86',
-      'x64' => 'x86_64',
-      _ => throw UnsupportedError(
-          'Unsupported Android architecture: $architecture.',
-        ),
-    };
+  'arm' => 'armeabi-v7a',
+  'arm64' => 'arm64-v8a',
+  'ia32' => 'x86',
+  'x64' => 'x86_64',
+  _ => throw UnsupportedError(
+    'Unsupported Android architecture: $architecture.',
+  ),
+};
 
 String _appleArchitecture(String architecture) => switch (architecture) {
-      'arm64' => 'arm64',
-      'x64' => 'x86_64',
-      _ => throw UnsupportedError(
-          'Unsupported Apple architecture: $architecture.',
-        ),
-    };
+  'arm64' => 'arm64',
+  'x64' => 'x86_64',
+  _ => throw UnsupportedError('Unsupported Apple architecture: $architecture.'),
+};
 
 Future<String> _findCmake() async {
   final override = Platform.environment['CMAKE'];
@@ -203,12 +197,11 @@ Future<String> _findCmake() async {
     if (Platform.isMacOS) '/usr/local/bin/cmake',
   ];
 
-  final sdkRoot = Platform.environment['ANDROID_SDK_ROOT'] ??
+  final sdkRoot =
+      Platform.environment['ANDROID_SDK_ROOT'] ??
       Platform.environment['ANDROID_HOME'];
   if (sdkRoot != null && sdkRoot.isNotEmpty) {
-    final cmakeRoot = Directory(
-      '$sdkRoot${Platform.pathSeparator}cmake',
-    );
+    final cmakeRoot = Directory('$sdkRoot${Platform.pathSeparator}cmake');
     if (cmakeRoot.existsSync()) {
       final installs = cmakeRoot.listSync().whereType<Directory>().toList()
         ..sort((a, b) => b.path.compareTo(a.path));
