@@ -105,7 +105,7 @@ final class DigitorEditorWorkspace {
     return node;
   }
 
-  List<int> addParallelNodes() {
+  DigitorParallelNodes addParallelNodes() {
     _ensureOpen();
     final after = _selectedNode ?? _graph.endpoints.input;
     final nodes = _graph.addParallelAfter(after);
