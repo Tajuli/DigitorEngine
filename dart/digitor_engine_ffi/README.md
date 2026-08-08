@@ -225,6 +225,7 @@ The engine's production policy remains GPU-first. Once a GPU backend has been se
 - Initialize the process-wide engine before creating sessions.
 - Keep a session alive until its operation completes or is cancelled.
 - Dispose production sessions before disposing a bound `DigitorNodeGraph`.
+- Each `DigitorProductionSession` is pinned to one `DigitorNodeGraph`; create a new production session to switch to a different graph.
 - A production preview generation must be acknowledged with `previewConsumed()` before the graph is rebound or another preview/export begins.
 - Do not mutate/rebind a production graph while a production operation is active.
 - Dispose compatibility sessions before closing the engine.
