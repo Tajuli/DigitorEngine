@@ -117,8 +117,12 @@ NativePreviewTelemetry NativePreviewPresentationSession::telemetry() const noexc
 
 /* Kept in the already-qualified native-preview translation unit so the public
  * additive C ABIs are built by every existing platform target without changing
- * the qualified source list. */
+ * the qualified source list. The existing GPU-image C ABI also uses an
+ * anonymous kDiagnosticCapacity constant, so rename only the production
+ * include's token inside this aggregation unit. */
 #include "gpu_image_session_c_api.cpp"
 #include "gpu_image_node_graph_binding_c_api.cpp"
 #include "node_graph_c_api_ext.cpp"
+#define kDiagnosticCapacity kFlutterProductionDiagnosticCapacity
 #include "flutter_production_c_api.cpp"
+#undef kDiagnosticCapacity
