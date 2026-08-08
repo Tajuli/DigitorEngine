@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'engine.dart';
 import 'node_graph.dart';
 import 'platform_host.dart';
