@@ -1,7 +1,6 @@
 package com.primedigitor.digitor_engine_ffi
 
 import android.view.Surface
-import androidx.annotation.Keep
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -28,10 +27,8 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var textures: TextureRegistry
     private val hosts = mutableMapOf<Long, HostTexture>()
 
-    @Keep
     private external fun nativeAcquireWindow(surface: Surface): Long
 
-    @Keep
     private external fun nativeReleaseWindow(handle: Long)
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
