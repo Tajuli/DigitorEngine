@@ -21,7 +21,15 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: dart format .
-      - name: Show formatter diff
-        run: git diff -- .
+      - name: Upload formatted production bridge sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: formatted-production-bridge
+          path: |
+            dart/digitor_engine_ffi/lib/src/native_node_graph_api.dart
+            dart/digitor_engine_ffi/lib/src/native_production_api.dart
+            dart/digitor_engine_ffi/lib/src/node_graph.dart
+            dart/digitor_engine_ffi/lib/src/production.dart
+            dart/digitor_engine_ffi/test/production_public_api_test.dart
       - run: flutter analyze --fatal-infos
       - run: flutter test
