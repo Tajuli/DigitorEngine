@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import 'engine.dart';
@@ -22,11 +24,6 @@ final class DigitorFlutterHostCapabilities {
 }
 
 /// A Flutter texture registered by the native platform host.
-///
-/// [nativeTargetHandle] is non-zero only on platforms where Flutter owns the
-/// render target (currently Android SurfaceProducer). It is an opaque native
-/// target token for the platform production presenter and must never be mapped
-/// or interpreted as CPU memory by Dart.
 final class DigitorFlutterTextureTarget {
   const DigitorFlutterTextureTarget({
     required this.textureId,
@@ -36,9 +33,26 @@ final class DigitorFlutterTextureTarget {
   });
 
   final int textureId;
+
+  /// Opaque platform target. On Android this is an ANativeWindow pointer owned
+  /// by the SurfaceProducer host. It is never CPU-addressable memory.
   final int nativeTargetHandle;
   final String targetKind;
   final DigitorNativeTextureHandleType requestedHandleType;
+}
+
+final class DigitorFlutterRenderTargetChange {
+  const DigitorFlutterRenderTargetChange({
+    required this.textureId,
+    required this.nativeTargetHandle,
+    required this.targetKind,
+    required this.available,
+  });
+
+  final int textureId;
+  final int nativeTargetHandle;
+  final String targetKind;
+  final bool available;
 }
 
 /// Production Flutter texture-registry host for DigitorEngine.
@@ -49,11 +63,40 @@ final class DigitorFlutterTextureTarget {
 /// or GLES path can render without a Dart/CPU pixel copy.
 final class DigitorFlutterPlatformHost {
   DigitorFlutterPlatformHost({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel(channelName);
+      : _channel = channel ?? const MethodChannel(channelName) {
+    _channel.setMethodCallHandler(_handlePlatformCall);
+  }
 
   static const String channelName = 'digitor_engine_ffi/platform_host';
 
   final MethodChannel _channel;
+  final StreamController<DigitorFlutterRenderTargetChange> _targetChanges =
+      StreamController<DigitorFlutterRenderTargetChange>.broadcast();
+  bool _closed = false;
+
+  Stream<DigitorFlutterRenderTargetChange> get renderTargetChanges =>
+      _targetChanges.stream;
+
+  Future<Object?> _handlePlatformCall(MethodCall call) async {
+    if (call.method != 'renderTargetChanged' ||
+        call.arguments is! Map<Object?, Object?>) {
+      return null;
+    }
+    final args = call.arguments as Map<Object?, Object?>;
+    final textureId = args['textureId'];
+    final nativeTargetHandle = args['nativeTargetHandle'];
+    if (!_closed && textureId is int && nativeTargetHandle is int) {
+      _targetChanges.add(
+        DigitorFlutterRenderTargetChange(
+          textureId: textureId,
+          nativeTargetHandle: nativeTargetHandle,
+          targetKind: args['targetKind'] as String? ?? 'unknown',
+          available: args['available'] as bool? ?? nativeTargetHandle != 0,
+        ),
+      );
+    }
+    return null;
+  }
 
   Future<DigitorFlutterHostCapabilities> capabilities() async {
     final value = await _channel.invokeMapMethod<String, Object?>(
@@ -105,8 +148,27 @@ final class DigitorFlutterPlatformHost {
         'height': height,
       },
     );
+    return _targetFromMap(value, handleType);
+  }
+
+  /// Refreshes an Android SurfaceProducer target after a surface lifecycle
+  /// change. Descriptor-driven desktop/Apple hosts need no refresh.
+  Future<DigitorFlutterTextureTarget> refreshTextureTarget(
+    DigitorFlutterTextureTarget target,
+  ) async {
+    final value = await _channel.invokeMapMethod<String, Object?>(
+      'refreshTextureTarget',
+      <String, Object>{'textureId': target.textureId},
+    );
+    return _targetFromMap(value, target.requestedHandleType);
+  }
+
+  DigitorFlutterTextureTarget _targetFromMap(
+    Map<String, Object?>? value,
+    DigitorNativeTextureHandleType handleType,
+  ) {
     if (value == null) {
-      throw StateError('Flutter platform host failed to create a texture.');
+      throw StateError('Flutter platform host failed to return a texture.');
     }
     final textureId = value['textureId'];
     if (textureId is! int || textureId < 0) {
@@ -160,6 +222,13 @@ final class DigitorFlutterPlatformHost {
       _channel.invokeMethod<void>('disposeTexture', <String, Object>{
         'textureId': target.textureId,
       });
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _channel.setMethodCallHandler(null);
+    await _targetChanges.close();
+  }
 
   static Map<String, Object> descriptorArguments(
     DigitorNativeGpuTextureFrame frame,
