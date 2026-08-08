@@ -95,9 +95,23 @@ jobs:
                   raise SystemExit(f'Could not update deployment target in {path}')
               path.write_text(updated)
 
+          set_project_target(
+              Path('macos/Runner.xcodeproj/project.pbxproj'),
+              r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
+              'MACOSX_DEPLOYMENT_TARGET = 11.0;')
+          set_project_target(
+              Path('ios/Runner.xcodeproj/project.pbxproj'),
+              r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
+              'IPHONEOS_DEPLOYMENT_TARGET = 13.0;')
+          PY
+          flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
           def set_pod_platform(path, platform, version):
               if not path.exists():
-                  raise SystemExit(f'Missing CocoaPods Podfile: {path}')
+                  raise SystemExit(f'CocoaPods Podfile was not generated after plugin registration: {path}')
               original = path.read_text()
               pattern = rf"^\s*#?\s*platform\s+:{platform},\s*['\"][^'\"]+['\"]\s*$"
               replacement = f"platform :{platform}, '{version}'"
@@ -107,19 +121,10 @@ jobs:
                   updated = replacement + '\n' + original
               path.write_text(updated)
 
-          set_project_target(
-              Path('macos/Runner.xcodeproj/project.pbxproj'),
-              r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
-              'MACOSX_DEPLOYMENT_TARGET = 11.0;')
-          set_project_target(
-              Path('ios/Runner.xcodeproj/project.pbxproj'),
-              r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
-              'IPHONEOS_DEPLOYMENT_TARGET = 13.0;')
           set_pod_platform(Path('macos/Podfile'), 'osx', '11.0')
           set_pod_platform(Path('ios/Podfile'), 'ios', '13.0')
           PY
           grep -n "platform :osx, '11.0'" macos/Podfile
           grep -n "platform :ios, '13.0'" ios/Podfile
-          flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
           flutter build macos --debug
           flutter build ios --debug --no-codesign
