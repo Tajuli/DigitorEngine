@@ -35,11 +35,15 @@ struct NativeNodeGraphResult {
 };
 NativeNodeGraphPreflight preflight_native_node_graph(
  const IRenderBackend&, const ProductionNodeGraph&) noexcept;
-// Strict GPU-only executor. It never invokes ProductionNodeGraph::render and
-// never reads an intermediate frame back to the CPU. Unsupported operations
-// are reported explicitly so a selected GPU backend can never silently fall
-// back to the reference implementation.
+// Strict GPU-only executor for CPU source pixels. The source is uploaded once
+// through the selected backend and every subsequent node remains GPU-resident.
 NativeNodeGraphResult execute_native_node_graph(
  IRenderBackend&, const ProductionNodeGraph&, std::span<const Color>,
  std::uint32_t width, std::uint32_t height, std::int64_t timestamp) noexcept;
+// Strict GPU-resident overload used by production media decode. The decoder's
+// already-imported ProcessedGpuFrame is the graph input, so this path performs
+// no source upload, validation readback, or CPU fallback.
+NativeNodeGraphResult execute_native_node_graph(
+ IRenderBackend&, const ProductionNodeGraph&, const ProcessedGpuFramePtr&,
+ std::int64_t timestamp) noexcept;
 }

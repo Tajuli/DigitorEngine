@@ -64,9 +64,7 @@ Future<void> useEngine() async {
           saturation: 1.1,
         ),
       );
-
       await session.seek(0);
-
       final capabilities = session.previewCapabilities;
       print('Native GPU preview: ${capabilities.nativeGpuPreviewAvailable}');
     } finally {
@@ -79,6 +77,83 @@ Future<void> useEngine() async {
 ```
 
 `DigitorEngine.initialize()` is idempotent inside one Dart isolate. Sessions created by the facade are tracked and are disposed automatically by `engine.close()` if the app has not already disposed them.
+
+## Production node graph
+
+`DigitorNodeGraph` is the Flutter-facing owner of the engine's real production node graph. It exposes serial/parallel topology plus Primary Wheels, Log Wheels, RGB Curves, HSL Qualifier, Correction, LUT 1D/3D, effects and Power Windows. It does not implement a second Dart color pipeline.
+
+```dart
+final graph = DigitorNodeGraph.create();
+final nodes = graph.endpoints;
+final grade = graph.addSerialAfter(nodes.input, name: 'Grade 01');
+graph.select(grade);
+
+graph.addCorrection(
+  const DigitorCorrection(
+    exposure: 0.15,
+    contrast: 0.08,
+    saturation: 0.1,
+    temperature: 0.03,
+  ),
+);
+
+graph.addPrimaryWheels(
+  const DigitorPrimaryWheels(
+    lift: DigitorPrimaryWheel(master: -0.02),
+    gamma: DigitorPrimaryWheel(master: 0.03),
+    gain: DigitorPrimaryWheel(master: 0.05),
+  ),
+);
+
+print(graph.recipeIdentity);
+print(graph.json);
+```
+
+Every render-affecting mutation increments `graphRevision`; parameter mutations also increment `parameterRevision`. Production preview/export sessions bind both revisions so the host sees the same immutable recipe identity in both paths.
+
+## Production GPU Flutter bridge
+
+`DigitorProductionSession` is separate from the legacy compatibility SDK. It never returns a CPU preview buffer. A platform Flutter embedding layer supplies a `DigitorProductionHost` containing native function pointers for media open/decode/import, GPU render, Flutter texture presentation/capabilities, export, cancellation and resource release.
+
+```dart
+final production = DigitorProductionSession.open(
+  host: platformHost,
+  mediaPath: inputPath,
+  nodeGraph: graph,
+);
+
+final caps = production.previewCapabilities;
+if (!caps.nativeGpuPreviewAvailable || caps.cpuFallbackOnly) {
+  throw StateError(caps.reasonUnavailable);
+}
+
+final texture = production.preview(
+  timestampUs: 1_000_000,
+  width: 1920,
+  height: 1080,
+);
+
+// The platform texture registrar presents texture.nativeHandle using the
+// backend/handle/synchronization metadata in the descriptor. After Flutter's
+// raster consumer releases this generation:
+production.previewConsumed(texture.generation);
+
+// After changing graph parameters, refresh the exact revision before the next
+// preview or export.
+graph.addEffect(
+  const DigitorNodeEffect(
+    type: DigitorNodeEffectType.vignette,
+    amount: 0.15,
+  ),
+);
+production.bindNodeGraph(graph);
+```
+
+The production C ABI validates that returned preview descriptors are real GPU resources, are ready, match the requested dimensions/timestamp and (when configured) match the selected device/context identity. CPU pointers and CPU fallback descriptors are rejected. A preview texture remains owned by the session until `previewConsumed()`.
+
+The native engine also has a GPU-resident `ProcessedGpuFrame -> ProductionNodeGraph -> ProcessedGpuFrame` executor. A production decoder/importer can therefore feed an already imported hardware-decoded frame directly through the existing node graph without a source re-upload or validation readback.
+
+`DigitorProductionHost` is intentionally an embedding boundary: Flutter texture registrars and decoder surface importers are platform APIs and must be implemented by the Windows/Android/iOS/macOS host layer. The shared FFI contract does not fabricate native handles or silently substitute CPU pixels when that host is missing.
 
 ## Compatibility preview
 
@@ -111,7 +186,7 @@ hooks:
 
 Relative paths are resolved relative to the root `pubspec.yaml`. When `ffmpeg_root` is supplied, the build fails immediately if the required FFmpeg headers/libraries are not present instead of silently producing an export-disabled engine. Use an FFmpeg SDK built for the same target OS and architecture. If that SDK uses shared FFmpeg libraries rather than static libraries, those runtime dependencies must also be packaged by the application/platform distribution.
 
-With FFmpeg enabled:
+With FFmpeg enabled on the compatibility session:
 
 ```dart
 await session.export(
@@ -128,7 +203,9 @@ await session.export(
 );
 ```
 
-Without FFmpeg, the engine core, renderer selection, SDK session, color controls, and compatibility preview remain available; real FFmpeg export is unavailable by design. Call `session.cancel()` to request cancellation of the active asynchronous session operation.
+The production session's export callback is owned by its platform host and receives the exact graph and parameter revisions bound to the session. If that host uses DigitorEngine's FFmpeg export path, the same target-compatible FFmpeg SDK requirements apply.
+
+Without FFmpeg, the engine core, renderer selection, SDK session, color controls, node graph and compatibility preview remain available; the FFmpeg-backed real media export path is unavailable by design.
 
 ## Backend selection
 
@@ -146,13 +223,15 @@ The engine's production policy remains GPU-first. Once a GPU backend has been se
 ## Lifetime rules
 
 - Initialize the process-wide engine before creating sessions.
-- Keep a session alive until its async operation completes or is cancelled.
-- Do not start two async operations on the same session concurrently.
-- Mutation methods reject calls while a session operation is active.
-- Dispose sessions before closing the engine.
-- `DigitorEngine.close()` also disposes sessions created by that instance.
+- Keep a session alive until its operation completes or is cancelled.
+- Dispose production sessions before disposing a bound `DigitorNodeGraph`.
+- Each `DigitorProductionSession` is pinned to one `DigitorNodeGraph`; create a new production session to switch to a different graph.
+- A production preview generation must be acknowledged with `previewConsumed()` before the graph is rebound or another preview/export begins.
+- Do not mutate/rebind a production graph while a production operation is active.
+- Dispose compatibility sessions before closing the engine.
+- `DigitorEngine.close()` also disposes compatibility sessions created by that instance.
 - A compatibility preview copies native RGBA data before returning, so the returned `Uint8List` is independent of the next native preview request.
 
 ## Native production preview boundary
 
-The native engine contains a production GPU-frame/runtime path, but the current generic FFI package does not claim that a Flutter texture registrar is automatically bound on every platform. The package exposes native preview capabilities rather than silently substituting a CPU pointer for a native GPU resource. Platform-specific zero-copy presentation can be added behind the same public capability contract without changing normal Flutter app initialization.
+The shared package now exposes the production node graph, a strict native-GPU texture descriptor, revision-pinned preview/export orchestration and the platform host ABI. Real Flutter `Texture` registration itself remains platform embedding work: Windows, Android, iOS and macOS hosts must connect their registrar and the selected renderer's real device/context. Missing or incompatible native presentation fails closed instead of becoming a CPU preview under a GPU label.
