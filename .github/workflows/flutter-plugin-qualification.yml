@@ -9,6 +9,7 @@ on:
       - 'src/gpu/native_node_platform_factories.cpp'
       - 'src/gpu/native_node_metal_factory.mm'
       - 'src/gpu/vulkan_backend.cpp'
+      - 'src/gpu/node_graph.cpp'
       - '.github/workflows/flutter-plugin-qualification.yml'
   workflow_dispatch:
 
@@ -87,21 +88,38 @@ jobs:
           from pathlib import Path
           import re
 
-          targets = [
-              (Path('macos/Runner.xcodeproj/project.pbxproj'),
-               r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
-               'MACOSX_DEPLOYMENT_TARGET = 11.0;'),
-              (Path('ios/Runner.xcodeproj/project.pbxproj'),
-               r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
-               'IPHONEOS_DEPLOYMENT_TARGET = 13.0;'),
-          ]
-          for path, pattern, replacement in targets:
+          def set_project_target(path, pattern, replacement):
               original = path.read_text()
               updated, count = re.subn(pattern, replacement, original)
               if count == 0:
                   raise SystemExit(f'Could not update deployment target in {path}')
               path.write_text(updated)
+
+          def set_pod_platform(path, platform, version):
+              if not path.exists():
+                  raise SystemExit(f'Missing generated Podfile: {path}')
+              original = path.read_text()
+              pattern = rf"^\s*#?\s*platform\s+:{platform},\s*['\"][^'\"]+['\"]\s*$"
+              replacement = f"platform :{platform}, '{version}'"
+              updated, count = re.subn(pattern, replacement, original,
+                                       flags=re.MULTILINE)
+              if count == 0:
+                  updated = replacement + '\n' + original
+              path.write_text(updated)
+
+          set_project_target(
+              Path('macos/Runner.xcodeproj/project.pbxproj'),
+              r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
+              'MACOSX_DEPLOYMENT_TARGET = 11.0;')
+          set_project_target(
+              Path('ios/Runner.xcodeproj/project.pbxproj'),
+              r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
+              'IPHONEOS_DEPLOYMENT_TARGET = 13.0;')
+          set_pod_platform(Path('macos/Podfile'), 'osx', '11.0')
+          set_pod_platform(Path('ios/Podfile'), 'ios', '13.0')
           PY
+          grep -n "platform :osx, '11.0'" macos/Podfile
+          grep -n "platform :ios, '13.0'" ios/Podfile
           flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
           flutter build macos --debug
           flutter build ios --debug --no-codesign
