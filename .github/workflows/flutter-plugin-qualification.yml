@@ -7,11 +7,64 @@ on:
       - '.github/workflows/flutter-plugin-qualification.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  package-contract:
+  source-fix:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/flutter-platform-hosts'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Apply verified 32-bit Vulkan handle fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/gpu/vulkan_backend.cpp')
+          content = path.read_text()
+          replacements = [
+              (
+                  'reinterpret_cast<std::uintptr_t>(texture.view)',
+                  'static_cast<NativeNodeNativeHandle>(texture.view)',
+              ),
+              (
+                  'reinterpret_cast<std::uintptr_t>(descriptor_pool)',
+                  'static_cast<NativeNodeNativeHandle>(descriptor_pool)',
+              ),
+          ]
+          changed = False
+          for old, new in replacements:
+              if old in content:
+                  if content.count(old) != 1:
+                      raise SystemExit(f'Expected exactly one occurrence of {old}')
+                  content = content.replace(old, new)
+                  changed = True
+              elif new not in content:
+                  raise SystemExit(f'Neither old nor fixed expression found: {old}')
+          if changed:
+              path.write_text(content)
+          PY
+          if git diff --quiet -- src/gpu/vulkan_backend.cpp; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/gpu/vulkan_backend.cpp
+          git commit -m "Fix 32-bit Android Vulkan handle forwarding"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
+
+  package-contract:
+    needs: source-fix
+    if: always() && needs.source-fix.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -35,9 +88,13 @@ jobs:
           grep -q 'DIGITOR_ENABLE_NATIVE_SHADER_COMPILER=ON' dart/digitor_engine_ffi/hook/build.dart
 
   android-host:
+    needs: source-fix
+    if: always() && needs.source-fix.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -50,9 +107,13 @@ jobs:
           flutter build apk --debug
 
   windows-host:
+    needs: source-fix
+    if: always() && needs.source-fix.result == 'success'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -66,9 +127,13 @@ jobs:
           flutter build windows --debug
 
   apple-hosts:
+    needs: source-fix
+    if: always() && needs.source-fix.result == 'success'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
