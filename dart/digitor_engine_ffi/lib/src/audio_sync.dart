@@ -47,7 +47,7 @@ final class DigitorAudioSyncSnapshot {
 
 final class DigitorAudioSync {
   DigitorAudioSync({DynamicLibrary? library})
-      : _library = library ?? DigitorLibraryLoader.open() {
+    : _library = library ?? DigitorLibraryLoader.open() {
     _probe = _library.lookupFunction<_ProbeNative, _ProbeDart>(
       'digitor_audio_sync_probe',
     );
@@ -76,8 +76,10 @@ final class DigitorAudioSync {
   }
 
   int compensateClock(int audioClockUs, DigitorAudioSyncSnapshot snapshot) {
-    final native =
-        _probe(snapshot.manualOffsetUs, snapshot.manualOverride ? 1 : 0);
+    final native = _probe(
+      snapshot.manualOffsetUs,
+      snapshot.manualOverride ? 1 : 0,
+    );
     return _compensate(audioClockUs, native);
   }
 }

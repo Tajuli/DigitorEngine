@@ -6,20 +6,22 @@ final class DigitorSdkWorkerHandle extends Opaque {}
 typedef _ProgressNative = Void Function(Pointer<Void>, Uint64, Uint64);
 typedef _CompletionNative = Void Function(Pointer<Void>, Int32);
 
-typedef _CreateNative = Pointer<DigitorSdkWorkerHandle> Function(
-  Int32,
-  Uint64,
-  Pointer<NativeFunction<_ProgressNative>>,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
-typedef _CreateDart = Pointer<DigitorSdkWorkerHandle> Function(
-  int,
-  int,
-  Pointer<NativeFunction<_ProgressNative>>,
-  Pointer<NativeFunction<_CompletionNative>>,
-  Pointer<Void>,
-);
+typedef _CreateNative =
+    Pointer<DigitorSdkWorkerHandle> Function(
+      Int32,
+      Uint64,
+      Pointer<NativeFunction<_ProgressNative>>,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
+typedef _CreateDart =
+    Pointer<DigitorSdkWorkerHandle> Function(
+      int,
+      int,
+      Pointer<NativeFunction<_ProgressNative>>,
+      Pointer<NativeFunction<_CompletionNative>>,
+      Pointer<Void>,
+    );
 typedef _CommandNative = Int32 Function(Pointer<DigitorSdkWorkerHandle>);
 typedef _CommandDart = int Function(Pointer<DigitorSdkWorkerHandle>);
 typedef _DestroyNative = Void Function(Pointer<DigitorSdkWorkerHandle>);
@@ -55,18 +57,21 @@ final class DigitorSdkWorker {
         StreamController<DigitorWorkerProgress>.broadcast();
     final completionController =
         StreamController<DigitorWorkerCompletion>.broadcast();
-    final progress = NativeCallable<_ProgressNative>.listener(
-      (Pointer<Void> _, int completed, int total) {
-        progressController.add(DigitorWorkerProgress(completed, total));
-      },
-    );
-    final completion = NativeCallable<_CompletionNative>.listener(
-      (Pointer<Void> _, int result) {
-        if (result >= 0 && result < DigitorWorkerCompletion.values.length) {
-          completionController.add(DigitorWorkerCompletion.values[result]);
-        }
-      },
-    );
+    final progress = NativeCallable<_ProgressNative>.listener((
+      Pointer<Void> _,
+      int completed,
+      int total,
+    ) {
+      progressController.add(DigitorWorkerProgress(completed, total));
+    });
+    final completion = NativeCallable<_CompletionNative>.listener((
+      Pointer<Void> _,
+      int result,
+    ) {
+      if (result >= 0 && result < DigitorWorkerCompletion.values.length) {
+        completionController.add(DigitorWorkerCompletion.values[result]);
+      }
+    });
     final create = library.lookupFunction<_CreateNative, _CreateDart>(
       'digitor_sdk_worker_create',
     );
@@ -83,19 +88,19 @@ final class DigitorSdkWorker {
       throw StateError('Native SDK worker creation failed');
     }
     return DigitorSdkWorker._(
-      handle,
-      library.lookupFunction<_CommandNative, _CommandDart>(
-        'digitor_sdk_worker_start',
-      ),
-      library.lookupFunction<_CommandNative, _CommandDart>(
-        'digitor_sdk_worker_cancel',
-      ),
-      library.lookupFunction<_DestroyNative, _DestroyDart>(
-        'digitor_sdk_worker_destroy',
-      ),
-      progress,
-      completion,
-    )
+        handle,
+        library.lookupFunction<_CommandNative, _CommandDart>(
+          'digitor_sdk_worker_start',
+        ),
+        library.lookupFunction<_CommandNative, _CommandDart>(
+          'digitor_sdk_worker_cancel',
+        ),
+        library.lookupFunction<_DestroyNative, _DestroyDart>(
+          'digitor_sdk_worker_destroy',
+        ),
+        progress,
+        completion,
+      )
       .._progressController = progressController
       .._completionController = completionController;
   }

@@ -11,7 +11,7 @@ enum DigitorExportJobState {
   paused,
   completed,
   cancelled,
-  failed
+  failed,
 }
 
 final class DigitorExportJobConfig {
@@ -137,14 +137,9 @@ typedef _CreateNative = Pointer<Void> Function(Pointer<_NativeConfig>);
 typedef _CreateDart = Pointer<Void> Function(Pointer<_NativeConfig>);
 typedef _ActionNative = Int32 Function(Pointer<Void>);
 typedef _ActionDart = int Function(Pointer<Void>);
-typedef _SnapshotNative = Int32 Function(
-  Pointer<Void>,
-  Pointer<_NativeSnapshot>,
-);
-typedef _SnapshotDart = int Function(
-  Pointer<Void>,
-  Pointer<_NativeSnapshot>,
-);
+typedef _SnapshotNative =
+    Int32 Function(Pointer<Void>, Pointer<_NativeSnapshot>);
+typedef _SnapshotDart = int Function(Pointer<Void>, Pointer<_NativeSnapshot>);
 typedef _DestroyNative = Void Function(Pointer<Void>);
 typedef _DestroyDart = void Function(Pointer<Void>);
 
@@ -154,7 +149,7 @@ final class DigitorExportJob {
     DynamicLibrary? library,
     String? libraryPath,
   }) : _library =
-            library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
+           library ?? DigitorLibraryLoader.open(overridePath: libraryPath) {
     _bind();
     final native = calloc<_NativeConfig>();
     final strings = <Pointer<Utf8>>[
