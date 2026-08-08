@@ -78,6 +78,25 @@ jobs:
           flutter config --enable-macos-desktop
           flutter create --empty --platforms=ios,macos "$RUNNER_TEMP/digitor_host_app"
           cd "$RUNNER_TEMP/digitor_host_app"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          targets = [
+              (Path('macos/Runner.xcodeproj/project.pbxproj'),
+               r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
+               'MACOSX_DEPLOYMENT_TARGET = 11.0;'),
+              (Path('ios/Runner.xcodeproj/project.pbxproj'),
+               r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
+               'IPHONEOS_DEPLOYMENT_TARGET = 13.0;'),
+          ]
+          for path, pattern, replacement in targets:
+              original = path.read_text()
+              updated, count = re.subn(pattern, replacement, original)
+              if count == 0:
+                  raise SystemExit(f'Could not update deployment target in {path}')
+              path.write_text(updated)
+          PY
           flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
           flutter build macos --debug
           flutter build ios --debug --no-codesign
