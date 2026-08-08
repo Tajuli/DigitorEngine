@@ -5,6 +5,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include "digitor/native_node_pipeline_objects.hpp"
 
@@ -16,6 +17,18 @@ namespace digitor {
 // handles and convert at the backend boundary.
 using NativeNodeNativeHandle = std::uint64_t;
 static_assert(sizeof(NativeNodeNativeHandle) >= sizeof(std::uint64_t));
+
+template <typename Handle>
+[[nodiscard]] inline NativeNodeNativeHandle encode_native_node_handle(
+    Handle handle) noexcept {
+  using HandleValue = std::remove_cv_t<Handle>;
+  if constexpr (std::is_pointer_v<HandleValue>) {
+    return static_cast<NativeNodeNativeHandle>(
+        reinterpret_cast<std::uintptr_t>(handle));
+  } else {
+    return static_cast<NativeNodeNativeHandle>(handle);
+  }
+}
 
 enum class NativeNodeBinaryFormat : std::uint32_t { spirv=0, dxil=1, metallib=2, glsl_es=3 };
 
