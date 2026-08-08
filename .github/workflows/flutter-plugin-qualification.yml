@@ -128,4 +128,4 @@ jobs:
           grep -n "platform :osx, '11.0'" macos/Podfile
           grep -n "platform :ios, '13.0'" ios/Podfile
           flutter build macos --debug
-          flutter build ios --debug --no-codesign
+          flutter build ios --debug --simulator
