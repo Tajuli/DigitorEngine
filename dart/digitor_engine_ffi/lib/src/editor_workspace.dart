@@ -5,18 +5,21 @@ import 'node_graph.dart';
 import 'platform_host.dart';
 import 'production_media.dart';
 import 'production_media_pipeline.dart';
+import 'session.dart';
 
 /// High-level Digitor editor workspace owned entirely by DigitorEngine.
 ///
 /// Applications may keep UI state around this object, but they must not own
-/// decoder, renderer, graph-processing, preview-host, or export-processing
-/// implementations. Those responsibilities stay behind this facade.
+/// decoder, renderer, graph-processing, preview-host, timeline-processing, or
+/// export-processing implementations. Those responsibilities stay behind this
+/// facade.
 final class DigitorEditorWorkspace {
   DigitorEditorWorkspace._({
     required DigitorEngine engine,
     required DigitorNodeGraph graph,
     required DigitorProductionMediaPipeline mediaPipeline,
     required DigitorFlutterPlatformHost platformHost,
+    required DigitorTimelineSession timeline,
     required DigitorRendererInfo renderer,
     required DigitorFlutterHostCapabilities? hostCapabilities,
     required int selectedNode,
@@ -24,6 +27,7 @@ final class DigitorEditorWorkspace {
         _graph = graph,
         _mediaPipeline = mediaPipeline,
         _platformHost = platformHost,
+        _timeline = timeline,
         _renderer = renderer,
         _hostCapabilities = hostCapabilities,
         _selectedNode = selectedNode;
@@ -31,19 +35,30 @@ final class DigitorEditorWorkspace {
   static Future<DigitorEditorWorkspace> create({
     DigitorBackend preferredBackend = DigitorBackend.automatic,
     bool allowCpuFallback = true,
+    int sampleRate = 48000,
+    int channels = 2,
   }) async {
     final engine = DigitorEngine.initialize(
       preferredBackend: preferredBackend,
       allowCpuFallback: allowCpuFallback,
     );
+    DigitorNodeGraph? graph;
+    DigitorProductionMediaPipeline? mediaPipeline;
+    DigitorFlutterPlatformHost? platformHost;
+    DigitorTimelineSession? timeline;
     try {
       final renderer = engine.rendererInfo;
-      final graph = DigitorNodeGraph.create();
+      graph = DigitorNodeGraph.create();
       final endpoints = graph.endpoints;
       final selected = graph.addSerialAfter(endpoints.input, name: 'Grade 01');
       graph.select(selected);
-      final mediaPipeline = DigitorProductionMediaPipeline(renderer: renderer);
-      final platformHost = DigitorFlutterPlatformHost();
+      mediaPipeline = DigitorProductionMediaPipeline(renderer: renderer);
+      platformHost = DigitorFlutterPlatformHost();
+      timeline = DigitorTimelineSession.create(
+        sampleRate: sampleRate,
+        channels: channels,
+        durationUs: 0,
+      );
       DigitorFlutterHostCapabilities? capabilities;
       try {
         capabilities = await platformHost.capabilities();
@@ -55,11 +70,16 @@ final class DigitorEditorWorkspace {
         graph: graph,
         mediaPipeline: mediaPipeline,
         platformHost: platformHost,
+        timeline: timeline,
         renderer: renderer,
         hostCapabilities: capabilities,
         selectedNode: selected,
       );
     } catch (_) {
+      timeline?.dispose();
+      mediaPipeline?.close();
+      graph?.dispose();
+      if (platformHost != null) await platformHost.close();
       await engine.close();
       rethrow;
     }
@@ -69,10 +89,12 @@ final class DigitorEditorWorkspace {
   final DigitorNodeGraph _graph;
   final DigitorProductionMediaPipeline _mediaPipeline;
   final DigitorFlutterPlatformHost _platformHost;
+  final DigitorTimelineSession _timeline;
   final DigitorRendererInfo _renderer;
   final DigitorFlutterHostCapabilities? _hostCapabilities;
   int? _selectedNode;
   DigitorProductionMediaSnapshot? _media;
+  int _timelineRevision = 0;
   bool _closed = false;
 
   DigitorRendererInfo get renderer => _renderer;
@@ -87,7 +109,59 @@ final class DigitorEditorWorkspace {
     _ensureOpen();
     final snapshot = _mediaPipeline.open(path);
     _media = snapshot;
+    _timelineRevision += 1;
+    _timeline.publish(
+      revision: _timelineRevision,
+      durationUs: 0,
+      videoTrackCount: 1,
+      audioTrackCount: 1,
+    );
     return snapshot;
+  }
+
+  DigitorTimelineStatus timelineStatus() {
+    _ensureOpen();
+    return _timeline.status();
+  }
+
+  DigitorTimelineTelemetry timelineTelemetry() {
+    _ensureOpen();
+    return _timeline.telemetry();
+  }
+
+  void play() {
+    _ensureOpen();
+    _timeline.play();
+  }
+
+  void pause() {
+    _ensureOpen();
+    _timeline.pause();
+  }
+
+  void stop() {
+    _ensureOpen();
+    _timeline.stop();
+  }
+
+  void seek(int positionUs) {
+    _ensureOpen();
+    _timeline.seek(positionUs);
+  }
+
+  void setAudioControls({
+    required double masterGainDb,
+    required double playbackRate,
+    required bool preservePitch,
+    required bool enableDynamics,
+  }) {
+    _ensureOpen();
+    _timeline.setAudioControls(
+      masterGainDb: masterGainDb,
+      playbackRate: playbackRate,
+      preservePitch: preservePitch,
+      enableDynamics: enableDynamics,
+    );
   }
 
   void selectNode(int node) {
@@ -224,6 +298,7 @@ final class DigitorEditorWorkspace {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _timeline.dispose();
     _mediaPipeline.close();
     _graph.dispose();
     await _platformHost.close();
