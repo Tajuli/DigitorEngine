@@ -4,6 +4,15 @@ on:
   pull_request:
     paths:
       - 'dart/digitor_engine_ffi/**'
+      - 'CMakeLists.txt'
+      - 'include/digitor/native_node_backend_runtime.hpp'
+      - 'include/digitor/native_node_platform_factories.hpp'
+      - 'src/audio/audio_latency_probe.cpp'
+      - 'src/gpu/native_node_platform_factories.cpp'
+      - 'src/gpu/native_node_metal_factory.mm'
+      - 'src/gpu/vulkan_backend.cpp'
+      - 'src/gpu/node_graph.cpp'
+      - 'src/gpu/shader.cpp'
       - '.github/workflows/flutter-plugin-qualification.yml'
   workflow_dispatch:
 
@@ -18,12 +27,107 @@ jobs:
       - working-directory: dart/digitor_engine_ffi
         run: flutter pub get
       - working-directory: dart/digitor_engine_ffi
-        run: dart format .
+        run: dart format lib test hook
       - working-directory: dart/digitor_engine_ffi
         run: flutter analyze --fatal-infos
       - working-directory: dart/digitor_engine_ffi
         run: flutter test
-      - run: test -f dart/digitor_engine_ffi/android/CMakeLists.txt
-      - run: test -f dart/digitor_engine_ffi/windows/CMakeLists.txt
-      - run: test -f dart/digitor_engine_ffi/ios/digitor_engine_ffi.podspec
-      - run: test -f dart/digitor_engine_ffi/macos/digitor_engine_ffi.podspec
+      - name: Verify production host sources
+        run: |
+          test -f dart/digitor_engine_ffi/android/src/main/kotlin/com/primedigitor/digitor_engine_ffi/DigitorEngineFfiPlugin.kt
+          test -f dart/digitor_engine_ffi/android/src/main/cpp/platform_host_jni.cpp
+          test -f dart/digitor_engine_ffi/windows/digitor_engine_ffi_plugin.cpp
+          test -f dart/digitor_engine_ffi/ios/Classes/DigitorEngineFfiPlugin.mm
+          test -f dart/digitor_engine_ffi/macos/Classes/DigitorEngineFfiPlugin.mm
+          grep -q 'DIGITOR_ENABLE_FFMPEG=ON' dart/digitor_engine_ffi/hook/build.dart
+          grep -q 'DIGITOR_ENABLE_OCIO=ON' dart/digitor_engine_ffi/hook/build.dart
+          grep -q 'DIGITOR_ENABLE_NATIVE_SHADER_COMPILER=ON' dart/digitor_engine_ffi/hook/build.dart
+
+  android-host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Create Android integration app
+        shell: bash
+        run: |
+          flutter create --empty --platforms=android "$RUNNER_TEMP/digitor_host_app"
+          cd "$RUNNER_TEMP/digitor_host_app"
+          flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
+          flutter build apk --debug
+
+  windows-host:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Create Windows integration app
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create --empty --platforms=windows "$env:RUNNER_TEMP\digitor_host_app"
+          Set-Location "$env:RUNNER_TEMP\digitor_host_app"
+          flutter pub add digitor_engine_ffi --path "$env:GITHUB_WORKSPACE\dart\digitor_engine_ffi"
+          flutter build windows --debug
+
+  apple-hosts:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Create Apple integration app
+        shell: bash
+        run: |
+          flutter config --enable-macos-desktop --no-enable-swift-package-manager
+          flutter create --empty --platforms=ios,macos "$RUNNER_TEMP/digitor_host_app"
+          cd "$RUNNER_TEMP/digitor_host_app"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def set_project_target(path, pattern, replacement):
+              original = path.read_text()
+              updated, count = re.subn(pattern, replacement, original)
+              if count == 0:
+                  raise SystemExit(f'Could not update deployment target in {path}')
+              path.write_text(updated)
+
+          set_project_target(
+              Path('macos/Runner.xcodeproj/project.pbxproj'),
+              r'MACOSX_DEPLOYMENT_TARGET = [^;]+;',
+              'MACOSX_DEPLOYMENT_TARGET = 11.0;')
+          set_project_target(
+              Path('ios/Runner.xcodeproj/project.pbxproj'),
+              r'IPHONEOS_DEPLOYMENT_TARGET = [^;]+;',
+              'IPHONEOS_DEPLOYMENT_TARGET = 13.0;')
+          PY
+          flutter pub add digitor_engine_ffi --path "$GITHUB_WORKSPACE/dart/digitor_engine_ffi"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def set_pod_platform(path, platform, version):
+              if not path.exists():
+                  raise SystemExit(f'CocoaPods Podfile was not generated after plugin registration: {path}')
+              original = path.read_text()
+              pattern = rf"^\s*#?\s*platform\s+:{platform},\s*['\"][^'\"]+['\"]\s*$"
+              replacement = f"platform :{platform}, '{version}'"
+              updated, count = re.subn(pattern, replacement, original,
+                                       flags=re.MULTILINE)
+              if count == 0:
+                  updated = replacement + '\n' + original
+              path.write_text(updated)
+
+          set_pod_platform(Path('macos/Podfile'), 'osx', '11.0')
+          set_pod_platform(Path('ios/Podfile'), 'ios', '13.0')
+          PY
+          grep -n "platform :osx, '11.0'" macos/Podfile
+          grep -n "platform :ios, '13.0'" ios/Podfile
+          flutter build macos --debug
+          flutter build ios --debug --simulator

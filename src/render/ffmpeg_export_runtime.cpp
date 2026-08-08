@@ -4,6 +4,10 @@
 #include <fstream>
 #include <sstream>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 namespace digitor {
 namespace {
 std::string quote(const std::string& value) {
@@ -19,12 +23,20 @@ std::string quote(const std::string& value) {
 }
 
 int default_execute(const std::vector<std::string>& args) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+  // iOS does not allow spawning an external FFmpeg CLI process. Callers may
+  // still inject a ProcessExecutor, while native/library and hardware export
+  // paths remain available through their dedicated engine runtimes.
+  (void)args;
+  return -1;
+#else
   std::ostringstream command;
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (i) command << ' ';
     command << quote(args[i]);
   }
   return std::system(command.str().c_str());
+#endif
 }
 
 std::string codec_name(ExportCodec codec) {

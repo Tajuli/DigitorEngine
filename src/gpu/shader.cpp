@@ -14,6 +14,10 @@
 #include <system_error>
 #include <thread>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 namespace digitor {
 namespace {
 std::string hash_bytes(std::span<const std::byte> bytes) {
@@ -24,7 +28,10 @@ std::string hash_bytes(std::span<const std::byte> bytes) {
 std::string hash_string(std::string_view s){return hash_bytes({reinterpret_cast<const std::byte*>(s.data()),s.size()});}
 std::string quote(const std::filesystem::path&p){std::string s=p.string(),o="\"";for(char c:s){if(c=='\"')o+='\\';o+=c;}return o+'\"';}
 int run_shell_command(const std::string& command){
-#ifdef _WIN32
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    (void)command;
+    return -1;
+#elif defined(_WIN32)
     const std::string wrapped = "\"" + command + "\"";
     return std::system(wrapped.c_str());
 #else

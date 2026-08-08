@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <unordered_set>
 namespace digitor {
-std::size_t NodeGraph::Hash::operator()(const Key&k)const noexcept{std::size_t h=std::hash<NodeId>{}(k.node);h^=std::hash<std::int64_t>{}(k.frame)+0x9e3779b9+(h<<6)+(h>>2);h^=std::size_t(k.width)<<32|k.height;h^=k.values_hash+0x9e3779b9+(h<<6)+(h>>2);return h;}
+std::size_t NodeGraph::Hash::operator()(const Key&k)const noexcept{std::size_t h=std::hash<NodeId>{}(k.node);h^=std::hash<std::int64_t>{}(k.frame)+0x9e3779b9+(h<<6)+(h>>2);h^=std::hash<std::uint32_t>{}(k.width)+0x9e3779b9+(h<<6)+(h>>2);h^=std::hash<std::uint32_t>{}(k.height)+0x9e3779b9+(h<<6)+(h>>2);h^=k.values_hash+0x9e3779b9+(h<<6)+(h>>2);return h;}
 NodeId NodeGraph::add_node(std::string n,NodeProcessor p,std::string s){if(n.empty())throw std::invalid_argument("empty node name");NodeId id=next_++;nodes_.emplace(id,Node{id,std::move(n),std::move(s),{},std::move(p)});clear_cache();return id;}
 const Node&NodeGraph::node(NodeId id)const{auto i=nodes_.find(id);if(i==nodes_.end())throw std::out_of_range("node");return i->second;}
 void NodeGraph::connect(NodeId src,NodeId dst){node(src);auto i=nodes_.find(dst);if(i==nodes_.end()||src==dst)throw std::invalid_argument("invalid connection");i->second.inputs.push_back(src);try{execution_order(dst);}catch(...){i->second.inputs.pop_back();throw;}clear_cache();}

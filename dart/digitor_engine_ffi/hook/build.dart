@@ -56,15 +56,21 @@ Future<void> main(List<String> arguments) async {
       engineRoot.toFilePath(),
       '-B',
       buildDirectory.toFilePath(),
+      '-DDIGITOR_BUILD_SHARED=ON',
       '-DBUILD_SHARED_LIBS=ON',
       '-DDIGITOR_BUILD_TESTS=OFF',
       '-DDIGITOR_BUILD_EXAMPLES=OFF',
-      '-DDIGITOR_ENABLE_FFMPEG=${ffmpegRoot == null ? 'OFF' : 'ON'}',
+      // Keep the engine feature defaults enabled. Optional dependencies are
+      // discovered by CMake and report explicit unavailability when missing.
+      // An explicit FFmpeg root upgrades that dependency to required so a
+      // misconfigured production build cannot silently lose media support.
+      '-DDIGITOR_ENABLE_FFMPEG=ON',
       '-DDIGITOR_REQUIRE_FFMPEG=${ffmpegRoot == null ? 'OFF' : 'ON'}',
       if (ffmpegRoot != null)
         '-DDIGITOR_FFMPEG_ROOT=${ffmpegRoot.toFilePath()}',
-      '-DDIGITOR_ENABLE_OCIO=OFF',
-      '-DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=OFF',
+      '-DDIGITOR_ENABLE_OCIO=ON',
+      '-DDIGITOR_REQUIRE_OCIO=OFF',
+      '-DDIGITOR_ENABLE_NATIVE_SHADER_COMPILER=ON',
       '-DDIGITOR_WARNINGS_AS_ERRORS=OFF',
       '-DCMAKE_BUILD_TYPE=Release',
       '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=${outputRoot.toFilePath()}',

@@ -5,10 +5,30 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include "digitor/native_node_pipeline_objects.hpp"
 
 namespace digitor {
+
+// Native GPU APIs do not share the host pointer width. In particular Vulkan
+// non-dispatchable handles are 64-bit values even for 32-bit Android ABIs.
+// Keep the internal carrier wide enough for both pointer-backed and integer
+// handles and convert at the backend boundary.
+using NativeNodeNativeHandle = std::uint64_t;
+static_assert(sizeof(NativeNodeNativeHandle) >= sizeof(std::uint64_t));
+
+template <typename Handle>
+[[nodiscard]] inline NativeNodeNativeHandle encode_native_node_handle(
+    Handle handle) noexcept {
+  using HandleValue = std::remove_cv_t<Handle>;
+  if constexpr (std::is_pointer_v<HandleValue>) {
+    return static_cast<NativeNodeNativeHandle>(
+        reinterpret_cast<std::uintptr_t>(handle));
+  } else {
+    return static_cast<NativeNodeNativeHandle>(handle);
+  }
+}
 
 enum class NativeNodeBinaryFormat : std::uint32_t { spirv=0, dxil=1, metallib=2, glsl_es=3 };
 
@@ -21,7 +41,7 @@ struct NativeNodeShaderBinary {
 
 struct NativeNodeTextureBinding {
   std::uint32_t slot{};
-  std::uintptr_t native_texture{};
+  NativeNodeNativeHandle native_texture{};
   std::uint32_t width{};
   std::uint32_t height{};
 };
@@ -33,9 +53,9 @@ struct NativeNodeDispatchResources {
 };
 
 struct NativeNodeBackendPipelineHandle {
-  std::uintptr_t pipeline{};
-  std::uintptr_t layout{};
-  std::uintptr_t auxiliary{};
+  NativeNodeNativeHandle pipeline{};
+  NativeNodeNativeHandle layout{};
+  NativeNodeNativeHandle auxiliary{};
 };
 
 using NativeNodeCompileBinaryFn = std::function<bool(

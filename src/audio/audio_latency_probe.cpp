@@ -12,7 +12,12 @@
 #include <aaudio/AAudio.h>
 #include <dlfcn.h>
 #elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include <AudioToolbox/AudioToolbox.h>
+#else
 #include <CoreAudio/CoreAudio.h>
+#endif
 #endif
 
 namespace digitor {
@@ -81,7 +86,6 @@ AudioLatencyProbeResult probe_wasapi() noexcept {
     if (format != nullptr) CoTaskMemFree(format);
   }
 
-  // COM interfaces must be released before balancing CoInitializeEx.
   if (owns_com_initialization) CoUninitialize();
   return result;
 }
@@ -175,6 +179,66 @@ AudioLatencyProbeResult probe_aaudio() noexcept {
   api.unload();
   return result;
 }
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+AudioLatencyProbeResult probe_remote_io() noexcept {
+  AudioLatencyProbeResult result;
+  result.backend = AudioLatencyBackend::core_audio;
+
+  AudioComponentDescription description{};
+  description.componentType = kAudioUnitType_Output;
+  description.componentSubType = kAudioUnitSubType_RemoteIO;
+  description.componentManufacturer = kAudioUnitManufacturer_Apple;
+
+  const AudioComponent component = AudioComponentFindNext(nullptr, &description);
+  if (component == nullptr) {
+    result.diagnostic = "RemoteIO output component unavailable";
+    return result;
+  }
+
+  AudioUnit unit = nullptr;
+  OSStatus status = AudioComponentInstanceNew(component, &unit);
+  if (status != noErr || unit == nullptr) {
+    result.diagnostic = "RemoteIO output instance unavailable";
+    return result;
+  }
+
+  AudioStreamBasicDescription format{};
+  UInt32 format_size = sizeof(format);
+  status = AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
+                                kAudioUnitScope_Input, 0, &format, &format_size);
+
+  UInt32 maximum_frames = 0;
+  UInt32 frames_size = sizeof(maximum_frames);
+  if (status == noErr) {
+    status = AudioUnitGetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice,
+                                  kAudioUnitScope_Global, 0, &maximum_frames,
+                                  &frames_size);
+  }
+
+  Float64 unit_latency_seconds = 0.0;
+  UInt32 latency_size = sizeof(unit_latency_seconds);
+  const OSStatus latency_status = AudioUnitGetProperty(
+      unit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0,
+      &unit_latency_seconds, &latency_size);
+
+  AudioComponentInstanceDispose(unit);
+
+  if (status == noErr && format.mSampleRate > 0.0 && maximum_frames > 0) {
+    result.available = true;
+    result.sample_rate = static_cast<std::uint32_t>(format.mSampleRate + 0.5);
+    result.buffer_frames = maximum_frames;
+    result.device_latency_us =
+        latency_status == noErr && unit_latency_seconds > 0.0
+            ? static_cast<std::int64_t>(unit_latency_seconds * 1000000.0 + 0.5)
+            : 0;
+    result.buffer_latency_us = frames_to_us(result.buffer_frames, result.sample_rate);
+    result.total_latency_us = result.device_latency_us + result.buffer_latency_us;
+    result.diagnostic = "RemoteIO output unit latency and maximum render slice";
+  } else {
+    result.diagnostic = "RemoteIO output properties unavailable";
+  }
+  return result;
+}
 #elif defined(__APPLE__)
 AudioLatencyProbeResult probe_core_audio() noexcept {
   AudioLatencyProbeResult result;
@@ -242,6 +306,8 @@ AudioLatencyProbeResult probe_default_audio_output() noexcept {
   return probe_wasapi();
 #elif defined(__ANDROID__)
   return probe_aaudio();
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+  return probe_remote_io();
 #elif defined(__APPLE__)
   return probe_core_audio();
 #else
