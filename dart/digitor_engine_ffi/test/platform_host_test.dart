@@ -28,13 +28,10 @@ void main() {
     final capabilities = await host.capabilities();
 
     expect(capabilities.platform, 'windows');
-    expect(
-      capabilities.supportedHandleTypes,
-      <DigitorNativeTextureHandleType>{
-        DigitorNativeTextureHandleType.dxgiSharedHandle,
-        DigitorNativeTextureHandleType.d3d11Texture,
-      },
-    );
+    expect(capabilities.supportedHandleTypes, <DigitorNativeTextureHandleType>{
+      DigitorNativeTextureHandleType.dxgiSharedHandle,
+      DigitorNativeTextureHandleType.d3d11Texture,
+    });
     expect(capabilities.directDescriptorPresentation, isTrue);
     expect(capabilities.renderTargetPresentation, isFalse);
     await host.close();
@@ -80,7 +77,10 @@ void main() {
     expect(refreshSeen, isTrue);
     expect(refreshed.textureId, 44);
     expect(refreshed.nativeTargetHandle, 5678);
-    expect(refreshed.requestedHandleType, DigitorNativeTextureHandleType.vkImage);
+    expect(
+      refreshed.requestedHandleType,
+      DigitorNativeTextureHandleType.vkImage,
+    );
     await host.close();
   });
 
@@ -142,7 +142,10 @@ void main() {
     expect(arguments['acquireSyncHandle'], 301);
     expect(arguments['releaseSyncHandle'], 401);
     expect(arguments['ownershipToken'], 501);
-    expect(arguments['readiness'], DigitorNativeTextureReadiness.ready.nativeValue);
+    expect(
+      arguments['readiness'],
+      DigitorNativeTextureReadiness.ready.nativeValue,
+    );
     await host.close();
   });
 
@@ -199,32 +202,35 @@ void main() {
     await host.close();
   });
 
-  test('markFrameAvailable validates generation before platform call', () async {
-    var calls = 0;
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls++;
-      expect(call.method, 'markFrameAvailable');
-      expect(call.arguments, <String, Object>{
-        'textureId': 9,
-        'generation': 4,
+  test(
+    'markFrameAvailable validates generation before platform call',
+    () async {
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls++;
+        expect(call.method, 'markFrameAvailable');
+        expect(call.arguments, <String, Object>{
+          'textureId': 9,
+          'generation': 4,
+        });
+        return null;
       });
-      return null;
-    });
 
-    final host = DigitorFlutterPlatformHost(channel: channel);
-    const target = DigitorFlutterTextureTarget(
-      textureId: 9,
-      nativeTargetHandle: 88,
-      targetKind: 'android-native-window',
-      requestedHandleType: DigitorNativeTextureHandleType.vkImage,
-    );
+      final host = DigitorFlutterPlatformHost(channel: channel);
+      const target = DigitorFlutterTextureTarget(
+        textureId: 9,
+        nativeTargetHandle: 88,
+        targetKind: 'android-native-window',
+        requestedHandleType: DigitorNativeTextureHandleType.vkImage,
+      );
 
-    expect(
-      () => host.markFrameAvailable(target, generation: 0),
-      throwsArgumentError,
-    );
-    await host.markFrameAvailable(target, generation: 4);
-    expect(calls, 1);
-    await host.close();
-  });
+      expect(
+        () => host.markFrameAvailable(target, generation: 0),
+        throwsArgumentError,
+      );
+      await host.markFrameAvailable(target, generation: 4);
+      expect(calls, 1);
+      await host.close();
+    },
+  );
 }

@@ -63,7 +63,7 @@ final class DigitorFlutterRenderTargetChange {
 /// or GLES path can render without a Dart/CPU pixel copy.
 final class DigitorFlutterPlatformHost {
   DigitorFlutterPlatformHost({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel(channelName) {
+    : _channel = channel ?? const MethodChannel(channelName) {
     _channel.setMethodCallHandler(_handlePlatformCall);
   }
 
