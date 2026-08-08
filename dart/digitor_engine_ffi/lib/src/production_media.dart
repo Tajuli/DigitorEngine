@@ -78,10 +78,8 @@ enum DigitorNativeMediaHandleType {
 
   final int nativeValue;
 
-  static DigitorNativeMediaHandleType fromNative(int value) => values.firstWhere(
-    (item) => item.nativeValue == value,
-    orElse: () => none,
-  );
+  static DigitorNativeMediaHandleType fromNative(int value) => values
+      .firstWhere((item) => item.nativeValue == value, orElse: () => none);
 }
 
 enum DigitorNativeMediaPixelFormat {
@@ -99,11 +97,8 @@ enum DigitorNativeMediaPixelFormat {
 
   final int nativeValue;
 
-  static DigitorNativeMediaPixelFormat fromNative(int value) =>
-      values.firstWhere(
-        (item) => item.nativeValue == value,
-        orElse: () => unknown,
-      );
+  static DigitorNativeMediaPixelFormat fromNative(int value) => values
+      .firstWhere((item) => item.nativeValue == value, orElse: () => unknown);
 }
 
 enum DigitorNativeMediaSyncType {
@@ -594,7 +589,10 @@ external int _mediaGetInfo(
 @Native<Int32 Function(Pointer<_ProductionMediaSourceNative>, Int64)>(
   symbol: 'digitor_production_media_seek',
 )
-external int _mediaSeek(Pointer<_ProductionMediaSourceNative> source, int ptsUs);
+external int _mediaSeek(
+  Pointer<_ProductionMediaSourceNative> source,
+  int ptsUs,
+);
 
 @Native<
   Int32 Function(
