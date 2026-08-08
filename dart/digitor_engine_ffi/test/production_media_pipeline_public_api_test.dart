@@ -18,9 +18,4 @@ void main() {
     expect(pipeline.snapshot, isNull);
     pipeline.close();
   });
-
-  test('production snapshot exposes strict GPU policy state', () {
-    final snapshotType = DigitorProductionMediaSnapshot;
-    expect(snapshotType, isNotNull);
-  });
 }
