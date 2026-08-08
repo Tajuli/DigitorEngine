@@ -33,6 +33,7 @@ public:
   DigitorResult validation_readback_final_frame(const ProcessedGpuFramePtr&,std::span<Color>);
   DigitorResult present_gpu_frame(const ProcessedGpuFramePtr&);
   NativeNodeGraphResult execute_native_node_graph(const ProductionNodeGraph&,std::span<const Color>,std::uint32_t,std::uint32_t,std::int64_t);
+  NativeNodeGraphResult execute_native_node_graph(const ProductionNodeGraph&,const ProcessedGpuFramePtr&,std::int64_t);
 private:
   Engine() = default;
   mutable std::mutex mutex_;
