@@ -1,17 +1,17 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <cstddef>
 #include "digitor/native_node_backend_runtime.hpp"
 
 namespace digitor {
 
 struct NativeNodePlatformFactoryContext {
-  std::uintptr_t device{};
-  std::uintptr_t command_context{};
+  NativeNodeNativeHandle device{};
+  NativeNodeNativeHandle command_context{};
   // Vulkan: VkDescriptorPool. D3D12: ID3D12DescriptorHeap*.
-  std::uintptr_t descriptor_context{};
+  NativeNodeNativeHandle descriptor_context{};
   // D3D12 only: descriptor increment size.
   std::uint32_t descriptor_stride{};
 };
@@ -52,20 +52,22 @@ enum class NativeNodeAccessState : std::uint32_t {
 };
 
 struct NativeNodeTextureTransition {
-  std::uintptr_t native_resource{};
+  NativeNodeNativeHandle native_resource{};
   NativeNodeAccessState before{NativeNodeAccessState::unknown};
   NativeNodeAccessState after{NativeNodeAccessState::unknown};
 };
 
 struct NativeNodeRetiredDescriptor {
-  std::uintptr_t native_handle{};
+  NativeNodeNativeHandle native_handle{};
   std::uint64_t completion_value{};
 };
 
 class NativeNodeDescriptorRetirementQueue {
  public:
-  void retain(std::uintptr_t native_handle, std::uint64_t completion_value);
-  [[nodiscard]] std::vector<std::uintptr_t> collect(std::uint64_t completed_value);
+  void retain(NativeNodeNativeHandle native_handle,
+              std::uint64_t completion_value);
+  [[nodiscard]] std::vector<NativeNodeNativeHandle> collect(
+      std::uint64_t completed_value);
   [[nodiscard]] std::size_t size() const noexcept { return pending_.size(); }
   void clear() noexcept { pending_.clear(); }
  private:
