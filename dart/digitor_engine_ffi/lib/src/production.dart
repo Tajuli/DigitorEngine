@@ -47,10 +47,8 @@ enum DigitorNativeTextureReadiness {
   const DigitorNativeTextureReadiness(this.nativeValue);
   final int nativeValue;
 
-  static DigitorNativeTextureReadiness fromNative(int value) => values.firstWhere(
-    (item) => item.nativeValue == value,
-    orElse: () => notReady,
-  );
+  static DigitorNativeTextureReadiness fromNative(int value) => values
+      .firstWhere((item) => item.nativeValue == value, orElse: () => notReady);
 }
 
 /// Native GPU texture returned by the production preview path.
@@ -155,16 +153,17 @@ final class DigitorProductionHost {
       ..userData = userData ?? nullptr
       ..requiredDeviceIdentity = requiredDeviceIdentity
       ..requiredContextIdentity = requiredContextIdentity
-      ..openMedia = openMedia.cast<NativeFunction<DigitorFlutterOpenMediaNative>>()
-      ..renderFrame =
-          renderFrame.cast<NativeFunction<DigitorFlutterRenderFrameNative>>()
-      ..exportMedia =
-          exportMedia.cast<NativeFunction<DigitorFlutterExportMediaNative>>()
-      ..queryPreview =
-          queryPreview.cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
+      ..openMedia = openMedia
+          .cast<NativeFunction<DigitorFlutterOpenMediaNative>>()
+      ..renderFrame = renderFrame
+          .cast<NativeFunction<DigitorFlutterRenderFrameNative>>()
+      ..exportMedia = exportMedia
+          .cast<NativeFunction<DigitorFlutterExportMediaNative>>()
+      ..queryPreview = queryPreview
+          .cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
       ..cancel = cancel.cast<NativeFunction<DigitorFlutterCancelNative>>()
-      ..closeMedia =
-          closeMedia.cast<NativeFunction<DigitorFlutterCloseMediaNative>>()
+      ..closeMedia = closeMedia
+          .cast<NativeFunction<DigitorFlutterCloseMediaNative>>()
       ..releaseTexture = releaseTexture
           .cast<NativeFunction<DigitorFlutterReleaseTextureNative>>();
   }
@@ -220,6 +219,12 @@ final class DigitorProductionSession {
     if (_outstandingPreviewGeneration != null) {
       throw StateError(
         'Consume the current preview before rebinding the node graph.',
+      );
+    }
+    if (_graph != null && !identical(_graph, graph)) {
+      throw StateError(
+        'A production session is pinned to one node graph. '
+        'Create a new session to use a different graph.',
       );
     }
     _check(
@@ -282,7 +287,9 @@ final class DigitorProductionSession {
       throw StateError('Bind a node graph before preview.');
     }
     if (_outstandingPreviewGeneration != null) {
-      throw StateError('Call previewConsumed before requesting the next frame.');
+      throw StateError(
+        'Call previewConsumed before requesting the next frame.',
+      );
     }
     if (timestampUs < 0) {
       throw ArgumentError.value(timestampUs, 'timestampUs');
@@ -467,14 +474,21 @@ final class DigitorProductionSession {
     _ensureAlive();
     final size = calloc<Uint32>();
     try {
-      final first = digitorFlutterProductionGetLastError(_handle, nullptr, size);
+      final first = digitorFlutterProductionGetLastError(
+        _handle,
+        nullptr,
+        size,
+      );
       if (first != 0 || size.value == 0) {
         return '';
       }
       final buffer = calloc<Uint8>(size.value);
       try {
-        final result =
-            digitorFlutterProductionGetLastError(_handle, buffer, size);
+        final result = digitorFlutterProductionGetLastError(
+          _handle,
+          buffer,
+          size,
+        );
         if (result != 0) {
           return '';
         }

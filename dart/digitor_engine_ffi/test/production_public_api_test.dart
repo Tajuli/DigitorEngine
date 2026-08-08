@@ -36,23 +36,26 @@ void main() {
     expect(DigitorLutInterpolation.tetrahedral.index, 2);
   });
 
-  test('production controls are constructible without a native library call', () {
-    const correction = DigitorCorrection(
-      exposure: 0.1,
-      contrast: 0.2,
-      temperature: -0.1,
-      colorBoost: 0.3,
-    );
-    expect(correction.exposure, 0.1);
-    expect(correction.contrast, 0.2);
-    expect(correction.temperature, -0.1);
-    expect(correction.colorBoost, 0.3);
+  test(
+    'production controls are constructible without a native library call',
+    () {
+      const correction = DigitorCorrection(
+        exposure: 0.1,
+        contrast: 0.2,
+        temperature: -0.1,
+        colorBoost: 0.3,
+      );
+      expect(correction.exposure, 0.1);
+      expect(correction.contrast, 0.2);
+      expect(correction.temperature, -0.1);
+      expect(correction.colorBoost, 0.3);
 
-    const effect = DigitorNodeEffect(
-      type: DigitorNodeEffectType.vignette,
-      amount: 0.25,
-    );
-    expect(effect.type, DigitorNodeEffectType.vignette);
-    expect(effect.amount, 0.25);
-  });
+      const effect = DigitorNodeEffect(
+        type: DigitorNodeEffectType.vignette,
+        amount: 0.25,
+      );
+      expect(effect.type, DigitorNodeEffectType.vignette);
+      expect(effect.amount, 0.25);
+    },
+  );
 }

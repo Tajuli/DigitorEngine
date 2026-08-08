@@ -122,11 +122,7 @@ final class DigitorRgbCurves {
 }
 
 final class DigitorQualifierRange {
-  const DigitorQualifierRange({
-    this.low = 0,
-    this.high = 1,
-    this.softness = 0,
-  });
+  const DigitorQualifierRange({this.low = 0, this.high = 1, this.softness = 0});
   final double low;
   final double high;
   final double softness;
@@ -502,10 +498,7 @@ final class DigitorNodeGraph {
       writeChannel(controls.ref.green, curves.green);
       writeChannel(controls.ref.blue, curves.blue);
       controls.ref.lutSize = curves.lutSize;
-      _check(
-        'addRgbCurves',
-        digitorNodeGraphAddRgbCurves(_handle, controls),
-      );
+      _check('addRgbCurves', digitorNodeGraphAddRgbCurves(_handle, controls));
       _touchParameters();
     } finally {
       for (final allocation in allocations) {
@@ -553,10 +546,7 @@ final class DigitorNodeGraph {
         ..shadows = correction.shadows
         ..hue = correction.hue
         ..colorBoost = correction.colorBoost;
-      _check(
-        'addCorrection',
-        digitorNodeGraphAddCorrection(_handle, native),
-      );
+      _check('addCorrection', digitorNodeGraphAddCorrection(_handle, native));
       _touchParameters();
     } finally {
       calloc.free(native);
@@ -644,10 +634,7 @@ final class DigitorNodeGraph {
         ..feather = window.feather
         ..opacity = window.opacity
         ..invert = window.invert ? 1 : 0;
-      _check(
-        'addPowerWindow',
-        digitorNodeGraphAddPowerWindow(_handle, native),
-      );
+      _check('addPowerWindow', digitorNodeGraphAddPowerWindow(_handle, native));
       _touchParameters();
     } finally {
       calloc.free(native);

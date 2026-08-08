@@ -83,50 +83,50 @@ final class DigitorFlutterExportRequestNative extends Struct {
   external int height;
 }
 
-typedef DigitorFlutterOpenMediaNative = Int32 Function(
-  Pointer<Void>,
-  Pointer<Utf8>,
-  Pointer<Uint8>,
-  Uint32,
-);
+typedef DigitorFlutterOpenMediaNative =
+    Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Uint8>, Uint32);
 
-typedef DigitorFlutterRenderFrameNative = Int32 Function(
-  Pointer<Void>,
-  Int32,
-  Pointer<DigitorNodeGraphNative>,
-  Uint64,
-  Uint64,
-  Int64,
-  Uint32,
-  Uint32,
-  Pointer<DigitorNativeGpuTextureDescriptorNative>,
-  Pointer<Uint8>,
-  Uint32,
-);
+typedef DigitorFlutterRenderFrameNative =
+    Int32 Function(
+      Pointer<Void>,
+      Int32,
+      Pointer<DigitorNodeGraphNative>,
+      Uint64,
+      Uint64,
+      Int64,
+      Uint32,
+      Uint32,
+      Pointer<DigitorNativeGpuTextureDescriptorNative>,
+      Pointer<Uint8>,
+      Uint32,
+    );
 
-typedef DigitorFlutterExportMediaNative = Int32 Function(
-  Pointer<Void>,
-  Pointer<DigitorNodeGraphNative>,
-  Uint64,
-  Uint64,
-  Pointer<DigitorFlutterExportRequestNative>,
-  Pointer<NativeFunction<DigitorProgressNative>>,
-  Pointer<Void>,
-  Pointer<Uint8>,
-  Uint32,
-);
+typedef DigitorFlutterExportMediaNative =
+    Int32 Function(
+      Pointer<Void>,
+      Pointer<DigitorNodeGraphNative>,
+      Uint64,
+      Uint64,
+      Pointer<DigitorFlutterExportRequestNative>,
+      Pointer<NativeFunction<DigitorProgressNative>>,
+      Pointer<Void>,
+      Pointer<Uint8>,
+      Uint32,
+    );
 
-typedef DigitorFlutterQueryPreviewNative = Int32 Function(
-  Pointer<Void>,
-  Pointer<DigitorNativePreviewCapabilitiesNative>,
-);
+typedef DigitorFlutterQueryPreviewNative =
+    Int32 Function(
+      Pointer<Void>,
+      Pointer<DigitorNativePreviewCapabilitiesNative>,
+    );
 
 typedef DigitorFlutterCancelNative = Int32 Function(Pointer<Void>);
 typedef DigitorFlutterCloseMediaNative = Void Function(Pointer<Void>);
-typedef DigitorFlutterReleaseTextureNative = Void Function(
-  Pointer<Void>,
-  Pointer<DigitorNativeGpuTextureDescriptorNative>,
-);
+typedef DigitorFlutterReleaseTextureNative =
+    Void Function(
+      Pointer<Void>,
+      Pointer<DigitorNativeGpuTextureDescriptorNative>,
+    );
 
 final class DigitorFlutterProductionHostNative extends Struct {
   @Uint32()
@@ -141,23 +141,42 @@ final class DigitorFlutterProductionHostNative extends Struct {
   external Pointer<NativeFunction<DigitorFlutterOpenMediaNative>> openMedia;
   external Pointer<NativeFunction<DigitorFlutterRenderFrameNative>> renderFrame;
   external Pointer<NativeFunction<DigitorFlutterExportMediaNative>> exportMedia;
-  external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>> queryPreview;
+  external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>>
+  queryPreview;
   external Pointer<NativeFunction<DigitorFlutterCancelNative>> cancel;
   external Pointer<NativeFunction<DigitorFlutterCloseMediaNative>> closeMedia;
-  external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>> releaseTexture;
+  external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>>
+  releaseTexture;
 }
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionHostNative>, Pointer<Utf8>, Pointer<Pointer<DigitorFlutterProductionSessionNative>>)>(symbol: 'digitor_flutter_production_create')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionHostNative>,
+    Pointer<Utf8>,
+    Pointer<Pointer<DigitorFlutterProductionSessionNative>>,
+  )
+>(symbol: 'digitor_flutter_production_create')
 external int digitorFlutterProductionCreate(
   Pointer<DigitorFlutterProductionHostNative> host,
   Pointer<Utf8> mediaPath,
   Pointer<Pointer<DigitorFlutterProductionSessionNative>> outSession,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>)>(symbol: 'digitor_flutter_production_destroy')
-external int digitorFlutterProductionDestroy(Pointer<DigitorFlutterProductionSessionNative> session);
+@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>)>(
+  symbol: 'digitor_flutter_production_destroy',
+)
+external int digitorFlutterProductionDestroy(
+  Pointer<DigitorFlutterProductionSessionNative> session,
+);
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Pointer<DigitorNodeGraphNative>, Uint64, Uint64)>(symbol: 'digitor_flutter_production_bind_node_graph')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Pointer<DigitorNodeGraphNative>,
+    Uint64,
+    Uint64,
+  )
+>(symbol: 'digitor_flutter_production_bind_node_graph')
 external int digitorFlutterProductionBindNodeGraph(
   Pointer<DigitorFlutterProductionSessionNative> session,
   Pointer<DigitorNodeGraphNative> graph,
@@ -165,7 +184,15 @@ external int digitorFlutterProductionBindNodeGraph(
   int parameterRevision,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Int64, Uint32, Uint32, Pointer<DigitorNativeGpuTextureDescriptorNative>)>(symbol: 'digitor_flutter_production_preview')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Int64,
+    Uint32,
+    Uint32,
+    Pointer<DigitorNativeGpuTextureDescriptorNative>,
+  )
+>(symbol: 'digitor_flutter_production_preview')
 external int digitorFlutterProductionPreview(
   Pointer<DigitorFlutterProductionSessionNative> session,
   int timestampUs,
@@ -174,19 +201,33 @@ external int digitorFlutterProductionPreview(
   Pointer<DigitorNativeGpuTextureDescriptorNative> outTexture,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Uint64)>(symbol: 'digitor_flutter_production_preview_consumed')
+@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Uint64)>(
+  symbol: 'digitor_flutter_production_preview_consumed',
+)
 external int digitorFlutterProductionPreviewConsumed(
   Pointer<DigitorFlutterProductionSessionNative> session,
   int generation,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Pointer<DigitorNativePreviewCapabilitiesNative>)>(symbol: 'digitor_flutter_production_query_preview')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Pointer<DigitorNativePreviewCapabilitiesNative>,
+  )
+>(symbol: 'digitor_flutter_production_query_preview')
 external int digitorFlutterProductionQueryPreview(
   Pointer<DigitorFlutterProductionSessionNative> session,
   Pointer<DigitorNativePreviewCapabilitiesNative> outCapabilities,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Pointer<DigitorFlutterExportRequestNative>, Pointer<NativeFunction<DigitorProgressNative>>, Pointer<Void>)>(symbol: 'digitor_flutter_production_export')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Pointer<DigitorFlutterExportRequestNative>,
+    Pointer<NativeFunction<DigitorProgressNative>>,
+    Pointer<Void>,
+  )
+>(symbol: 'digitor_flutter_production_export')
 external int digitorFlutterProductionExport(
   Pointer<DigitorFlutterProductionSessionNative> session,
   Pointer<DigitorFlutterExportRequestNative> request,
@@ -194,10 +235,20 @@ external int digitorFlutterProductionExport(
   Pointer<Void> progressUserData,
 );
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>)>(symbol: 'digitor_flutter_production_cancel')
-external int digitorFlutterProductionCancel(Pointer<DigitorFlutterProductionSessionNative> session);
+@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>)>(
+  symbol: 'digitor_flutter_production_cancel',
+)
+external int digitorFlutterProductionCancel(
+  Pointer<DigitorFlutterProductionSessionNative> session,
+);
 
-@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Pointer<Uint8>, Pointer<Uint32>)>(symbol: 'digitor_flutter_production_get_last_error')
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Pointer<Uint8>,
+    Pointer<Uint32>,
+  )
+>(symbol: 'digitor_flutter_production_get_last_error')
 external int digitorFlutterProductionGetLastError(
   Pointer<DigitorFlutterProductionSessionNative> session,
   Pointer<Uint8> buffer,
