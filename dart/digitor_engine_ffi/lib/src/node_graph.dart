@@ -281,7 +281,10 @@ final class DigitorNodeGraph {
     final input = calloc<Uint64>();
     final output = calloc<Uint64>();
     try {
-      _check('getEndpoints', digitorNodeGraphGetEndpoints(_handle, input, output));
+      _check(
+        'getEndpoints',
+        digitorNodeGraphGetEndpoints(_handle, input, output),
+      );
       return DigitorNodeGraphEndpoints(input.value, output.value);
     } finally {
       calloc.free(input);
@@ -310,7 +313,10 @@ final class DigitorNodeGraph {
     final nativeName = name.toNativeUtf8();
     final out = calloc<Uint64>();
     try {
-      _check('addSerialAfter', digitorNodeGraphAddSerialAfter(_handle, after, nativeName, out));
+      _check(
+        'addSerialAfter',
+        digitorNodeGraphAddSerialAfter(_handle, after, nativeName, out),
+      );
       _touchGraph();
       return out.value;
     } finally {
@@ -356,7 +362,10 @@ final class DigitorNodeGraph {
     final name = branchName.toNativeUtf8();
     final out = calloc<Uint64>();
     try {
-      _check('convertToParallel', digitorNodeGraphConvertToParallel(_handle, node, name, out));
+      _check(
+        'convertToParallel',
+        digitorNodeGraphConvertToParallel(_handle, node, name, out),
+      );
       _touchGraph();
       return out.value;
     } finally {
@@ -365,9 +374,18 @@ final class DigitorNodeGraph {
     }
   }
 
-  void remove(int node) => _graphMutation('remove', () => digitorNodeGraphRemove(_handle, node));
-  void connect(int source, int destination) => _graphMutation('connect', () => digitorNodeGraphConnect(_handle, source, destination));
-  void disconnect(int source, int destination) => _graphMutation('disconnect', () => digitorNodeGraphDisconnect(_handle, source, destination));
+  void remove(int node) =>
+      _graphMutation('remove', () => digitorNodeGraphRemove(_handle, node));
+
+  void connect(int source, int destination) => _graphMutation(
+    'connect',
+    () => digitorNodeGraphConnect(_handle, source, destination),
+  );
+
+  void disconnect(int source, int destination) => _graphMutation(
+    'disconnect',
+    () => digitorNodeGraphDisconnect(_handle, source, destination),
+  );
 
   void setPosition(int node, double x, double y) {
     _ensureAlive();
@@ -376,18 +394,31 @@ final class DigitorNodeGraph {
       value.ref
         ..x = x
         ..y = y;
-      _check('setPosition', digitorNodeGraphSetPosition(_handle, node, value.ref));
+      _check(
+        'setPosition',
+        digitorNodeGraphSetPosition(_handle, node, value.ref),
+      );
       _touchGraph();
     } finally {
       calloc.free(value);
     }
   }
 
-  void setEnabled(int node, bool enabled) => _graphMutation('setEnabled', () => digitorNodeGraphSetEnabled(_handle, node, enabled ? 1 : 0));
-  void setBypassed(int node, bool bypassed) => _graphMutation('setBypassed', () => digitorNodeGraphSetBypassed(_handle, node, bypassed ? 1 : 0));
+  void setEnabled(int node, bool enabled) => _graphMutation(
+    'setEnabled',
+    () => digitorNodeGraphSetEnabled(_handle, node, enabled ? 1 : 0),
+  );
+
+  void setBypassed(int node, bool bypassed) => _graphMutation(
+    'setBypassed',
+    () => digitorNodeGraphSetBypassed(_handle, node, bypassed ? 1 : 0),
+  );
 
   void clearOperations(int node) {
-    _parameterMutation('clearOperations', () => digitorNodeGraphClearOperations(_handle, node));
+    _parameterMutation(
+      'clearOperations',
+      () => digitorNodeGraphClearOperations(_handle, node),
+    );
   }
 
   void addPrimaryWheels(DigitorPrimaryWheels controls) {
@@ -410,7 +441,10 @@ final class DigitorNodeGraph {
       native.ref
         ..offsetMaster = controls.offset.master
         ..offsetEnabled = controls.offset.enabled ? 1 : 0;
-      _check('addPrimaryWheels', digitorNodeGraphAddPrimaryWheels(_handle, native));
+      _check(
+        'addPrimaryWheels',
+        digitorNodeGraphAddPrimaryWheels(_handle, native),
+      );
       _touchParameters();
     } finally {
       calloc.free(native);
@@ -441,9 +475,14 @@ final class DigitorNodeGraph {
     final controls = calloc<DigitorRgbCurvesControlsNative>();
     final allocations = <Pointer<DigitorCurvePointNative>>[];
     try {
-      void writeChannel(DigitorCurveChannelNative native, DigitorCurveChannel channel) {
+      void writeChannel(
+        DigitorCurveChannelNative native,
+        DigitorCurveChannel channel,
+      ) {
         if (channel.points.length < 2) {
-          throw ArgumentError('Each RGB curve channel needs at least two points.');
+          throw ArgumentError(
+            'Each RGB curve channel needs at least two points.',
+          );
         }
         final points = calloc<DigitorCurvePointNative>(channel.points.length);
         allocations.add(points);
@@ -463,7 +502,10 @@ final class DigitorNodeGraph {
       writeChannel(controls.ref.green, curves.green);
       writeChannel(controls.ref.blue, curves.blue);
       controls.ref.lutSize = curves.lutSize;
-      _check('addRgbCurves', digitorNodeGraphAddRgbCurves(_handle, controls));
+      _check(
+        'addRgbCurves',
+        digitorNodeGraphAddRgbCurves(_handle, controls),
+      );
       _touchParameters();
     } finally {
       for (final allocation in allocations) {
@@ -487,7 +529,10 @@ final class DigitorNodeGraph {
         ..cleanWhite = qualifier.cleanWhite
         ..invert = qualifier.invert ? 1 : 0
         ..matteOutput = qualifier.matteOutput ? 1 : 0;
-      _check('addHslQualifier', digitorNodeGraphAddHslQualifier(_handle, native));
+      _check(
+        'addHslQualifier',
+        digitorNodeGraphAddHslQualifier(_handle, native),
+      );
       _touchParameters();
     } finally {
       calloc.free(native);
@@ -508,7 +553,10 @@ final class DigitorNodeGraph {
         ..shadows = correction.shadows
         ..hue = correction.hue
         ..colorBoost = correction.colorBoost;
-      _check('addCorrection', digitorNodeGraphAddCorrection(_handle, native));
+      _check(
+        'addCorrection',
+        digitorNodeGraphAddCorrection(_handle, native),
+      );
       _touchParameters();
     } finally {
       calloc.free(native);
@@ -519,7 +567,9 @@ final class DigitorNodeGraph {
     List<DigitorLutColor> values, {
     DigitorLutInterpolation interpolation = DigitorLutInterpolation.linear,
   }) {
-    if (values.length < 2) throw ArgumentError('A 1D LUT needs at least two values.');
+    if (values.length < 2) {
+      throw ArgumentError('A 1D LUT needs at least two values.');
+    }
     _ensureAlive();
     final colors = _allocateLutColors(values);
     final controls = calloc<DigitorLut1DControlsNative>();
@@ -542,7 +592,9 @@ final class DigitorNodeGraph {
     DigitorLutInterpolation interpolation = DigitorLutInterpolation.tetrahedral,
   }) {
     if (size < 2 || values.length != size * size * size) {
-      throw ArgumentError('3D LUT value count must equal size³ and size must be >= 2.');
+      throw ArgumentError(
+        '3D LUT value count must equal size³ and size must be >= 2.',
+      );
     }
     _ensureAlive();
     final colors = _allocateLutColors(values);
@@ -592,14 +644,18 @@ final class DigitorNodeGraph {
         ..feather = window.feather
         ..opacity = window.opacity
         ..invert = window.invert ? 1 : 0;
-      _check('addPowerWindow', digitorNodeGraphAddPowerWindow(_handle, native));
+      _check(
+        'addPowerWindow',
+        digitorNodeGraphAddPowerWindow(_handle, native),
+      );
       _touchParameters();
     } finally {
       calloc.free(native);
     }
   }
 
-  String get recipeIdentity => _readNativeText('recipeIdentity', digitorNodeGraphRecipeIdentity);
+  String get recipeIdentity =>
+      _readNativeText('recipeIdentity', digitorNodeGraphRecipeIdentity);
   String get json => _readNativeText('toJson', digitorNodeGraphToJson);
 
   /// Used by [DigitorProductionSession] to keep the native graph alive.
@@ -610,13 +666,19 @@ final class DigitorNodeGraph {
 
   /// Paired with [retainForProductionSession].
   void releaseFromProductionSession() {
-    if (_productionBindings > 0) _productionBindings--;
+    if (_productionBindings > 0) {
+      _productionBindings--;
+    }
   }
 
   void dispose() {
-    if (_disposed) return;
+    if (_disposed) {
+      return;
+    }
     if (_productionBindings != 0) {
-      throw StateError('Dispose production sessions before disposing their node graph.');
+      throw StateError(
+        'Dispose production sessions before disposing their node graph.',
+      );
     }
     _check('destroy', digitorNodeGraphDestroy(_handle));
     _handle = nullptr;
@@ -636,6 +698,7 @@ final class DigitorNodeGraph {
   }
 
   void _touchGraph() => _graphRevision++;
+
   void _touchParameters() {
     _graphRevision++;
     _parameterRevision++;
@@ -643,13 +706,21 @@ final class DigitorNodeGraph {
 
   String _readNativeText(
     String operation,
-    int Function(Pointer<DigitorNodeGraphNative>, Pointer<Uint8>, int, Pointer<Uint64>) call,
+    int Function(
+      Pointer<DigitorNodeGraphNative>,
+      Pointer<Uint8>,
+      int,
+      Pointer<Uint64>,
+    )
+    call,
   ) {
     _ensureAlive();
     final required = calloc<Uint64>();
     try {
       _check(operation, call(_handle, nullptr, 0, required));
-      if (required.value == 0) return '';
+      if (required.value == 0) {
+        return '';
+      }
       final buffer = calloc<Uint8>(required.value);
       try {
         _check(operation, call(_handle, buffer, required.value, required));
@@ -669,7 +740,9 @@ final class DigitorNodeGraph {
     }
   }
 
-  static Pointer<DigitorLutColorNative> _allocateLutColors(List<DigitorLutColor> values) {
+  static Pointer<DigitorLutColorNative> _allocateLutColors(
+    List<DigitorLutColor> values,
+  ) {
     final out = calloc<DigitorLutColorNative>(values.length);
     for (var i = 0; i < values.length; i++) {
       out[i]
@@ -681,14 +754,20 @@ final class DigitorNodeGraph {
     return out;
   }
 
-  static void _writePrimaryWheel(DigitorRgbNative native, DigitorPrimaryWheel wheel) {
+  static void _writePrimaryWheel(
+    DigitorRgbNative native,
+    DigitorPrimaryWheel wheel,
+  ) {
     native
       ..r = wheel.rgb.r
       ..g = wheel.rgb.g
       ..b = wheel.rgb.b;
   }
 
-  static void _writeLogWheel(DigitorLogWheelControlNative native, DigitorLogWheel wheel) {
+  static void _writeLogWheel(
+    DigitorLogWheelControlNative native,
+    DigitorLogWheel wheel,
+  ) {
     native
       ..master = wheel.master
       ..enabled = wheel.enabled ? 1 : 0;
@@ -698,7 +777,10 @@ final class DigitorNodeGraph {
       ..b = wheel.rgb.b;
   }
 
-  static void _writeQualifierRange(DigitorQualifierRangeNative native, DigitorQualifierRange range) {
+  static void _writeQualifierRange(
+    DigitorQualifierRangeNative native,
+    DigitorQualifierRange range,
+  ) {
     native
       ..low = range.low
       ..high = range.high
@@ -706,6 +788,8 @@ final class DigitorNodeGraph {
   }
 
   static void _check(String operation, int result) {
-    if (result != 0) throw DigitorNodeGraphException(operation, result);
+    if (result != 0) {
+      throw DigitorNodeGraphException(operation, result);
+    }
   }
 }
