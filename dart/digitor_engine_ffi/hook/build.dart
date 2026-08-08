@@ -56,6 +56,7 @@ Future<void> main(List<String> arguments) async {
       engineRoot.toFilePath(),
       '-B',
       buildDirectory.toFilePath(),
+      '-DDIGITOR_BUILD_SHARED=ON',
       '-DBUILD_SHARED_LIBS=ON',
       '-DDIGITOR_BUILD_TESTS=OFF',
       '-DDIGITOR_BUILD_EXAMPLES=OFF',
