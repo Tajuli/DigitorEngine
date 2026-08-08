@@ -81,7 +81,7 @@ jobs:
       - name: Create Apple integration app
         shell: bash
         run: |
-          flutter config --enable-macos-desktop
+          flutter config --enable-macos-desktop --no-enable-swift-package-manager
           flutter create --empty --platforms=ios,macos "$RUNNER_TEMP/digitor_host_app"
           cd "$RUNNER_TEMP/digitor_host_app"
           python3 - <<'PY'
@@ -97,7 +97,7 @@ jobs:
 
           def set_pod_platform(path, platform, version):
               if not path.exists():
-                  raise SystemExit(f'Missing generated Podfile: {path}')
+                  raise SystemExit(f'Missing CocoaPods Podfile: {path}')
               original = path.read_text()
               pattern = rf"^\s*#?\s*platform\s+:{platform},\s*['\"][^'\"]+['\"]\s*$"
               replacement = f"platform :{platform}, '{version}'"
