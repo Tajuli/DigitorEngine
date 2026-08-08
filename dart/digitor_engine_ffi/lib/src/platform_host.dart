@@ -226,7 +226,7 @@ final class DigitorFlutterPlatformHost {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await _channel.setMethodCallHandler(null);
+    _channel.setMethodCallHandler(null);
     await _targetChanges.close();
   }
 
