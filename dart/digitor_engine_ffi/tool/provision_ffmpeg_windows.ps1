@@ -8,6 +8,7 @@ $packageId = 'ffmpeg.lgpl'
 $packageUrl = "https://api.nuget.org/v3-flatcontainer/$packageId/$version/$packageId.$version.nupkg"
 $cacheRoot = Join-Path $env:LOCALAPPDATA 'DigitorEngine\downloads'
 $archive = Join-Path $cacheRoot "$packageId.$version.nupkg"
+$zipArchive = Join-Path $cacheRoot "$packageId.$version.zip"
 $extractRoot = Join-Path $cacheRoot "$packageId.$version"
 $sdkRoot = Join-Path $DestinationRoot 'installed\x64-windows'
 $requiredHeader = Join-Path $sdkRoot 'include\libavcodec\avcodec.h'
@@ -24,11 +25,12 @@ if (-not (Test-Path $archive)) {
   Invoke-WebRequest -Uri $packageUrl -OutFile $archive
 }
 
+Copy-Item -LiteralPath $archive -Destination $zipArchive -Force
 if (Test-Path $extractRoot) {
   Remove-Item -Recurse -Force $extractRoot
 }
 New-Item -ItemType Directory -Force $extractRoot | Out-Null
-Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot -Force
+Expand-Archive -LiteralPath $zipArchive -DestinationPath $extractRoot -Force
 
 $header = Get-ChildItem -Path $extractRoot -Recurse -File -Filter 'avcodec.h' |
   Where-Object { $_.FullName -match '[\\/]include[\\/]libavcodec[\\/]avcodec\.h$' } |
