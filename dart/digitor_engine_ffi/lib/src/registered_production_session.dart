@@ -13,13 +13,16 @@ import 'production.dart';
 final class DigitorRegisteredProductionSession {
   DigitorRegisteredProductionSession._(this._handle, this._graph);
 
-  static bool get hostRegistered => digitorFlutterProductionHostRegistered() != 0;
+  static bool get hostRegistered =>
+      digitorFlutterProductionHostRegistered() != 0;
 
   factory DigitorRegisteredProductionSession.open({
     required String mediaPath,
     required DigitorNodeGraph nodeGraph,
   }) {
-    if (mediaPath.isEmpty) throw ArgumentError.value(mediaPath, 'mediaPath');
+    if (mediaPath.isEmpty) {
+      throw ArgumentError.value(mediaPath, 'mediaPath');
+    }
     if (!hostRegistered) {
       throw StateError(
         'The native Flutter production host is not registered for this platform.',
@@ -35,7 +38,10 @@ final class DigitorRegisteredProductionSession {
           result == 0 ? 100 : result,
         );
       }
-      final session = DigitorRegisteredProductionSession._(out.value, nodeGraph);
+      final session = DigitorRegisteredProductionSession._(
+        out.value,
+        nodeGraph,
+      );
       nodeGraph.retainForProductionSession();
       try {
         session.bindNodeGraph();
@@ -59,7 +65,9 @@ final class DigitorRegisteredProductionSession {
   void bindNodeGraph() {
     _ensureAlive();
     if (_outstandingPreviewGeneration != null) {
-      throw StateError('Consume the current preview before rebinding the graph.');
+      throw StateError(
+        'Consume the current preview before rebinding the graph.',
+      );
     }
     _check(
       'bindNodeGraph',
@@ -82,8 +90,9 @@ final class DigitorRegisteredProductionSession {
         digitorFlutterProductionQueryPreview(_handle, native),
       );
       final value = native.ref;
-      final selectedMode =
-          value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue
+      final strictMode =
+          value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue;
+      final selectedMode = strictMode
           ? DigitorPreviewMode.nativeGpuStrict
           : DigitorPreviewMode.compatibility;
       return DigitorPreviewCapabilities(
@@ -113,7 +122,9 @@ final class DigitorRegisteredProductionSession {
   }) {
     _ensureAlive();
     if (_outstandingPreviewGeneration != null) {
-      throw StateError('Consume the current preview before requesting another.');
+      throw StateError(
+        'Consume the current preview before requesting another.',
+      );
     }
     bindNodeGraph();
     final native = calloc<DigitorNativeGpuTextureDescriptorNative>();
@@ -259,7 +270,9 @@ final class DigitorRegisteredProductionSession {
   }
 
   static void _check(String operation, int result) {
-    if (result != 0) throw DigitorProductionException(operation, result);
+    if (result != 0) {
+      throw DigitorProductionException(operation, result);
+    }
   }
 
   static String _readInt8Array(Array<Int8> value, int length) {
