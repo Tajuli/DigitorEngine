@@ -1,0 +1,274 @@
+import 'dart:ffi';
+
+import 'package:ffi/ffi.dart';
+
+import 'engine.dart';
+import 'native_api.dart';
+import 'native_production_api.dart';
+import 'node_graph.dart';
+import 'production.dart';
+
+/// Package-internal production session that resolves the native host installed
+/// by the Flutter platform plugin. Applications never provide callback pointers.
+final class DigitorRegisteredProductionSession {
+  DigitorRegisteredProductionSession._(this._handle, this._graph);
+
+  static bool get hostRegistered => digitorFlutterProductionHostRegistered() != 0;
+
+  factory DigitorRegisteredProductionSession.open({
+    required String mediaPath,
+    required DigitorNodeGraph nodeGraph,
+  }) {
+    if (mediaPath.isEmpty) throw ArgumentError.value(mediaPath, 'mediaPath');
+    if (!hostRegistered) {
+      throw StateError(
+        'The native Flutter production host is not registered for this platform.',
+      );
+    }
+    final path = mediaPath.toNativeUtf8();
+    final out = calloc<Pointer<DigitorFlutterProductionSessionNative>>();
+    try {
+      final result = digitorFlutterProductionCreateRegistered(path, out);
+      if (result != 0 || out.value == nullptr) {
+        throw DigitorProductionException(
+          'createRegistered',
+          result == 0 ? 100 : result,
+        );
+      }
+      final session = DigitorRegisteredProductionSession._(out.value, nodeGraph);
+      nodeGraph.retainForProductionSession();
+      try {
+        session.bindNodeGraph();
+      } catch (_) {
+        nodeGraph.releaseFromProductionSession();
+        digitorFlutterProductionDestroy(out.value);
+        rethrow;
+      }
+      return session;
+    } finally {
+      calloc.free(path);
+      calloc.free(out);
+    }
+  }
+
+  Pointer<DigitorFlutterProductionSessionNative> _handle;
+  final DigitorNodeGraph _graph;
+  int? _outstandingPreviewGeneration;
+  bool _disposed = false;
+
+  void bindNodeGraph() {
+    _ensureAlive();
+    if (_outstandingPreviewGeneration != null) {
+      throw StateError('Consume the current preview before rebinding the graph.');
+    }
+    _check(
+      'bindNodeGraph',
+      digitorFlutterProductionBindNodeGraph(
+        _handle,
+        _graph.nativeHandle,
+        _graph.graphRevision,
+        _graph.parameterRevision,
+      ),
+    );
+  }
+
+  DigitorPreviewCapabilities get previewCapabilities {
+    _ensureAlive();
+    final native = calloc<DigitorNativePreviewCapabilitiesNative>();
+    try {
+      native.ref.structSize = sizeOf<DigitorNativePreviewCapabilitiesNative>();
+      _check(
+        'queryPreview',
+        digitorFlutterProductionQueryPreview(_handle, native),
+      );
+      final value = native.ref;
+      final selectedMode =
+          value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue
+          ? DigitorPreviewMode.nativeGpuStrict
+          : DigitorPreviewMode.compatibility;
+      return DigitorPreviewCapabilities(
+        nativeGpuPreviewAvailable: value.nativeGpuPreviewAvailable != 0,
+        trueSharedResourceZeroCopy: value.trueSharedResourceZeroCopy != 0,
+        gpuToGpuCopy: value.gpuToGpuCopy != 0,
+        cpuFallbackOnly: value.cpuFallbackOnly != 0,
+        sdrSupported: value.sdrSupported != 0,
+        hdrSupported: value.hdrSupported != 0,
+        protectedContentSupported: value.protectedContentSupported != 0,
+        resizeSupported: value.resizeSupported != 0,
+        backend: DigitorNativeTextureBackend.fromNative(value.backend),
+        handleType: DigitorNativeTextureHandleType.fromNative(value.handleType),
+        supportedPixelFormats: value.supportedPixelFormats,
+        selectedMode: selectedMode,
+        reasonUnavailable: _readInt8Array(value.reasonUnavailable, 192),
+      );
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  DigitorNativeGpuTextureFrame preview({
+    required int timestampUs,
+    required int width,
+    required int height,
+  }) {
+    _ensureAlive();
+    if (_outstandingPreviewGeneration != null) {
+      throw StateError('Consume the current preview before requesting another.');
+    }
+    bindNodeGraph();
+    final native = calloc<DigitorNativeGpuTextureDescriptorNative>();
+    try {
+      native.ref
+        ..structSize = sizeOf<DigitorNativeGpuTextureDescriptorNative>()
+        ..apiVersion = 1;
+      _check(
+        'preview',
+        digitorFlutterProductionPreview(
+          _handle,
+          timestampUs,
+          width,
+          height,
+          native,
+        ),
+      );
+      final value = native.ref;
+      final frame = DigitorNativeGpuTextureFrame(
+        backend: DigitorNativeTextureBackend.fromNative(value.backend),
+        handleType: DigitorNativeTextureHandleType.fromNative(value.handleType),
+        nativeHandle: value.nativeHandle,
+        secondaryHandle: value.secondaryHandle,
+        width: value.width,
+        height: value.height,
+        pixelFormat: DigitorPixelFormat.fromNative(value.pixelFormat),
+        alphaMode: value.alphaMode,
+        colorPrimaries: value.colorPrimaries,
+        transferFunction: value.transferFunction,
+        matrixCoefficients: value.matrixCoefficients,
+        colorRange: value.colorRange,
+        timestampUs: value.timestampUs,
+        generation: value.generation,
+        deviceIdentity: value.deviceIdentity,
+        contextIdentity: value.contextIdentity,
+        acquireSyncHandle: value.acquireSyncHandle,
+        acquireSyncValue: value.acquireSyncValue,
+        releaseSyncHandle: value.releaseSyncHandle,
+        releaseSyncValue: value.releaseSyncValue,
+        ownershipToken: value.ownershipToken,
+        protectedContent: value.protectedContent != 0,
+        readiness: DigitorNativeTextureReadiness.fromNative(value.readiness),
+      );
+      _outstandingPreviewGeneration = frame.generation;
+      return frame;
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  void previewConsumed([int? generation]) {
+    _ensureAlive();
+    final expected = _outstandingPreviewGeneration;
+    if (expected == null) return;
+    final resolved = generation ?? expected;
+    if (resolved != expected) {
+      throw ArgumentError.value(generation, 'generation');
+    }
+    _check(
+      'previewConsumed',
+      digitorFlutterProductionPreviewConsumed(_handle, resolved),
+    );
+    _outstandingPreviewGeneration = null;
+  }
+
+  void export({
+    required String path,
+    required int firstFrame,
+    required int lastFrame,
+    required int width,
+    required int height,
+    DigitorExportFormat format = DigitorExportFormat.mp4,
+    DigitorVideoCodec codec = DigitorVideoCodec.h264,
+    void Function(DigitorExportProgress progress)? onProgress,
+  }) {
+    _ensureAlive();
+    previewConsumed();
+    bindNodeGraph();
+    final nativePath = path.toNativeUtf8();
+    final request = calloc<DigitorFlutterExportRequestNative>();
+    NativeCallable<DigitorProgressNative>? callback;
+    try {
+      request.ref
+        ..structSize = sizeOf<DigitorFlutterExportRequestNative>()
+        ..apiVersion = 1
+        ..outputPath = nativePath
+        ..format = format.index
+        ..codec = codec.index
+        ..firstFrame = firstFrame
+        ..lastFrame = lastFrame
+        ..width = width
+        ..height = height;
+      if (onProgress != null) {
+        callback = NativeCallable<DigitorProgressNative>.listener((
+          double fraction,
+          int completed,
+          int total,
+          Pointer<Void> _,
+        ) {
+          onProgress(
+            DigitorExportProgress(
+              fraction: fraction,
+              completed: completed,
+              total: total,
+            ),
+          );
+        });
+      }
+      _check(
+        'export',
+        digitorFlutterProductionExport(
+          _handle,
+          request,
+          callback?.nativeFunction ?? nullptr,
+          nullptr,
+        ),
+      );
+    } finally {
+      callback?.close();
+      calloc.free(request);
+      calloc.free(nativePath);
+    }
+  }
+
+  void cancel() {
+    _ensureAlive();
+    _check('cancel', digitorFlutterProductionCancel(_handle));
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    previewConsumed();
+    _check('destroy', digitorFlutterProductionDestroy(_handle));
+    _graph.releaseFromProductionSession();
+    _handle = nullptr;
+    _disposed = true;
+  }
+
+  void _ensureAlive() {
+    if (_disposed || _handle == nullptr) {
+      throw StateError('Production session is disposed.');
+    }
+  }
+
+  static void _check(String operation, int result) {
+    if (result != 0) throw DigitorProductionException(operation, result);
+  }
+
+  static String _readInt8Array(Array<Int8> value, int length) {
+    final bytes = <int>[];
+    for (var i = 0; i < length; i++) {
+      final byte = value[i];
+      if (byte == 0) break;
+      bytes.add(byte & 0xff);
+    }
+    return String.fromCharCodes(bytes);
+  }
+}
