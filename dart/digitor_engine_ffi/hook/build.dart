@@ -3,6 +3,13 @@ import 'dart:io';
 import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 
+class _FfmpegSdk {
+  const _FfmpegSdk(this.root, this.runtimeLibraries);
+
+  final Uri root;
+  final List<File> runtimeLibraries;
+}
+
 Future<void> main(List<String> arguments) async {
   await build(arguments, (input, output) async {
     if (!input.config.buildCodeAssets) return;
@@ -28,15 +35,12 @@ Future<void> main(List<String> arguments) async {
       targetOs.dylibFileName('digitor_engine'),
     );
 
-    final ffmpegRoot = input.userDefines.path('ffmpeg_root');
+    final ffmpegSdk = await _resolveFfmpegSdk(
+      code,
+      input.userDefines.path('ffmpeg_root'),
+    );
+    final ffmpegRoot = ffmpegSdk?.root;
     if (ffmpegRoot != null) {
-      final directory = Directory.fromUri(ffmpegRoot);
-      if (!await directory.exists()) {
-        throw ArgumentError(
-          'hooks.user_defines.digitor_engine_ffi.ffmpeg_root does not exist: '
-          '${directory.path}',
-        );
-      }
       output.dependencies.add(ffmpegRoot);
     }
 
@@ -60,10 +64,6 @@ Future<void> main(List<String> arguments) async {
       '-DBUILD_SHARED_LIBS=ON',
       '-DDIGITOR_BUILD_TESTS=OFF',
       '-DDIGITOR_BUILD_EXAMPLES=OFF',
-      // Keep the engine feature defaults enabled. Optional dependencies are
-      // discovered by CMake and report explicit unavailability when missing.
-      // An explicit FFmpeg root upgrades that dependency to required so a
-      // misconfigured production build cannot silently lose media support.
       '-DDIGITOR_ENABLE_FFMPEG=ON',
       '-DDIGITOR_REQUIRE_FFMPEG=${ffmpegRoot == null ? 'OFF' : 'ON'}',
       if (ffmpegRoot != null)
@@ -107,7 +107,155 @@ Future<void> main(List<String> arguments) async {
         file: libraryUri,
       ),
     );
+
+    if (targetOs == OS.windows && ffmpegSdk != null) {
+      for (final source in ffmpegSdk.runtimeLibraries) {
+        final fileName = source.uri.pathSegments.last;
+        final bundledUri = outputRoot.resolve(fileName);
+        final bundledFile = File.fromUri(bundledUri);
+        if (source.absolute.path != bundledFile.absolute.path) {
+          await source.copy(bundledFile.path);
+        }
+        output.assets.code.add(
+          CodeAsset(
+            package: input.packageName,
+            name: 'ffmpeg/$fileName',
+            linkMode: DynamicLoadingBundled(),
+            file: bundledUri,
+          ),
+        );
+      }
+    }
   });
+}
+
+Future<_FfmpegSdk?> _resolveFfmpegSdk(
+  CodeConfig code,
+  Uri? configuredRoot,
+) async {
+  if (configuredRoot != null) {
+    final directory = Directory.fromUri(configuredRoot);
+    if (!await directory.exists()) {
+      throw ArgumentError(
+        'hooks.user_defines.digitor_engine_ffi.ffmpeg_root does not exist: '
+        '${directory.path}',
+      );
+    }
+    return _FfmpegSdk(
+      configuredRoot,
+      code.targetOS == OS.windows
+          ? await _windowsRuntimeLibraries(directory)
+          : const <File>[],
+    );
+  }
+
+  if (code.targetOS != OS.windows) return null;
+  if (!Platform.isWindows) {
+    throw UnsupportedError(
+      'Automatic Windows FFmpeg provisioning requires a Windows build host. '
+      'Set hooks.user_defines.digitor_engine_ffi.ffmpeg_root when cross-building.',
+    );
+  }
+
+  final triplet = switch (code.targetArchitecture.name) {
+    'arm64' => 'arm64-windows',
+    'ia32' => 'x86-windows',
+    'x64' => 'x64-windows',
+    _ => throw UnsupportedError(
+      'Unsupported Windows FFmpeg architecture: '
+      '${code.targetArchitecture.name}',
+    ),
+  };
+
+  final localAppData = Platform.environment['LOCALAPPDATA'];
+  final cacheRoot = Directory(
+    localAppData != null && localAppData.isNotEmpty
+        ? '$localAppData${Platform.pathSeparator}DigitorEngine${Platform.pathSeparator}deps'
+        : '${Directory.systemTemp.path}${Platform.pathSeparator}DigitorEngine-deps',
+  );
+  await cacheRoot.create(recursive: true);
+
+  final vcpkgRoot = Directory(
+    '${cacheRoot.path}${Platform.pathSeparator}vcpkg',
+  );
+  final vcpkg = File(
+    '${vcpkgRoot.path}${Platform.pathSeparator}vcpkg.exe',
+  );
+
+  if (!await vcpkg.exists()) {
+    if (await vcpkgRoot.exists()) {
+      await vcpkgRoot.delete(recursive: true);
+    }
+    await _run(
+      'git',
+      <String>[
+        'clone',
+        '--depth',
+        '1',
+        'https://github.com/microsoft/vcpkg.git',
+        vcpkgRoot.path,
+      ],
+      workingDirectory: cacheRoot.uri,
+    );
+    await _run(
+      '${vcpkgRoot.path}${Platform.pathSeparator}bootstrap-vcpkg.bat',
+      const <String>['-disableMetrics'],
+      workingDirectory: vcpkgRoot.uri,
+    );
+  }
+
+  final sdkRoot = Directory(
+    '${vcpkgRoot.path}${Platform.pathSeparator}installed${Platform.pathSeparator}$triplet',
+  );
+  final avcodecHeader = File(
+    '${sdkRoot.path}${Platform.pathSeparator}include${Platform.pathSeparator}libavcodec${Platform.pathSeparator}avcodec.h',
+  );
+  final avformatLib = File(
+    '${sdkRoot.path}${Platform.pathSeparator}lib${Platform.pathSeparator}avformat.lib',
+  );
+
+  if (!await avcodecHeader.exists() || !await avformatLib.exists()) {
+    await _run(
+      vcpkg.path,
+      <String>[
+        'install',
+        'ffmpeg[avcodec,avformat,swresample,swscale]:$triplet',
+        '--clean-after-build',
+        '--disable-metrics',
+      ],
+      workingDirectory: vcpkgRoot.uri,
+    );
+  }
+
+  if (!await avcodecHeader.exists() || !await avformatLib.exists()) {
+    throw StateError(
+      'FFmpeg provisioning completed without the required development SDK at '
+      '${sdkRoot.path}.',
+    );
+  }
+
+  final runtimeLibraries = await _windowsRuntimeLibraries(sdkRoot);
+  if (runtimeLibraries.isEmpty) {
+    throw StateError(
+      'FFmpeg SDK at ${sdkRoot.path} contains no runtime DLLs.',
+    );
+  }
+  return _FfmpegSdk(sdkRoot.uri, runtimeLibraries);
+}
+
+Future<List<File>> _windowsRuntimeLibraries(Directory sdkRoot) async {
+  final bin = Directory(
+    '${sdkRoot.path}${Platform.pathSeparator}bin',
+  );
+  if (!await bin.exists()) return const <File>[];
+  final files = <File>[];
+  await for (final entity in bin.list(followLinks: false)) {
+    if (entity is File && entity.path.toLowerCase().endsWith('.dll')) {
+      files.add(entity);
+    }
+  }
+  files.sort((a, b) => a.path.compareTo(b.path));
+  return files;
 }
 
 List<String> _platformCmakeArguments(CodeConfig code) {
