@@ -1,0 +1,72 @@
+name: Normalize Windows FFmpeg Hook
+
+on:
+  push:
+    branches: [agent/windows-ffmpeg-bootstrap]
+    paths:
+      - '.github/workflows/zz-fix-windows-ffmpeg-hook.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/windows-ffmpeg-bootstrap
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Pin vcpkg baseline and format hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('dart/digitor_engine_ffi/hook/build.dart')
+          text = path.read_text()
+          old = """        'clone',
+        '--depth',
+        '1',
+        'https://github.com/microsoft/vcpkg.git',
+        vcpkgRoot.path,
+"""
+          new = """        'clone',
+        '--depth',
+        '1',
+        '--branch',
+        '2025.06.13',
+        'https://github.com/microsoft/vcpkg.git',
+        vcpkgRoot.path,
+"""
+          if old not in text:
+              raise SystemExit('Expected vcpkg clone block was not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg',",
+              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg-2025.06.13',",
+              1,
+          )
+          path.write_text(text)
+          PY
+          dart format dart/digitor_engine_ffi/hook/build.dart
+          git diff --check
+          git diff -- dart/digitor_engine_ffi/hook/build.dart
+      - name: Commit normalized hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- dart/digitor_engine_ffi/hook/build.dart; then
+            echo 'Hook already normalized.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dart/digitor_engine_ffi/hook/build.dart
+          git commit -m 'Build: pin deterministic Windows FFmpeg vcpkg baseline'
+          git push origin HEAD:agent/windows-ffmpeg-bootstrap
