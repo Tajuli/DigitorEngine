@@ -264,6 +264,7 @@ Future<void> _installWindowsFfmpeg({
     compiler,
     code.targetArchitecture.name,
   );
+  final visualStudioRoot = _visualStudioRootFromVcvars(vcvars);
   final script = File(
     '${cacheRoot.path}${Platform.pathSeparator}install-ffmpeg-$triplet.cmd',
   );
@@ -272,6 +273,8 @@ Future<void> _installWindowsFfmpeg({
     'call "${vcvars.path}" >nul\r\n'
     'if errorlevel 1 exit /b %errorlevel%\r\n'
     'set "VCPKG_ROOT=${vcpkgRoot.path}"\r\n'
+    'set "VCPKG_VISUAL_STUDIO_PATH=${visualStudioRoot.path}"\r\n'
+    'set "VCPKG_DISABLE_METRICS=1"\r\n'
     '"${vcpkg.path}" install '
     'ffmpeg[avcodec,avformat,swresample,swscale]:$triplet '
     '--clean-after-build --disable-metrics '
@@ -284,13 +287,25 @@ Future<void> _installWindowsFfmpeg({
       'cmd.exe',
       <String>['/d', '/c', script.path],
       workingDirectory: vcpkgRoot.uri,
-      environmentOverrides: <String, String>{'VCPKG_ROOT': vcpkgRoot.path},
+      environmentOverrides: <String, String>{
+        'VCPKG_ROOT': vcpkgRoot.path,
+        'VCPKG_VISUAL_STUDIO_PATH': visualStudioRoot.path,
+        'VCPKG_DISABLE_METRICS': '1',
+      },
     );
   } finally {
     if (await script.exists()) {
       await script.delete();
     }
   }
+}
+
+Directory _visualStudioRootFromVcvars(File vcvars) {
+  var directory = vcvars.parent;
+  for (var i = 0; i < 3; i++) {
+    directory = directory.parent;
+  }
+  return directory;
 }
 
 Future<File> _windowsVcvars(Uri compiler, String architecture) async {
