@@ -20,14 +20,14 @@ final class DigitorEditorWorkspace {
     required DigitorRendererInfo renderer,
     required DigitorFlutterHostCapabilities? hostCapabilities,
     required int selectedNode,
-  })  : _engine = engine,
-        _graph = graph,
-        _mediaPipeline = mediaPipeline,
-        _platformHost = platformHost,
-        _timeline = timeline,
-        _renderer = renderer,
-        _hostCapabilities = hostCapabilities,
-        _selectedNode = selectedNode;
+  }) : _engine = engine,
+       _graph = graph,
+       _mediaPipeline = mediaPipeline,
+       _platformHost = platformHost,
+       _timeline = timeline,
+       _renderer = renderer,
+       _hostCapabilities = hostCapabilities,
+       _selectedNode = selectedNode;
 
   static Future<DigitorEditorWorkspace> create({
     DigitorBackend preferredBackend = DigitorBackend.automatic,
@@ -222,7 +222,8 @@ final class DigitorEditorWorkspace {
     _graph.remove(selected);
     final endpoints = _graph.endpoints;
     final nativeSelection = _graph.selectedNode;
-    _selectedNode = nativeSelection == endpoints.input || nativeSelection == endpoints.output
+    _selectedNode =
+        nativeSelection == endpoints.input || nativeSelection == endpoints.output
         ? null
         : nativeSelection;
   }
