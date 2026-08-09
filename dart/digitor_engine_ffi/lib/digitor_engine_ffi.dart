@@ -1,6 +1,7 @@
 export 'src/audio_sync.dart';
 export 'src/live_playback_sync.dart';
 export 'src/bindings.dart' show DigitorTimelineBindings;
+export 'src/editor_workspace.dart';
 export 'src/engine.dart';
 export 'src/export_job.dart';
 export 'src/library_loader.dart' show DigitorLibraryLoader;
@@ -8,6 +9,7 @@ export 'src/node_graph.dart';
 export 'src/platform_host.dart';
 export 'src/production.dart';
 export 'src/production_media.dart';
+export 'src/production_media_pipeline.dart';
 export 'src/sdk_callbacks.dart';
 export 'src/sdk_worker.dart';
 export 'src/session.dart';
