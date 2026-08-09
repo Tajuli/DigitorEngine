@@ -3,6 +3,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -24,6 +25,17 @@ namespace {
 constexpr uint32_t kDiagnosticCapacity = 512;
 std::mutex g_flutter_sessions_mutex;
 std::unordered_set<DigitorFlutterProductionSession*> g_flutter_sessions;
+std::mutex g_registered_host_mutex;
+std::optional<DigitorFlutterProductionHost> g_registered_host;
+
+bool valid_host(const DigitorFlutterProductionHost* host) noexcept {
+    return host &&
+           host->struct_size >= sizeof(DigitorFlutterProductionHost) &&
+           host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION &&
+           host->open_media && host->render_frame && host->export_media &&
+           host->query_preview && host->cancel && host->close_media &&
+           host->release_texture;
+}
 
 bool registered(const DigitorFlutterProductionSession* session) noexcept {
     return session != nullptr &&
@@ -91,18 +103,56 @@ DigitorResult copy_error(const std::string& value, char* buffer,
 
 extern "C" {
 
+DigitorResult digitor_flutter_production_register_host(
+    const DigitorFlutterProductionHost* host) {
+    if (!valid_host(host)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    std::lock_guard lock(g_registered_host_mutex);
+    if (g_registered_host.has_value()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+    g_registered_host = *host;
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_flutter_production_unregister_host(
+    void* expected_user_data) {
+    std::lock_guard host_lock(g_registered_host_mutex);
+    if (!g_registered_host.has_value()) return DIGITOR_RESULT_NOT_INITIALIZED;
+    if (g_registered_host->user_data != expected_user_data)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    {
+        std::lock_guard sessions_lock(g_flutter_sessions_mutex);
+        if (!g_flutter_sessions.empty()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+    }
+    g_registered_host.reset();
+    return DIGITOR_RESULT_OK;
+}
+
+int32_t digitor_flutter_production_host_registered(void) {
+    std::lock_guard lock(g_registered_host_mutex);
+    return g_registered_host.has_value() ? 1 : 0;
+}
+
+DigitorResult digitor_flutter_production_create_registered(
+    const char* utf8_media_path,
+    DigitorFlutterProductionSession** out_session) {
+    DigitorFlutterProductionHost host{};
+    {
+        std::lock_guard lock(g_registered_host_mutex);
+        if (!g_registered_host.has_value()) {
+            if (out_session) *out_session = nullptr;
+            return DIGITOR_RESULT_NOT_INITIALIZED;
+        }
+        host = *g_registered_host;
+    }
+    return digitor_flutter_production_create(&host, utf8_media_path, out_session);
+}
+
 DigitorResult digitor_flutter_production_create(
     const DigitorFlutterProductionHost* host,
     const char* utf8_media_path,
     DigitorFlutterProductionSession** out_session) {
     if (out_session) *out_session = nullptr;
-    if (!host || !utf8_media_path || utf8_media_path[0] == '\0' ||
-        !out_session ||
-        host->struct_size < sizeof(DigitorFlutterProductionHost) ||
-        host->api_version != DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION ||
-        !host->open_media || !host->render_frame || !host->export_media ||
-        !host->query_preview || !host->cancel || !host->close_media ||
-        !host->release_texture) {
+    if (!valid_host(host) || !utf8_media_path || utf8_media_path[0] == '\0' ||
+        !out_session) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
