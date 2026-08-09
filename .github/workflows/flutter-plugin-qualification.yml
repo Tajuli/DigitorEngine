@@ -16,6 +16,9 @@ on:
       - '.github/workflows/flutter-plugin-qualification.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   package-contract:
     runs-on: ubuntu-latest
@@ -27,7 +30,7 @@ jobs:
       - working-directory: dart/digitor_engine_ffi
         run: flutter pub get
       - working-directory: dart/digitor_engine_ffi
-        run: dart format lib test hook
+        run: dart format --output=none --set-exit-if-changed lib test hook
       - working-directory: dart/digitor_engine_ffi
         run: flutter analyze --fatal-infos
       - working-directory: dart/digitor_engine_ffi
@@ -39,6 +42,7 @@ jobs:
           test -f dart/digitor_engine_ffi/windows/digitor_engine_ffi_plugin.cpp
           test -f dart/digitor_engine_ffi/ios/Classes/DigitorEngineFfiPlugin.mm
           test -f dart/digitor_engine_ffi/macos/Classes/DigitorEngineFfiPlugin.mm
+          test -f dart/digitor_engine_ffi/tool/provision_ffmpeg_windows.ps1
           grep -q 'DIGITOR_ENABLE_FFMPEG=ON' dart/digitor_engine_ffi/hook/build.dart
           grep -q 'DIGITOR_ENABLE_OCIO=ON' dart/digitor_engine_ffi/hook/build.dart
           grep -q 'DIGITOR_ENABLE_NATIVE_SHADER_COMPILER=ON' dart/digitor_engine_ffi/hook/build.dart
@@ -59,12 +63,15 @@ jobs:
           flutter build apk --debug
 
   windows-host:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Provision Windows FFmpeg SDK
+        shell: pwsh
+        run: .\dart\digitor_engine_ffi\tool\provision_ffmpeg_windows.ps1
       - name: Create Windows integration app
         shell: pwsh
         run: |
@@ -72,7 +79,7 @@ jobs:
           flutter create --empty --platforms=windows "$env:RUNNER_TEMP\digitor_host_app"
           Set-Location "$env:RUNNER_TEMP\digitor_host_app"
           flutter pub add digitor_engine_ffi --path "$env:GITHUB_WORKSPACE\dart\digitor_engine_ffi"
-          flutter build windows --debug
+          flutter build windows --debug -v
 
   apple-hosts:
     runs-on: macos-latest
