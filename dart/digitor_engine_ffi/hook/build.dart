@@ -84,7 +84,9 @@ Future<void> main(List<String> arguments) async {
         final fileName = source.uri.pathSegments.last;
         final bundledUri = outputRoot.resolve(fileName);
         final bundledFile = File.fromUri(bundledUri);
-        if (source.absolute.path != bundledFile.absolute.path) await source.copy(bundledFile.path);
+        if (source.absolute.path != bundledFile.absolute.path) {
+          await source.copy(bundledFile.path);
+        }
         output.assets.code.add(CodeAsset(
           package: input.packageName,
           name: 'ffmpeg/$fileName',
@@ -211,7 +213,9 @@ Future<File?> _findExistingVcpkg() async {
   ];
   for (final candidate in candidates) {
     final file = File(candidate);
-    if (await file.exists()) return file;
+    if (await file.exists()) {
+      return file;
+    }
   }
   return null;
 }
@@ -221,7 +225,9 @@ Future<List<File>> _windowsRuntimeLibraries(Directory sdkRoot) async {
   if (!await bin.exists()) return const <File>[];
   final files = <File>[];
   await for (final entity in bin.list(followLinks: false)) {
-    if (entity is File && entity.path.toLowerCase().endsWith('.dll')) files.add(entity);
+    if (entity is File && entity.path.toLowerCase().endsWith('.dll')) {
+      files.add(entity);
+    }
   }
   files.sort((a, b) => a.path.compareTo(b.path));
   return files;
@@ -232,7 +238,9 @@ List<String> _platformCmakeArguments(CodeConfig code) {
   switch (code.targetOS) {
     case OS.android:
       final compiler = code.cCompiler?.compiler;
-      if (compiler == null) throw StateError('Flutter did not provide an Android C toolchain.');
+      if (compiler == null) {
+        throw StateError('Flutter did not provide an Android C toolchain.');
+      }
       final ndk = _androidNdkRoot(compiler);
       return <String>[
         '-DCMAKE_TOOLCHAIN_FILE=${ndk.resolve('build/cmake/android.toolchain.cmake').toFilePath()}',
@@ -255,8 +263,12 @@ List<String> _platformCmakeArguments(CodeConfig code) {
         '-DCMAKE_OSX_DEPLOYMENT_TARGET=${code.macOS.targetVersion}',
       ];
     case OS.windows:
-      if (architecture == 'arm64') return const <String>['-A', 'ARM64'];
-      if (architecture == 'ia32') return const <String>['-A', 'Win32'];
+      if (architecture == 'arm64') {
+        return const <String>['-A', 'ARM64'];
+      }
+      if (architecture == 'ia32') {
+        return const <String>['-A', 'Win32'];
+      }
       return const <String>[];
     case OS.linux:
       return const <String>[];
@@ -267,7 +279,9 @@ List<String> _platformCmakeArguments(CodeConfig code) {
 
 Uri _androidNdkRoot(Uri compiler) {
   var directory = File.fromUri(compiler).parent;
-  for (var i = 0; i < 5; i++) directory = directory.parent;
+  for (var i = 0; i < 5; i++) {
+    directory = directory.parent;
+  }
   final toolchain = File('${directory.path}${Platform.pathSeparator}build${Platform.pathSeparator}cmake${Platform.pathSeparator}android.toolchain.cmake');
   if (!toolchain.existsSync()) {
     throw StateError('Unable to derive Android NDK root from compiler ${compiler.toFilePath()}.');
@@ -291,7 +305,9 @@ String _appleArchitecture(String architecture) => switch (architecture) {
 
 Future<String> _findCmake() async {
   final override = Platform.environment['CMAKE'];
-  if (override != null && override.isNotEmpty && File(override).existsSync()) return override;
+  if (override != null && override.isNotEmpty && File(override).existsSync()) {
+    return override;
+  }
   try {
     final probe = await Process.run('cmake', const <String>['--version']);
     if (probe.exitCode == 0) return 'cmake';
@@ -315,7 +331,9 @@ Future<String> _findCmake() async {
     }
   }
   for (final candidate in candidates) {
-    if (File(candidate).existsSync()) return candidate;
+    if (File(candidate).existsSync()) {
+      return candidate;
+    }
   }
   throw StateError('CMake 3.21+ is required to build DigitorEngine. Install CMake or set the CMAKE environment variable.');
 }
