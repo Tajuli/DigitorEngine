@@ -2,7 +2,29 @@ import 'engine.dart';
 import 'node_graph.dart';
 import 'platform_host.dart';
 import 'production_media_pipeline.dart';
+import 'registered_production_session.dart';
 import 'session.dart';
+
+/// UI-safe preview state returned by [DigitorEditorWorkspace].
+///
+/// Native GPU handles remain private to DigitorEngine. Flutter UI receives only
+/// generation/timing/dimension metadata while the registered native platform
+/// host owns presentation.
+final class DigitorWorkspacePreviewState {
+  const DigitorWorkspacePreviewState({
+    required this.generation,
+    required this.timestampUs,
+    required this.width,
+    required this.height,
+    required this.backend,
+  });
+
+  final int generation;
+  final int timestampUs;
+  final int width;
+  final int height;
+  final DigitorNativeTextureBackend backend;
+}
 
 /// High-level Digitor editor workspace owned entirely by DigitorEngine.
 ///
@@ -84,6 +106,7 @@ final class DigitorEditorWorkspace {
   final DigitorFlutterHostCapabilities? _hostCapabilities;
   int? _selectedNode;
   DigitorProductionMediaSnapshot? _media;
+  DigitorRegisteredProductionSession? _productionSession;
   int _timelineRevision = 0;
   bool _closed = false;
 
@@ -94,11 +117,22 @@ final class DigitorEditorWorkspace {
   String get recipeIdentity => _graph.recipeIdentity;
   int get graphRevision => _graph.graphRevision;
   int get parameterRevision => _graph.parameterRevision;
+  bool get productionHostRegistered =>
+      DigitorRegisteredProductionSession.hostRegistered;
+  bool get productionReady => _productionSession != null;
 
   DigitorProductionMediaSnapshot openMedia(String path) {
     _ensureOpen();
+    _productionSession?.dispose();
+    _productionSession = null;
     final snapshot = _mediaPipeline.open(path);
     _media = snapshot;
+    if (DigitorRegisteredProductionSession.hostRegistered) {
+      _productionSession = DigitorRegisteredProductionSession.open(
+        mediaPath: path,
+        nodeGraph: _graph,
+      );
+    }
     _timelineRevision += 1;
     _timeline.publish(
       revision: _timelineRevision,
@@ -107,6 +141,64 @@ final class DigitorEditorWorkspace {
       audioTrackCount: 1,
     );
     return snapshot;
+  }
+
+  DigitorPreviewCapabilities productionPreviewCapabilities() {
+    _ensureProductionReady();
+    return _productionSession!.previewCapabilities;
+  }
+
+  DigitorWorkspacePreviewState renderPreview({
+    required int timestampUs,
+    required int width,
+    required int height,
+  }) {
+    _ensureProductionReady();
+    final frame = _productionSession!.preview(
+      timestampUs: timestampUs,
+      width: width,
+      height: height,
+    );
+    return DigitorWorkspacePreviewState(
+      generation: frame.generation,
+      timestampUs: frame.timestampUs,
+      width: frame.width,
+      height: frame.height,
+      backend: frame.backend,
+    );
+  }
+
+  void previewConsumed([int? generation]) {
+    _ensureProductionReady();
+    _productionSession!.previewConsumed(generation);
+  }
+
+  void exportMedia({
+    required String path,
+    required int firstFrame,
+    required int lastFrame,
+    required int width,
+    required int height,
+    DigitorExportFormat format = DigitorExportFormat.mp4,
+    DigitorVideoCodec codec = DigitorVideoCodec.h264,
+    void Function(DigitorExportProgress progress)? onProgress,
+  }) {
+    _ensureProductionReady();
+    _productionSession!.export(
+      path: path,
+      firstFrame: firstFrame,
+      lastFrame: lastFrame,
+      width: width,
+      height: height,
+      format: format,
+      codec: codec,
+      onProgress: onProgress,
+    );
+  }
+
+  void cancelExport() {
+    _ensureProductionReady();
+    _productionSession!.cancel();
   }
 
   DigitorTimelineStatus timelineStatus() {
@@ -278,6 +370,15 @@ final class DigitorEditorWorkspace {
     _graph.addPowerWindow(value);
   }
 
+  void _ensureProductionReady() {
+    _ensureOpen();
+    if (_productionSession == null) {
+      throw StateError(
+        'The native production host is not registered or no media is open.',
+      );
+    }
+  }
+
   void _ensureSelected() {
     _ensureOpen();
     final selected = _selectedNode;
@@ -292,6 +393,8 @@ final class DigitorEditorWorkspace {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _productionSession?.dispose();
+    _productionSession = null;
     _timeline.dispose();
     _mediaPipeline.close();
     _graph.dispose();
