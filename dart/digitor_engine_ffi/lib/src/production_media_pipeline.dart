@@ -105,38 +105,50 @@ final class DigitorProductionMediaPipeline {
   void seek(Duration position) {
     _ensureOpen();
     final source = _source;
-    if (source == null) throw StateError('Open media before seeking.');
+    if (source == null) {
+      throw StateError('Open media before seeking.');
+    }
     source.seek(position);
   }
 
   DigitorProductionDecodedFrameInfo decode(int frameNumber) {
     _ensureOpen();
     final source = _source;
-    if (source == null) throw StateError('Open media before decoding.');
+    if (source == null) {
+      throw StateError('Open media before decoding.');
+    }
     return source.decode(frameNumber);
   }
 
   DigitorProductionNativeSurface nativeSurface() {
     _ensureOpen();
     final source = _source;
-    if (source == null) throw StateError('Open media before requesting a surface.');
+    if (source == null) {
+      throw StateError('Open media before requesting a surface.');
+    }
     return source.nativeSurface;
   }
 
   void clear() {
-    if (_closed) return;
+    if (_closed) {
+      return;
+    }
     _source?.close();
     _source = null;
     _snapshot = null;
   }
 
   void close() {
-    if (_closed) return;
+    if (_closed) {
+      return;
+    }
     clear();
     _closed = true;
   }
 
   void _ensureOpen() {
-    if (_closed) throw StateError('DigitorProductionMediaPipeline is closed.');
+    if (_closed) {
+      throw StateError('DigitorProductionMediaPipeline is closed.');
+    }
   }
 }
