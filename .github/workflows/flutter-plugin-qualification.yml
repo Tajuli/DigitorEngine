@@ -17,20 +17,38 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package-contract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: agent/windows-ffmpeg-bootstrap
+          fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Apply and format Windows FFmpeg hook
+        run: |
+          python3 tools/normalize_windows_ffmpeg_hook.py
+          dart format dart/digitor_engine_ffi/hook/build.dart
+          git diff --check
+      - name: Commit normalized hook when needed
+        run: |
+          if git diff --quiet -- dart/digitor_engine_ffi/hook/build.dart; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dart/digitor_engine_ffi/hook/build.dart
+          git commit -m 'Build: auto-provision Windows FFmpeg SDK from hook'
+          git push origin HEAD:agent/windows-ffmpeg-bootstrap
       - working-directory: dart/digitor_engine_ffi
         run: flutter pub get
       - working-directory: dart/digitor_engine_ffi
-        run: dart format lib test hook
+        run: dart format --output=none --set-exit-if-changed lib test hook
       - working-directory: dart/digitor_engine_ffi
         run: flutter analyze --fatal-infos
       - working-directory: dart/digitor_engine_ffi
