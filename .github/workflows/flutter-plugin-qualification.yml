@@ -1,8 +1,6 @@
 name: Flutter Plugin Qualification
 
 on:
-  push:
-    branches: [agent/windows-ffmpeg-bootstrap]
   pull_request:
     paths:
       - 'dart/digitor_engine_ffi/**'
@@ -19,68 +17,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  normalize-hook:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/agent/windows-ffmpeg-bootstrap') || (github.event_name == 'pull_request' && github.head_ref == 'agent/windows-ffmpeg-bootstrap')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/windows-ffmpeg-bootstrap
-          fetch-depth: 0
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-      - name: Pin vcpkg baseline and format hook
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('dart/digitor_engine_ffi/hook/build.dart')
-          text = path.read_text()
-          old = """        'clone',
-        '--depth',
-        '1',
-        'https://github.com/microsoft/vcpkg.git',
-        vcpkgRoot.path,
-"""
-          new = """        'clone',
-        '--depth',
-        '1',
-        '--branch',
-        '2025.06.13',
-        'https://github.com/microsoft/vcpkg.git',
-        vcpkgRoot.path,
-"""
-          if old in text:
-              text = text.replace(old, new, 1)
-          text = text.replace(
-              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg',",
-              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg-2025.06.13',",
-              1,
-          )
-          path.write_text(text)
-          PY
-          dart format dart/digitor_engine_ffi/hook/build.dart
-          git diff --check
-      - name: Commit normalized hook
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- dart/digitor_engine_ffi/hook/build.dart; then
-            echo 'Hook already normalized.'
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add dart/digitor_engine_ffi/hook/build.dart
-          git commit -m 'Build: pin deterministic Windows FFmpeg vcpkg baseline'
-          git push origin HEAD:agent/windows-ffmpeg-bootstrap
-
   package-contract:
     runs-on: ubuntu-latest
     steps:
@@ -103,6 +42,7 @@ jobs:
           test -f dart/digitor_engine_ffi/windows/digitor_engine_ffi_plugin.cpp
           test -f dart/digitor_engine_ffi/ios/Classes/DigitorEngineFfiPlugin.mm
           test -f dart/digitor_engine_ffi/macos/Classes/DigitorEngineFfiPlugin.mm
+          test -f dart/digitor_engine_ffi/tool/provision_ffmpeg_windows.ps1
           grep -q 'DIGITOR_ENABLE_FFMPEG=ON' dart/digitor_engine_ffi/hook/build.dart
           grep -q 'DIGITOR_ENABLE_OCIO=ON' dart/digitor_engine_ffi/hook/build.dart
           grep -q 'DIGITOR_ENABLE_NATIVE_SHADER_COMPILER=ON' dart/digitor_engine_ffi/hook/build.dart
@@ -129,15 +69,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - name: Provision pinned vcpkg baseline
+      - name: Provision Windows FFmpeg SDK
         shell: pwsh
-        run: |
-          $root = Join-Path $env:LOCALAPPDATA 'DigitorEngine\deps\vcpkg'
-          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-          New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
-          git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git $root
-          & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics
-          & (Join-Path $root 'vcpkg.exe') version
+        run: .\dart\digitor_engine_ffi\tool\provision_ffmpeg_windows.ps1
       - name: Create Windows integration app
         shell: pwsh
         run: |
