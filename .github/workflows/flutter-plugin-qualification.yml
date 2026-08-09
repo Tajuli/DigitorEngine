@@ -59,14 +59,21 @@ jobs:
           flutter build apk --debug
 
   windows-host:
-    # vcpkg 2026-07-27 crashes while probing Visual Studio 2026 on windows-latest.
-    # Pin qualification to the supported VS2022 image until upstream vcpkg fixes it.
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+      - name: Provision pinned vcpkg baseline
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:LOCALAPPDATA 'DigitorEngine\deps\vcpkg'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          New-Item -ItemType Directory -Force (Split-Path $root) | Out-Null
+          git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git $root
+          & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics
+          & (Join-Path $root 'vcpkg.exe') version
       - name: Create Windows integration app
         shell: pwsh
         run: |
@@ -74,7 +81,7 @@ jobs:
           flutter create --empty --platforms=windows "$env:RUNNER_TEMP\digitor_host_app"
           Set-Location "$env:RUNNER_TEMP\digitor_host_app"
           flutter pub add digitor_engine_ffi --path "$env:GITHUB_WORKSPACE\dart\digitor_engine_ffi"
-          flutter build windows --debug
+          flutter build windows --debug -v
 
   apple-hosts:
     runs-on: macos-latest
