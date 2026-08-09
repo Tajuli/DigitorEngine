@@ -141,13 +141,25 @@ final class DigitorFlutterProductionHostNative extends Struct {
   external Pointer<NativeFunction<DigitorFlutterOpenMediaNative>> openMedia;
   external Pointer<NativeFunction<DigitorFlutterRenderFrameNative>> renderFrame;
   external Pointer<NativeFunction<DigitorFlutterExportMediaNative>> exportMedia;
-  external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>>
-  queryPreview;
+  external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>> queryPreview;
   external Pointer<NativeFunction<DigitorFlutterCancelNative>> cancel;
   external Pointer<NativeFunction<DigitorFlutterCloseMediaNative>> closeMedia;
-  external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>>
-  releaseTexture;
+  external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>> releaseTexture;
 }
+
+@Native<Int32 Function()>(symbol: 'digitor_flutter_production_host_registered')
+external int digitorFlutterProductionHostRegistered();
+
+@Native<
+  Int32 Function(
+    Pointer<Utf8>,
+    Pointer<Pointer<DigitorFlutterProductionSessionNative>>,
+  )
+>(symbol: 'digitor_flutter_production_create_registered')
+external int digitorFlutterProductionCreateRegistered(
+  Pointer<Utf8> mediaPath,
+  Pointer<Pointer<DigitorFlutterProductionSessionNative>> outSession,
+);
 
 @Native<
   Int32 Function(
