@@ -81,20 +81,16 @@ Future<void> main(List<String> arguments) async {
     ];
 
     await _run(cmake, configureArguments, workingDirectory: engineRoot);
-    await _run(
-      cmake,
-      <String>[
-        '--build',
-        buildDirectory.toFilePath(),
-        '--config',
-        'Release',
-        '--target',
-        'digitor_engine',
-        '--parallel',
-        '2',
-      ],
-      workingDirectory: engineRoot,
-    );
+    await _run(cmake, <String>[
+      '--build',
+      buildDirectory.toFilePath(),
+      '--config',
+      'Release',
+      '--target',
+      'digitor_engine',
+      '--parallel',
+      '2',
+    ], workingDirectory: engineRoot);
 
     final library = File.fromUri(libraryUri);
     if (!await library.exists()) {
@@ -161,6 +157,25 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
     );
   }
 
+  if (code.targetArchitecture.name == 'x64') {
+    final provisioner = File(
+      '${Directory.current.path}${Platform.pathSeparator}tool'
+      '${Platform.pathSeparator}provision_ffmpeg_windows.ps1',
+    );
+    if (!await provisioner.exists()) {
+      throw StateError(
+        'Windows FFmpeg provisioner is missing: ${provisioner.path}',
+      );
+    }
+    await _run('powershell.exe', <String>[
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      provisioner.path,
+    ], workingDirectory: Directory.current.uri);
+  }
+
   final triplet = switch (code.targetArchitecture.name) {
     'arm64' => 'arm64-windows',
     'ia32' => 'x86-windows',
@@ -187,17 +202,13 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
     if (await vcpkgRoot.exists()) {
       await vcpkgRoot.delete(recursive: true);
     }
-    await _run(
-      'git',
-      <String>[
-        'clone',
-        '--depth',
-        '1',
-        'https://github.com/microsoft/vcpkg.git',
-        vcpkgRoot.path,
-      ],
-      workingDirectory: cacheRoot.uri,
-    );
+    await _run('git', <String>[
+      'clone',
+      '--depth',
+      '1',
+      'https://github.com/microsoft/vcpkg.git',
+      vcpkgRoot.path,
+    ], workingDirectory: cacheRoot.uri);
     await _run(
       '${vcpkgRoot.path}${Platform.pathSeparator}bootstrap-vcpkg.bat',
       const <String>['-disableMetrics'],
@@ -238,9 +249,7 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
 
   final runtimeLibraries = await _windowsRuntimeLibraries(sdkRoot);
   if (runtimeLibraries.isEmpty) {
-    throw StateError(
-      'FFmpeg SDK at ${sdkRoot.path} contains no runtime DLLs.',
-    );
+    throw StateError('FFmpeg SDK at ${sdkRoot.path} contains no runtime DLLs.');
   }
   return _FfmpegSdk(sdkRoot.uri, runtimeLibraries);
 }
@@ -260,10 +269,7 @@ Future<void> _installWindowsFfmpeg({
     );
   }
 
-  final vcvars = await _windowsVcvars(
-    compiler,
-    code.targetArchitecture.name,
-  );
+  final vcvars = await _windowsVcvars(compiler, code.targetArchitecture.name);
   final visualStudioRoot = _visualStudioRootFromVcvars(vcvars);
   final script = File(
     '${cacheRoot.path}${Platform.pathSeparator}install-ffmpeg-$triplet.cmd',
@@ -381,16 +387,14 @@ _WindowsDependencyProfile _windowsDependencyProfile() {
         'DigitorEngine-profile';
   }
 
-  final localAppData =
-      (environment['LOCALAPPDATA']?.isNotEmpty ?? false)
-          ? environment['LOCALAPPDATA']!
-          : '$userProfile${Platform.pathSeparator}AppData'
-                '${Platform.pathSeparator}Local';
-  final appData =
-      (environment['APPDATA']?.isNotEmpty ?? false)
-          ? environment['APPDATA']!
-          : '$userProfile${Platform.pathSeparator}AppData'
-                '${Platform.pathSeparator}Roaming';
+  final localAppData = (environment['LOCALAPPDATA']?.isNotEmpty ?? false)
+      ? environment['LOCALAPPDATA']!
+      : '$userProfile${Platform.pathSeparator}AppData'
+            '${Platform.pathSeparator}Local';
+  final appData = (environment['APPDATA']?.isNotEmpty ?? false)
+      ? environment['APPDATA']!
+      : '$userProfile${Platform.pathSeparator}AppData'
+            '${Platform.pathSeparator}Roaming';
 
   Directory(userProfile).createSync(recursive: true);
   Directory(localAppData).createSync(recursive: true);
