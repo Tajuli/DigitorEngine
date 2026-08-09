@@ -217,7 +217,8 @@ final class DigitorEditorWorkspace {
       }
 
       var target = _previewTexture;
-      final needsTexture = target == null ||
+      final needsTexture =
+          target == null ||
           target.requestedHandleType != frame.handleType ||
           _previewWidth != frame.width ||
           _previewHeight != frame.height;
