@@ -59,7 +59,9 @@ jobs:
           flutter build apk --debug
 
   windows-host:
-    runs-on: windows-latest
+    # vcpkg 2026-07-27 crashes while probing Visual Studio 2026 on windows-latest.
+    # Pin qualification to the supported VS2022 image until upstream vcpkg fixes it.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
