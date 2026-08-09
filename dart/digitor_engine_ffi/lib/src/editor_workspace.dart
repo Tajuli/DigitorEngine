@@ -11,23 +11,16 @@ import 'session.dart';
 /// export-processing implementations. Those responsibilities stay behind this
 /// facade.
 final class DigitorEditorWorkspace {
-  DigitorEditorWorkspace._({
-    required DigitorEngine engine,
-    required DigitorNodeGraph graph,
-    required DigitorProductionMediaPipeline mediaPipeline,
-    required DigitorFlutterPlatformHost platformHost,
-    required DigitorTimelineSession timeline,
-    required DigitorRendererInfo renderer,
-    required DigitorFlutterHostCapabilities? hostCapabilities,
-    required int selectedNode,
-  }) : _engine = engine,
-       _graph = graph,
-       _mediaPipeline = mediaPipeline,
-       _platformHost = platformHost,
-       _timeline = timeline,
-       _renderer = renderer,
-       _hostCapabilities = hostCapabilities,
-       _selectedNode = selectedNode;
+  DigitorEditorWorkspace._(
+    this._engine,
+    this._graph,
+    this._mediaPipeline,
+    this._platformHost,
+    this._timeline,
+    this._renderer,
+    this._hostCapabilities,
+    this._selectedNode,
+  );
 
   static Future<DigitorEditorWorkspace> create({
     DigitorBackend preferredBackend = DigitorBackend.automatic,
@@ -63,14 +56,14 @@ final class DigitorEditorWorkspace {
         capabilities = null;
       }
       return DigitorEditorWorkspace._(
-        engine: engine,
-        graph: graph,
-        mediaPipeline: mediaPipeline,
-        platformHost: platformHost,
-        timeline: timeline,
-        renderer: renderer,
-        hostCapabilities: capabilities,
-        selectedNode: selected,
+        engine,
+        graph,
+        mediaPipeline,
+        platformHost,
+        timeline,
+        renderer,
+        capabilities,
+        selected,
       );
     } catch (_) {
       timeline?.dispose();
@@ -222,10 +215,13 @@ final class DigitorEditorWorkspace {
     _graph.remove(selected);
     final endpoints = _graph.endpoints;
     final nativeSelection = _graph.selectedNode;
-    _selectedNode =
-        nativeSelection == endpoints.input || nativeSelection == endpoints.output
-        ? null
-        : nativeSelection;
+    final isInputEndpoint = nativeSelection == endpoints.input;
+    final isOutputEndpoint = nativeSelection == endpoints.output;
+    if (isInputEndpoint || isOutputEndpoint) {
+      _selectedNode = null;
+    } else {
+      _selectedNode = nativeSelection;
+    }
   }
 
   void clearSelectedOperations() {
