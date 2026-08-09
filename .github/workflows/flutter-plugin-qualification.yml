@@ -1,6 +1,8 @@
 name: Flutter Plugin Qualification
 
 on:
+  push:
+    branches: [agent/windows-ffmpeg-bootstrap]
   pull_request:
     paths:
       - 'dart/digitor_engine_ffi/**'
@@ -21,12 +23,12 @@ permissions:
 
 jobs:
   normalize-hook:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/windows-ffmpeg-bootstrap'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/agent/windows-ffmpeg-bootstrap') || (github.event_name == 'pull_request' && github.head_ref == 'agent/windows-ffmpeg-bootstrap')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: agent/windows-ffmpeg-bootstrap
           fetch-depth: 0
       - uses: subosito/flutter-action@v2
         with:
@@ -77,7 +79,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add dart/digitor_engine_ffi/hook/build.dart
           git commit -m 'Build: pin deterministic Windows FFmpeg vcpkg baseline'
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:agent/windows-ffmpeg-bootstrap
 
   package-contract:
     runs-on: ubuntu-latest
