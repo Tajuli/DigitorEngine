@@ -16,7 +16,69 @@ on:
       - '.github/workflows/flutter-plugin-qualification.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  normalize-hook:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/windows-ffmpeg-bootstrap'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Pin vcpkg baseline and format hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('dart/digitor_engine_ffi/hook/build.dart')
+          text = path.read_text()
+          old = """        'clone',
+        '--depth',
+        '1',
+        'https://github.com/microsoft/vcpkg.git',
+        vcpkgRoot.path,
+"""
+          new = """        'clone',
+        '--depth',
+        '1',
+        '--branch',
+        '2025.06.13',
+        'https://github.com/microsoft/vcpkg.git',
+        vcpkgRoot.path,
+"""
+          if old in text:
+              text = text.replace(old, new, 1)
+          text = text.replace(
+              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg',",
+              "'${cacheRoot.path}${Platform.pathSeparator}vcpkg-2025.06.13',",
+              1,
+          )
+          path.write_text(text)
+          PY
+          dart format dart/digitor_engine_ffi/hook/build.dart
+          git diff --check
+      - name: Commit normalized hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- dart/digitor_engine_ffi/hook/build.dart; then
+            echo 'Hook already normalized.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dart/digitor_engine_ffi/hook/build.dart
+          git commit -m 'Build: pin deterministic Windows FFmpeg vcpkg baseline'
+          git push origin HEAD:${{ github.head_ref }}
+
   package-contract:
     runs-on: ubuntu-latest
     steps:
