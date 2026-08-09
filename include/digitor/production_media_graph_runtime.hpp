@@ -19,6 +19,8 @@ namespace digitor {
 // processing, node execution, readback, or export encoding belongs there.
 using ProductionPreviewPresenter = std::function<DigitorResult(
     const ProcessedGpuFramePtr& frame, std::string& diagnostic)>;
+using ProductionExportProgress =
+    std::function<void(std::uint64_t completed_frames, std::uint64_t total_frames)>;
 
 struct ProductionMediaGraphRuntimeTelemetry {
   std::uint64_t preview_frames{};
@@ -59,7 +61,8 @@ class ProductionMediaGraphRuntime final {
   [[nodiscard]] DigitorResult export_frames(
       std::span<const FrameNumber> frame_numbers,
       HardwareEncodeConfig config,
-      std::string* diagnostic = nullptr) noexcept;
+      std::string* diagnostic = nullptr,
+      ProductionExportProgress progress = {}) noexcept;
 
   void cancel() noexcept;
   [[nodiscard]] ProductionMediaGraphRuntimeTelemetry telemetry() const;
