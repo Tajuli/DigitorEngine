@@ -49,7 +49,6 @@ target_sources(digitor_engine PRIVATE
     src/runtime/production_media_graph_runtime.cpp
     src/ffi/sdk_worker_c_api.cpp
     src/ffi/production_media_c_api.cpp
-    src/ffi/flutter_production_c_api.cpp
     src/ffi/flutter_production_host_adapter.cpp
     src/audio/audio_latency_probe.cpp
     src/audio/audio_sync_compensation.cpp
