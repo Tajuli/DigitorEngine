@@ -116,6 +116,9 @@ DIGITOR_MEDIA_API int32_t digitor_production_media_open(
 DIGITOR_MEDIA_API int32_t digitor_production_media_get_info(
     const DigitorProductionMediaSource* source,
     DigitorProductionDecoderInfo* out_info);
+DIGITOR_MEDIA_API int32_t digitor_production_media_get_duration_us(
+    const DigitorProductionMediaSource* source,
+    int64_t* out_duration_us);
 DIGITOR_MEDIA_API int32_t digitor_production_media_seek(
     DigitorProductionMediaSource* source,
     int64_t pts_us);
