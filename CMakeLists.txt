@@ -53,6 +53,7 @@ target_sources(digitor_engine PRIVATE
     src/audio/audio_latency_probe.cpp
     src/audio/audio_sync_compensation.cpp
     src/audio/professional_audio_engine.cpp
+    src/sdk/timeline_audio_session.cpp
     src/ffi/audio_sync_c_api.cpp
     src/audio/live_playback_sync.cpp
     src/ffi/live_playback_sync_c_api.cpp
