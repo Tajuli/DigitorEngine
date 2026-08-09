@@ -8,8 +8,7 @@ import 'session.dart';
 /// UI-safe preview state returned by [DigitorEditorWorkspace].
 ///
 /// Native GPU handles remain private to DigitorEngine. Flutter UI receives only
-/// generation/timing/dimension metadata while the registered native platform
-/// host owns presentation.
+/// the registered Flutter texture id plus generation/timing/dimension metadata.
 final class DigitorWorkspacePreviewState {
   const DigitorWorkspacePreviewState({
     required this.generation,
@@ -17,6 +16,7 @@ final class DigitorWorkspacePreviewState {
     required this.width,
     required this.height,
     required this.backend,
+    this.textureId,
   });
 
   final int generation;
@@ -24,6 +24,10 @@ final class DigitorWorkspacePreviewState {
   final int width;
   final int height;
   final DigitorNativeTextureBackend backend;
+
+  /// Flutter texture registry id when the frame has been presented through the
+  /// registered platform host. Null for metadata-only [renderPreview] calls.
+  final int? textureId;
 }
 
 /// High-level Digitor editor workspace owned entirely by DigitorEngine.
@@ -107,6 +111,9 @@ final class DigitorEditorWorkspace {
   int? _selectedNode;
   DigitorProductionMediaSnapshot? _media;
   DigitorRegisteredProductionSession? _productionSession;
+  DigitorFlutterTextureTarget? _previewTexture;
+  int _previewWidth = 0;
+  int _previewHeight = 0;
   int _timelineRevision = 0;
   bool _closed = false;
 
@@ -114,6 +121,7 @@ final class DigitorEditorWorkspace {
   DigitorFlutterHostCapabilities? get hostCapabilities => _hostCapabilities;
   DigitorProductionMediaSnapshot? get media => _media;
   int? get selectedNode => _selectedNode;
+  int? get previewTextureId => _previewTexture?.textureId;
   String get recipeIdentity => _graph.recipeIdentity;
   int get graphRevision => _graph.graphRevision;
   int get parameterRevision => _graph.parameterRevision;
@@ -148,6 +156,11 @@ final class DigitorEditorWorkspace {
     return _productionSession!.previewCapabilities;
   }
 
+  /// Renders a production frame and returns descriptor metadata only.
+  ///
+  /// Callers using this low-level method must call [previewConsumed]. Flutter
+  /// applications should use [presentPreview] so texture ownership and release
+  /// ordering stay inside DigitorEngine.
   DigitorWorkspacePreviewState renderPreview({
     required int timestampUs,
     required int width,
@@ -166,6 +179,74 @@ final class DigitorEditorWorkspace {
       height: frame.height,
       backend: frame.backend,
     );
+  }
+
+  /// Renders and publishes one production GPU frame to Flutter's texture
+  /// registry. The exact frame used here is produced by the same native graph
+  /// and revision contract used by production export.
+  ///
+  /// Descriptor-driven hosts (currently Windows) import the selected GPU frame
+  /// directly. Render-target hosts remain engine-owned and must expose their
+  /// renderer before this method is used; no CPU-copy fallback is attempted.
+  Future<DigitorWorkspacePreviewState> presentPreview({
+    required int timestampUs,
+    required int width,
+    required int height,
+  }) async {
+    _ensureProductionReady();
+    final capabilities = _hostCapabilities;
+    if (capabilities == null) {
+      throw StateError('Flutter platform texture host is unavailable.');
+    }
+    if (!capabilities.directDescriptorPresentation) {
+      throw UnsupportedError(
+        'This platform requires the native render-target preview presenter.',
+      );
+    }
+
+    final frame = _productionSession!.preview(
+      timestampUs: timestampUs,
+      width: width,
+      height: height,
+    );
+    try {
+      if (!capabilities.supports(frame.handleType)) {
+        throw StateError(
+          'Flutter host does not support preview handle ${frame.handleType.name}.',
+        );
+      }
+
+      var target = _previewTexture;
+      final needsTexture = target == null ||
+          target.requestedHandleType != frame.handleType ||
+          _previewWidth != frame.width ||
+          _previewHeight != frame.height;
+      if (needsTexture) {
+        if (target != null) {
+          await _platformHost.disposeTexture(target);
+        }
+        target = await _platformHost.createTexture(
+          handleType: frame.handleType,
+          width: frame.width,
+          height: frame.height,
+        );
+        _previewTexture = target;
+        _previewWidth = frame.width;
+        _previewHeight = frame.height;
+      }
+
+      await _platformHost.present(target, frame);
+      return DigitorWorkspacePreviewState(
+        generation: frame.generation,
+        timestampUs: frame.timestampUs,
+        width: frame.width,
+        height: frame.height,
+        backend: frame.backend,
+        textureId: target.textureId,
+      );
+    } finally {
+      _productionSession!.previewConsumed(frame.generation);
+    }
   }
 
   void previewConsumed([int? generation]) {
@@ -395,6 +476,11 @@ final class DigitorEditorWorkspace {
     _closed = true;
     _productionSession?.dispose();
     _productionSession = null;
+    final previewTexture = _previewTexture;
+    _previewTexture = null;
+    if (previewTexture != null) {
+      await _platformHost.disposeTexture(previewTexture);
+    }
     _timeline.dispose();
     _mediaPipeline.close();
     _graph.dispose();
