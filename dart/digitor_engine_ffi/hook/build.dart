@@ -178,10 +178,9 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
   );
   await cacheRoot.create(recursive: true);
 
-  final explicitVcpkgRoot = Platform.environment['VCPKG_ROOT'];
-  final vcpkgRoot = explicitVcpkgRoot != null && explicitVcpkgRoot.isNotEmpty
-      ? Directory(explicitVcpkgRoot)
-      : Directory('${cacheRoot.path}${Platform.pathSeparator}vcpkg');
+  final vcpkgRoot = Directory(
+    '${cacheRoot.path}${Platform.pathSeparator}vcpkg',
+  );
   final vcpkg = File('${vcpkgRoot.path}${Platform.pathSeparator}vcpkg.exe');
 
   if (!await vcpkg.exists()) {
@@ -203,6 +202,7 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
       '${vcpkgRoot.path}${Platform.pathSeparator}bootstrap-vcpkg.bat',
       const <String>['-disableMetrics'],
       workingDirectory: vcpkgRoot.uri,
+      environmentOverrides: <String, String>{'VCPKG_ROOT': vcpkgRoot.path},
     );
   }
 
@@ -271,9 +271,11 @@ Future<void> _installWindowsFfmpeg({
     '@echo off\r\n'
     'call "${vcvars.path}" >nul\r\n'
     'if errorlevel 1 exit /b %errorlevel%\r\n'
+    'set "VCPKG_ROOT=${vcpkgRoot.path}"\r\n'
     '"${vcpkg.path}" install '
     'ffmpeg[avcodec,avformat,swresample,swscale]:$triplet '
-    '--clean-after-build --disable-metrics\r\n'
+    '--clean-after-build --disable-metrics '
+    '--vcpkg-root "${vcpkgRoot.path}"\r\n'
     'exit /b %errorlevel%\r\n',
   );
 
@@ -282,6 +284,7 @@ Future<void> _installWindowsFfmpeg({
       'cmd.exe',
       <String>['/d', '/c', script.path],
       workingDirectory: vcpkgRoot.uri,
+      environmentOverrides: <String, String>{'VCPKG_ROOT': vcpkgRoot.path},
     );
   } finally {
     if (await script.exists()) {
@@ -523,9 +526,14 @@ Future<void> _run(
   String executable,
   List<String> arguments, {
   required Uri workingDirectory,
+  Map<String, String>? environmentOverrides,
 }) async {
-  final dependencyEnvironment =
-      Platform.isWindows ? _windowsDependencyProfile().environment : null;
+  final dependencyEnvironment = Platform.isWindows
+      ? <String, String>{
+          ..._windowsDependencyProfile().environment,
+          ...?environmentOverrides,
+        }
+      : environmentOverrides;
   final result = await Process.run(
     executable,
     arguments,
@@ -534,6 +542,12 @@ Future<void> _run(
     environment: dependencyEnvironment,
     includeParentEnvironment: true,
   );
+  if (result.stdout.toString().isNotEmpty) {
+    stdout.write(result.stdout);
+  }
+  if (result.stderr.toString().isNotEmpty) {
+    stderr.write(result.stderr);
+  }
   if (result.exitCode != 0) {
     throw ProcessException(
       executable,
