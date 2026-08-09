@@ -76,10 +76,6 @@ typedef void (*DigitorFlutterReleaseTextureCallback)(
     const DigitorNativeGpuTextureDescriptor* texture
 );
 
-/* Platform Flutter embedding code supplies this host. It owns decoder/importer,
- * renderer-context interop and Flutter texture registration. The core session
- * pins one caller-owned ProductionNodeGraph revision for both preview and
- * export. A host must never replace a selected-GPU failure with CPU pixels. */
 typedef struct DigitorFlutterProductionHost {
     uint32_t struct_size;
     uint32_t api_version;
@@ -95,6 +91,28 @@ typedef struct DigitorFlutterProductionHost {
     DigitorFlutterReleaseTextureCallback release_texture;
 } DigitorFlutterProductionHost;
 
+/* Native Flutter plugins install exactly one engine-owned production host after
+ * their real platform renderer/timeline/encoder bindings are attached. Dart
+ * never supplies callback pointers. The host owner must remain alive until it
+ * unregisters the same user_data value and all sessions have been destroyed. */
+DIGITOR_API DigitorResult digitor_flutter_production_register_host(
+    const DigitorFlutterProductionHost* host
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_unregister_host(
+    void* expected_user_data
+);
+
+DIGITOR_API int32_t digitor_flutter_production_host_registered(void);
+
+/* Creates a production session from the platform host previously installed by
+ * the Flutter plugin. This is the entry point used by the high-level editor
+ * workspace so application Dart code never handles native callback pointers. */
+DIGITOR_API DigitorResult digitor_flutter_production_create_registered(
+    const char* utf8_media_path,
+    DigitorFlutterProductionSession** out_session
+);
+
 DIGITOR_API DigitorResult digitor_flutter_production_create(
     const DigitorFlutterProductionHost* host,
     const char* utf8_media_path,
@@ -105,9 +123,6 @@ DIGITOR_API DigitorResult digitor_flutter_production_destroy(
     DigitorFlutterProductionSession* session
 );
 
-/* The graph remains caller-owned and must outlive the binding. Revisions must
- * increase whenever graph topology/parameters change. A bound revision is the
- * immutable identity supplied to both preview and export host calls. */
 DIGITOR_API DigitorResult digitor_flutter_production_bind_node_graph(
     DigitorFlutterProductionSession* session,
     DigitorNodeGraph* graph,
@@ -123,8 +138,6 @@ DIGITOR_API DigitorResult digitor_flutter_production_preview(
     DigitorNativeGpuTextureDescriptor* out_texture
 );
 
-/* Call after Flutter's raster consumer has finished with the generation.
- * Until then the session retains ownership and will not recycle the texture. */
 DIGITOR_API DigitorResult digitor_flutter_production_preview_consumed(
     DigitorFlutterProductionSession* session,
     uint64_t generation
