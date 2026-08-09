@@ -11,9 +11,17 @@
 #include <stdexcept>
 #include <string>
 
+#ifdef DIGITOR_HAS_FFMPEG
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavutil/mathematics.h>
+}
+#endif
+
 struct DigitorProductionMediaSource {
   std::unique_ptr<digitor::VideoDecoder> decoder;
   std::shared_ptr<digitor::VideoFrame> current_frame;
+  int64_t duration_us{};
 };
 
 namespace {
@@ -70,6 +78,37 @@ void copy_string(char* output, size_t capacity, const std::string& value) noexce
   const auto count = std::min(capacity - 1, value.size());
   std::memcpy(output, value.data(), count);
   output[count] = '\0';
+}
+
+int64_t probe_duration_us(const char* path) noexcept {
+#ifdef DIGITOR_HAS_FFMPEG
+  AVFormatContext* format = nullptr;
+  if (avformat_open_input(&format, path, nullptr, nullptr) < 0) {
+    return 0;
+  }
+  int64_t duration_us = 0;
+  if (avformat_find_stream_info(format, nullptr) >= 0) {
+    if (format->duration != AV_NOPTS_VALUE && format->duration > 0) {
+      duration_us = format->duration;
+    } else {
+      const int stream_index =
+          av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+      if (stream_index >= 0) {
+        const AVStream* stream = format->streams[stream_index];
+        if (stream && stream->duration != AV_NOPTS_VALUE &&
+            stream->duration > 0) {
+          duration_us = av_rescale_q(
+              stream->duration, stream->time_base, AVRational{1, 1000000});
+        }
+      }
+    }
+  }
+  avformat_close_input(&format);
+  return std::max<int64_t>(0, duration_us);
+#else
+  (void)path;
+  return 0;
+#endif
 }
 
 bool valid_options(const DigitorProductionMediaOptions* options) noexcept {
@@ -138,6 +177,7 @@ int32_t digitor_production_media_open(
     }
     auto source = std::make_unique<DigitorProductionMediaSource>();
     source->decoder = std::move(decoder);
+    source->duration_us = probe_duration_us(path);
     *out_source = source.release();
     return DIGITOR_RESULT_OK;
   });
@@ -165,6 +205,16 @@ int32_t digitor_production_media_get_info(
                 info.implementation);
     return DIGITOR_RESULT_OK;
   });
+}
+
+int32_t digitor_production_media_get_duration_us(
+    const DigitorProductionMediaSource* source,
+    int64_t* out_duration_us) {
+  if (!source || !source->decoder || !out_duration_us) {
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+  *out_duration_us = source->duration_us;
+  return DIGITOR_RESULT_OK;
 }
 
 int32_t digitor_production_media_seek(
