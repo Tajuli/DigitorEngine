@@ -69,10 +69,14 @@ final class DigitorEditorState {
       previewTimestampUs: previewTimestampUs ?? this.previewTimestampUs,
       previewWidth: previewWidth ?? this.previewWidth,
       previewHeight: previewHeight ?? this.previewHeight,
-      selectedNode: clearSelectedNode ? null : (selectedNode ?? this.selectedNode),
+      selectedNode: clearSelectedNode
+          ? null
+          : (selectedNode ?? this.selectedNode),
       graphRevision: graphRevision ?? this.graphRevision,
       parameterRevision: parameterRevision ?? this.parameterRevision,
-      exportProgress: clearExportProgress ? null : (exportProgress ?? this.exportProgress),
+      exportProgress: clearExportProgress
+          ? null
+          : (exportProgress ?? this.exportProgress),
       busy: busy ?? this.busy,
       exporting: exporting ?? this.exporting,
       error: clearError ? null : (error ?? this.error),
@@ -87,11 +91,11 @@ final class DigitorEditorState {
 /// ownership and native FFI handles stay inside DigitorEngine.
 final class DigitorEditorController extends ChangeNotifier {
   DigitorEditorController._(this._workspace)
-      : _state = DigitorEditorState(
-          selectedNode: _workspace.selectedNode,
-          graphRevision: _workspace.graphRevision,
-          parameterRevision: _workspace.parameterRevision,
-        );
+    : _state = DigitorEditorState(
+        selectedNode: _workspace.selectedNode,
+        graphRevision: _workspace.graphRevision,
+        parameterRevision: _workspace.parameterRevision,
+      );
 
   static Future<DigitorEditorController> create({
     DigitorBackend preferredBackend = DigitorBackend.automatic,
@@ -114,7 +118,8 @@ final class DigitorEditorController extends ChangeNotifier {
 
   DigitorEditorState get state => _state;
   DigitorRendererInfo get renderer => _workspace.renderer;
-  DigitorFlutterHostCapabilities? get hostCapabilities => _workspace.hostCapabilities;
+  DigitorFlutterHostCapabilities? get hostCapabilities =>
+      _workspace.hostCapabilities;
   bool get productionHostRegistered => _workspace.productionHostRegistered;
   bool get productionReady => _workspace.productionReady;
   String get recipeIdentity => _workspace.recipeIdentity;
@@ -161,7 +166,13 @@ final class DigitorEditorController extends ChangeNotifier {
     DigitorVideoCodec codec = DigitorVideoCodec.h264,
   }) async {
     _ensureAlive();
-    _setState(_state.copyWith(exporting: true, clearExportProgress: true, clearError: true));
+    _setState(
+      _state.copyWith(
+        exporting: true,
+        clearExportProgress: true,
+        clearError: true,
+      ),
+    );
     try {
       _workspace.exportMedia(
         path: path,
@@ -206,27 +217,44 @@ final class DigitorEditorController extends ChangeNotifier {
   }
 
   void removeSelectedNode() => _graphCommand(_workspace.removeSelectedNode);
-  void clearSelectedOperations() => _graphCommand(_workspace.clearSelectedOperations);
-  void moveSelectedNode(double x, double y) => _graphCommand(() => _workspace.moveSelectedNode(x, y));
-  void setSelectedEnabled(bool enabled) => _graphCommand(() => _workspace.setSelectedEnabled(enabled));
-  void setSelectedBypassed(bool bypassed) => _graphCommand(() => _workspace.setSelectedBypassed(bypassed));
-  void convertSelectedToParallel() => _graphCommand(_workspace.convertSelectedToParallel);
-  void connectNodes(int source, int destination) => _graphCommand(() => _workspace.connectNodes(source, destination));
-  void disconnectNodes(int source, int destination) => _graphCommand(() => _workspace.disconnectNodes(source, destination));
+  void clearSelectedOperations() =>
+      _graphCommand(_workspace.clearSelectedOperations);
+  void moveSelectedNode(double x, double y) =>
+      _graphCommand(() => _workspace.moveSelectedNode(x, y));
+  void setSelectedEnabled(bool enabled) =>
+      _graphCommand(() => _workspace.setSelectedEnabled(enabled));
+  void setSelectedBypassed(bool bypassed) =>
+      _graphCommand(() => _workspace.setSelectedBypassed(bypassed));
+  void convertSelectedToParallel() =>
+      _graphCommand(_workspace.convertSelectedToParallel);
+  void connectNodes(int source, int destination) =>
+      _graphCommand(() => _workspace.connectNodes(source, destination));
+  void disconnectNodes(int source, int destination) =>
+      _graphCommand(() => _workspace.disconnectNodes(source, destination));
 
-  void applyCorrection(DigitorCorrection value) => _graphCommand(() => _workspace.addCorrection(value));
-  void applyPrimaryWheels(DigitorPrimaryWheels value) => _graphCommand(() => _workspace.addPrimaryWheels(value));
-  void applyLogWheels(DigitorLogWheels value) => _graphCommand(() => _workspace.addLogWheels(value));
-  void applyRgbCurves(DigitorRgbCurves value) => _graphCommand(() => _workspace.addRgbCurves(value));
-  void applyHslQualifier(DigitorHslQualifier value) => _graphCommand(() => _workspace.addHslQualifier(value));
-  void applyEffect(DigitorNodeEffect value) => _graphCommand(() => _workspace.addEffect(value));
-  void applyPowerWindow(DigitorPowerWindow value) => _graphCommand(() => _workspace.addPowerWindow(value));
-  void applyLut1d(List<DigitorLutColor> values) => _graphCommand(() => _workspace.addLut1d(values));
+  void applyCorrection(DigitorCorrection value) =>
+      _graphCommand(() => _workspace.addCorrection(value));
+  void applyPrimaryWheels(DigitorPrimaryWheels value) =>
+      _graphCommand(() => _workspace.addPrimaryWheels(value));
+  void applyLogWheels(DigitorLogWheels value) =>
+      _graphCommand(() => _workspace.addLogWheels(value));
+  void applyRgbCurves(DigitorRgbCurves value) =>
+      _graphCommand(() => _workspace.addRgbCurves(value));
+  void applyHslQualifier(DigitorHslQualifier value) =>
+      _graphCommand(() => _workspace.addHslQualifier(value));
+  void applyEffect(DigitorNodeEffect value) =>
+      _graphCommand(() => _workspace.addEffect(value));
+  void applyPowerWindow(DigitorPowerWindow value) =>
+      _graphCommand(() => _workspace.addPowerWindow(value));
+  void applyLut1d(List<DigitorLutColor> values) =>
+      _graphCommand(() => _workspace.addLut1d(values));
   void applyLut3d(
     int edgeSize,
     List<DigitorLutColor> values, {
     DigitorLutInterpolation interpolation = DigitorLutInterpolation.tetrahedral,
-  }) => _graphCommand(() => _workspace.addLut3d(edgeSize, values, interpolation: interpolation));
+  }) => _graphCommand(
+    () => _workspace.addLut3d(edgeSize, values, interpolation: interpolation),
+  );
 
   void clearError() {
     _ensureAlive();
@@ -272,20 +300,22 @@ final class DigitorEditorController extends ChangeNotifier {
     int? previewWidth,
     int? previewHeight,
   }) {
-    _setState(_state.copyWith(
-      mediaPath: mediaPath,
-      textureId: textureId,
-      clearTextureId: clearTexture,
-      previewGeneration: previewGeneration,
-      previewTimestampUs: previewTimestampUs,
-      previewWidth: previewWidth,
-      previewHeight: previewHeight,
-      selectedNode: _workspace.selectedNode,
-      clearSelectedNode: _workspace.selectedNode == null,
-      graphRevision: _workspace.graphRevision,
-      parameterRevision: _workspace.parameterRevision,
-      clearError: true,
-    ));
+    _setState(
+      _state.copyWith(
+        mediaPath: mediaPath,
+        textureId: textureId,
+        clearTextureId: clearTexture,
+        previewGeneration: previewGeneration,
+        previewTimestampUs: previewTimestampUs,
+        previewWidth: previewWidth,
+        previewHeight: previewHeight,
+        selectedNode: _workspace.selectedNode,
+        clearSelectedNode: _workspace.selectedNode == null,
+        graphRevision: _workspace.graphRevision,
+        parameterRevision: _workspace.parameterRevision,
+        clearError: true,
+      ),
+    );
   }
 
   void _setState(DigitorEditorState next) {
