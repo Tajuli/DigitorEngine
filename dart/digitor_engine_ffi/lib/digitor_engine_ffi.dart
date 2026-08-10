@@ -1,6 +1,8 @@
 export 'src/audio_sync.dart';
 export 'src/live_playback_sync.dart';
 export 'src/bindings.dart' show DigitorTimelineBindings;
+export 'src/editor_controller.dart';
+export 'src/editor_preview_texture.dart';
 export 'src/editor_workspace.dart';
 export 'src/engine.dart';
 export 'src/export_job.dart';
