@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_bootstrap.dart';
 import 'editor_workspace.dart';
 import 'engine.dart';
 import 'node_graph.dart';
@@ -90,7 +91,7 @@ final class DigitorEditorState {
 /// renderer, production-session ownership, graph revision binding, texture
 /// ownership and native FFI handles stay inside DigitorEngine.
 final class DigitorEditorController extends ChangeNotifier {
-  DigitorEditorController._(this._workspace)
+  DigitorEditorController._(this._workspace, this._productionBootstrap)
     : _state = DigitorEditorState(
         selectedNode: _workspace.selectedNode,
         graphRevision: _workspace.graphRevision,
@@ -103,16 +104,19 @@ final class DigitorEditorController extends ChangeNotifier {
     int sampleRate = 48000,
     int channels = 2,
   }) async {
+    final productionBootstrap =
+        await DigitorFlutterProductionBootstrap.resolve();
     final workspace = await DigitorEditorWorkspace.create(
       preferredBackend: preferredBackend,
       allowCpuFallback: allowCpuFallback,
       sampleRate: sampleRate,
       channels: channels,
     );
-    return DigitorEditorController._(workspace);
+    return DigitorEditorController._(workspace, productionBootstrap);
   }
 
   final DigitorEditorWorkspace _workspace;
+  final DigitorFlutterProductionBootstrap _productionBootstrap;
   DigitorEditorState _state;
   bool _disposed = false;
 
@@ -120,12 +124,17 @@ final class DigitorEditorController extends ChangeNotifier {
   DigitorRendererInfo get renderer => _workspace.renderer;
   DigitorFlutterHostCapabilities? get hostCapabilities =>
       _workspace.hostCapabilities;
+  DigitorFlutterProductionBootstrap get productionBootstrap =>
+      _productionBootstrap;
   bool get productionHostRegistered => _workspace.productionHostRegistered;
   bool get productionReady => _workspace.productionReady;
   String get recipeIdentity => _workspace.recipeIdentity;
 
   Future<void> openMedia(String path) async {
     _ensureAlive();
+    if (!_productionBootstrap.ready) {
+      throw StateError(_productionBootstrap.diagnostic);
+    }
     await _guard(() async {
       _workspace.openMedia(path);
       _syncState(mediaPath: path, clearTexture: true);
