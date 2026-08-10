@@ -1,0 +1,118 @@
+--- digitor_orig/DigitorEngine-main/include/digitor/flutter_production_host_adapter.hpp	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/include/digitor/flutter_production_host_adapter.hpp	2026-08-10 09:21:47.450954348 +0000
+@@ -17,6 +17,9 @@
+ using ProductionDecoderFactory = std::function<std::unique_ptr<ProductionHardwareDecodeSession>(
+     const std::string& media_path, std::string& diagnostic)>;
+ using ProductionTimestampFrameResolver = std::function<FrameNumber(std::int64_t timestamp_us)>;
++using ProductionPreviewTargetBinder = std::function<DigitorResult(
++    std::uint64_t native_target_handle, std::uint32_t width,
++    std::uint32_t height, std::int32_t handle_type, std::string& diagnostic)>;
+ using ProductionTextureDescriptorBuilder = std::function<DigitorResult(
+     const ProcessedGpuFramePtr& frame, std::uint64_t generation,
+     DigitorNativeGpuTextureDescriptor& descriptor, std::string& diagnostic)>;
+@@ -27,6 +30,7 @@
+   std::shared_ptr<NativePreviewPresentationSession> preview_session;
+   HardwareEncoderCallbacks encoder_callbacks;
+   ProductionTextureDescriptorBuilder texture_descriptor_builder;
++  ProductionPreviewTargetBinder preview_target_binder;
+   DigitorNativePreviewCapabilities preview_capabilities{};
+   EncoderBackend encoder_backend{EncoderBackend::software};
+   std::int32_t fps_num{30};
+--- digitor_orig/DigitorEngine-main/include/digitor/flutter_production_provider_builder.hpp	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/include/digitor/flutter_production_provider_builder.hpp	2026-08-10 09:21:47.451004292 +0000
+@@ -15,6 +15,7 @@
+   ProductionDecoderFactory decoder_factory;
+   ProductionTimestampFrameResolver frame_resolver;
+   ProductionTextureDescriptorBuilder texture_descriptor_builder;
++  ProductionPreviewTargetBinder preview_target_binder;
+   DigitorNativePreviewCapabilities preview_capabilities{};
+   EncoderBackend encoder_backend{EncoderBackend::software};
+   std::int32_t fps_num{30};
+--- digitor_orig/DigitorEngine-main/src/ffi/flutter_production_plugin_bootstrap.cpp	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/src/ffi/flutter_production_plugin_bootstrap.cpp	2026-08-10 09:21:47.451092303 +0000
+@@ -43,7 +43,7 @@
+ 
+ bool host_inputs_complete(const FlutterProductionProviderBuild& build) noexcept {
+   return build.decoder_factory && build.frame_resolver &&
+-         build.texture_descriptor_builder &&
++         build.texture_descriptor_builder && build.preview_target_binder &&
+          build.encoder_backend != EncoderBackend::software &&
+          build.fps_num > 0 && build.fps_den > 0 && build.video_bitrate > 0 &&
+          build.required_device_identity != 0 &&
+@@ -140,6 +140,7 @@
+           out.encoder_callbacks = std::move(assembly.encoder_callbacks);
+           out.texture_descriptor_builder =
+               std::move(build->texture_descriptor_builder);
++          out.preview_target_binder = std::move(build->preview_target_binder);
+           out.preview_capabilities = build->preview_capabilities;
+           out.encoder_backend = build->encoder_backend;
+           out.fps_num = build->fps_num;
+--- digitor_orig/DigitorEngine-main/src/ffi/flutter_production_host_adapter.cpp	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/src/ffi/flutter_production_host_adapter.cpp	2026-08-10 09:21:47.451238970 +0000
+@@ -64,6 +64,7 @@
+   bool valid() const noexcept {
+     return inputs.decoder_factory && inputs.frame_resolver &&
+            inputs.preview_session && inputs.texture_descriptor_builder &&
++           inputs.preview_target_binder &&
+            callbacks_complete(inputs.encoder_callbacks) &&
+            inputs.encoder_backend != EncoderBackend::software &&
+            inputs.fps_num > 0 && inputs.fps_den > 0 &&
+@@ -312,6 +313,27 @@
+     }
+   }
+ 
++  static DigitorResult set_preview_target(
++      void* user_data, const DigitorFlutterPreviewTarget* target,
++      char* diagnostic, std::uint32_t diagnostic_capacity) {
++    auto* p = self(user_data);
++    if (!p || !target ||
++        target->struct_size < sizeof(DigitorFlutterPreviewTarget) ||
++        target->api_version != DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION ||
++        !target->native_target_handle || !target->width || !target->height ||
++        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_NONE ||
++        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER) {
++      return DIGITOR_RESULT_INVALID_ARGUMENT;
++    }
++    std::string message;
++    const auto result = p->inputs.preview_target_binder(
++        target->native_target_handle, target->width, target->height,
++        target->handle_type, message);
++    if (result != DIGITOR_RESULT_OK)
++      write_diagnostic(diagnostic, diagnostic_capacity, message);
++    return result;
++  }
++
+   static DigitorResult query_preview(
+       void* user_data, DigitorNativePreviewCapabilities* output) {
+     auto* p = self(user_data);
+@@ -384,6 +406,7 @@
+   value.render_frame = &Impl::render_frame;
+   value.export_media = &Impl::export_media;
+   value.query_preview = &Impl::query_preview;
++  value.set_preview_target = &Impl::set_preview_target;
+   value.cancel = &Impl::cancel;
+   value.close_media = &Impl::close_media;
+   value.release_texture = &Impl::release_texture;
+--- digitor_orig/DigitorEngine-main/src/ffi/flutter_production_c_api.cpp	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/src/ffi/flutter_production_c_api.cpp	2026-08-10 09:21:47.451356735 +0000
+@@ -33,7 +33,8 @@
+            host->struct_size >= sizeof(DigitorFlutterProductionHost) &&
+            host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION &&
+            host->open_media && host->render_frame && host->export_media &&
+-           host->query_preview && host->cancel && host->close_media &&
++           host->query_preview && host->set_preview_target &&
++           host->cancel && host->close_media &&
+            host->release_texture;
+ }
+ 
+@@ -250,6 +251,36 @@
+         session->last_error.clear();
+         return DIGITOR_RESULT_OK;
+     } catch (...) {
++        return DIGITOR_RESULT_INTERNAL_ERROR;
++    }
++}
++
++DigitorResult digitor_flutter_production_set_preview_target(
++    DigitorFlutterProductionSession* session,
++    const DigitorFlutterPreviewTarget* target) {
