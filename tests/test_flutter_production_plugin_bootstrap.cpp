@@ -1,13 +1,22 @@
 #include "digitor/flutter_production_plugin_bootstrap.hpp"
 #include "digitor/flutter_production_provider_builder.hpp"
 
-#include <cassert>
 #include <atomic>
+#include <cstdlib>
+#include <iostream>
 #include <memory>
 #include <string>
 
 namespace {
 using namespace digitor;
+
+[[noreturn]] void fail_check(const char* expression, int line) {
+  std::cerr << "check failed at line " << line << ": " << expression << '\n';
+  std::exit(EXIT_FAILURE);
+}
+
+#define REQUIRE(expression) \
+  ((expression) ? static_cast<void>(0) : fail_check(#expression, __LINE__))
 
 class TextureHost final : public NativePreviewTextureHost {
  public:
@@ -61,10 +70,10 @@ int main() {
   // Flutter may attach before the engine-owned provider runtime exists. The
   // attachment must be retained so a later complete factory auto-registers the
   // process-wide host without requiring a second Dart attach call.
-  assert(digitor_flutter_production_plugin_attach(&attachment) ==
+  REQUIRE(digitor_flutter_production_plugin_attach(&attachment) ==
          DIGITOR_RESULT_NOT_INITIALIZED);
-  assert(digitor_flutter_production_plugin_attached() == 0);
-  assert(std::string(digitor_flutter_production_plugin_last_error()).find(
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(std::string(digitor_flutter_production_plugin_last_error()).find(
              "factory is not installed") != std::string::npos);
 
   // A nominal factory is not enough: if it cannot construct a valid host while
@@ -74,7 +83,7 @@ int main() {
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS,
       [](const FlutterProductionPluginAttachment& input, std::string& local)
           -> std::optional<FlutterProductionHostAdapterInputs> {
-        assert(input.flutter_texture_registrar != nullptr);
+        REQUIRE(input.flutter_texture_registrar != nullptr);
         FlutterProductionHostAdapterInputs values{};
         values.decoder_factory = [](const std::string&, std::string& d)
             -> std::unique_ptr<ProductionHardwareDecodeSession> {
@@ -88,15 +97,15 @@ int main() {
         return values;
       },
       &diagnostic);
-  assert(incomplete == DIGITOR_RESULT_NOT_INITIALIZED);
-  assert(!diagnostic.empty());
-  assert(!flutter_production_provider_builder_installed(
+  REQUIRE(incomplete == DIGITOR_RESULT_NOT_INITIALIZED);
+  REQUIRE(!diagnostic.empty());
+  REQUIRE(!flutter_production_provider_builder_installed(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
-  assert(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
 
   // Installing complete inputs must consume the pending attachment and register
   // immediately. No second digitor_flutter_production_plugin_attach() call.
-  assert(install_flutter_production_host_inputs_factory(
+  REQUIRE(install_flutter_production_host_inputs_factory(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS,
       [](const FlutterProductionPluginAttachment&, std::string& local)
           -> std::optional<FlutterProductionHostAdapterInputs> {
@@ -126,51 +135,51 @@ int main() {
         return v;
       },
       &diagnostic) == DIGITOR_RESULT_OK);
-  assert(diagnostic.empty());
-  assert(digitor_flutter_production_plugin_attached() == 1);
-  assert(digitor_flutter_production_host_registered() == 1);
-  assert(std::string(digitor_flutter_production_plugin_last_error()).empty());
+  REQUIRE(diagnostic.empty());
+  REQUIRE(digitor_flutter_production_plugin_attached() == 1);
+  REQUIRE(digitor_flutter_production_host_registered() == 1);
+  REQUIRE(std::string(digitor_flutter_production_plugin_last_error()).empty());
 
   // A failed detach must retain plugin ownership while a registered session
   // is live, allowing the exact same registrar to retry after closing it.
   DigitorFlutterProductionSession* session = nullptr;
-  assert(digitor_flutter_production_create_registered("fixture.mp4", &session) ==
+  REQUIRE(digitor_flutter_production_create_registered("fixture.mp4", &session) ==
          DIGITOR_RESULT_OK);
-  assert(session != nullptr && digitor_flutter_production_host_registered() == 1);
-  assert(digitor_flutter_production_plugin_detach(&registrar_token) ==
+  REQUIRE(session != nullptr && digitor_flutter_production_host_registered() == 1);
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_RESOURCE_IN_USE);
-  assert(digitor_flutter_production_plugin_attached() == 1);
-  assert(std::string(digitor_flutter_production_plugin_last_error()).find(
+  REQUIRE(digitor_flutter_production_plugin_attached() == 1);
+  REQUIRE(std::string(digitor_flutter_production_plugin_last_error()).find(
              "session is still active") != std::string::npos);
   digitor_flutter_production_destroy(session);
-  assert(digitor_flutter_production_plugin_detach(&registrar_token) ==
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_OK);
-  assert(digitor_flutter_production_plugin_attached() == 0);
-  assert(digitor_flutter_production_host_registered() == 0);
-  assert(clear_flutter_production_host_inputs_factory(
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(digitor_flutter_production_host_registered() == 0);
+  REQUIRE(clear_flutter_production_host_inputs_factory(
              DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS) == DIGITOR_RESULT_OK);
 
   // Detaching a pending (not yet registered) Flutter attachment cancels the
   // auto-registration claim cleanly.
-  assert(digitor_flutter_production_plugin_attach(&attachment) ==
+  REQUIRE(digitor_flutter_production_plugin_attach(&attachment) ==
          DIGITOR_RESULT_NOT_INITIALIZED);
-  assert(digitor_flutter_production_plugin_detach(&registrar_token) ==
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_OK);
-  assert(install_flutter_production_host_inputs_factory(
+  REQUIRE(install_flutter_production_host_inputs_factory(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS,
       [](const FlutterProductionPluginAttachment&, std::string& local)
           -> std::optional<FlutterProductionHostAdapterInputs> {
         local = "should not be invoked without a pending attachment";
         return std::nullopt;
       }) == DIGITOR_RESULT_OK);
-  assert(digitor_flutter_production_plugin_attached() == 0);
-  assert(clear_flutter_production_host_inputs_factory(
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(clear_flutter_production_host_inputs_factory(
              DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS) == DIGITOR_RESULT_OK);
 
   DigitorFlutterProductionPluginAttachment invalid{};
-  assert(digitor_flutter_production_plugin_attach(&invalid) ==
+  REQUIRE(digitor_flutter_production_plugin_attach(&invalid) ==
          DIGITOR_RESULT_INVALID_ARGUMENT);
-  assert(digitor_flutter_production_plugin_detach(&registrar_token) ==
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_OK);
   return 0;
 }

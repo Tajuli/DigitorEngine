@@ -1,13 +1,22 @@
 #include "digitor/production_integration_runtime.hpp"
 
-#include <cassert>
 #include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <utility>
 
 namespace {
 using namespace digitor;
+
+[[noreturn]] void fail_check(const char* expression, int line) {
+  std::cerr << "check failed at line " << line << ": " << expression << '\n';
+  std::exit(EXIT_FAILURE);
+}
+
+#define REQUIRE(expression) \
+  ((expression) ? static_cast<void>(0) : fail_check(#expression, __LINE__))
 
 NativeImplementationEvidence evidence(const char* identity) {
   NativeImplementationEvidence out{};
@@ -97,7 +106,7 @@ FlutterProductionProviderBuild complete_build() {
 int main() {
   using namespace digitor;
   const auto platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS;
-  assert(!flutter_production_provider_builder_installed(platform));
+  REQUIRE(!flutter_production_provider_builder_installed(platform));
 
   // The authoritative validator rejects partial app-facing composition before
   // any process-wide factory can be reported as ready.
@@ -105,9 +114,9 @@ int main() {
   incomplete_build.preview_target_binder = {};
   const auto incomplete_validation =
       validate_flutter_production_provider_build(platform, incomplete_build);
-  assert(!incomplete_validation);
-  assert(incomplete_validation.result == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
-  assert(incomplete_validation.diagnostic.find("preview target binder") !=
+  REQUIRE(!incomplete_validation);
+  REQUIRE(incomplete_validation.result == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
+  REQUIRE(incomplete_validation.diagnostic.find("preview target binder") !=
          std::string::npos);
 
   int registrar_token = 19;
@@ -119,9 +128,9 @@ int main() {
   attachment.implementation_identity = "fixture.flutter.windows";
 
   // Attach-first is now a supported production startup order.
-  assert(digitor_flutter_production_plugin_attach(&attachment) ==
+  REQUIRE(digitor_flutter_production_plugin_attach(&attachment) ==
          DIGITOR_RESULT_NOT_INITIALIZED);
-  assert(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
 
   // An incomplete provider runtime cannot satisfy the waiting Flutter host and
   // therefore is not left nominally installed.
@@ -135,10 +144,10 @@ int main() {
         return build;
       },
       &diagnostic);
-  assert(!rejected);
-  assert(!diagnostic.empty());
-  assert(!flutter_production_provider_builder_installed(platform));
-  assert(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(!rejected);
+  REQUIRE(!diagnostic.empty());
+  REQUIRE(!flutter_production_provider_builder_installed(platform));
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
 
   // A complete engine-owned runtime consumes the retained attachment and
   // auto-registers the host. The app never has to orchestrate a second attach.
@@ -146,25 +155,25 @@ int main() {
       platform,
       [](const FlutterProductionPluginAttachment& input, std::string& local)
           -> std::optional<FlutterProductionProviderBuild> {
-        assert(input.flutter_texture_registrar != nullptr);
+        REQUIRE(input.flutter_texture_registrar != nullptr);
         local.clear();
         return complete_build();
       },
       &diagnostic);
-  assert(runtime && runtime->active());
-  assert(diagnostic.empty());
-  assert(flutter_production_provider_builder_installed(platform));
-  assert(digitor_flutter_production_plugin_attached() == 1);
-  assert(digitor_flutter_production_host_registered() == 1);
-  assert(std::string(digitor_flutter_production_plugin_last_error()).empty());
+  REQUIRE(runtime && runtime->active());
+  REQUIRE(diagnostic.empty());
+  REQUIRE(flutter_production_provider_builder_installed(platform));
+  REQUIRE(digitor_flutter_production_plugin_attached() == 1);
+  REQUIRE(digitor_flutter_production_host_registered() == 1);
+  REQUIRE(std::string(digitor_flutter_production_plugin_last_error()).empty());
 
   const auto generation = runtime->generation();
-  assert(runtime->shutdown() == DIGITOR_RESULT_RESOURCE_IN_USE);
-  assert(!runtime->active());
-  assert(digitor_flutter_production_plugin_detach(&registrar_token) ==
+  REQUIRE(runtime->shutdown() == DIGITOR_RESULT_RESOURCE_IN_USE);
+  REQUIRE(!runtime->active());
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_OK);
-  assert(runtime->shutdown() == DIGITOR_RESULT_OK);
-  assert(!flutter_production_provider_builder_installed(platform));
+  REQUIRE(runtime->shutdown() == DIGITOR_RESULT_OK);
+  REQUIRE(!flutter_production_provider_builder_installed(platform));
 
   // A later runtime generation can still install normally when Flutter is not
   // attached, preserving the existing explicit lifecycle contract.
@@ -174,7 +183,7 @@ int main() {
           -> std::optional<FlutterProductionProviderBuild> {
         return std::nullopt;
       });
-  assert(second && second->generation() > generation);
-  assert(second->shutdown() == DIGITOR_RESULT_OK);
+  REQUIRE(second && second->generation() > generation);
+  REQUIRE(second->shutdown() == DIGITOR_RESULT_OK);
   return 0;
 }
