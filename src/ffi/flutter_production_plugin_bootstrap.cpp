@@ -160,6 +160,19 @@ DigitorResult install_flutter_production_provider_builder(
   }
 }
 
+DigitorResult uninstall_flutter_production_provider_builder(
+    DigitorFlutterProductionPluginPlatform platform) noexcept {
+  return clear_flutter_production_host_inputs_factory(platform);
+}
+
+bool flutter_production_provider_builder_installed(
+    DigitorFlutterProductionPluginPlatform platform) noexcept {
+  if (!valid_platform(platform)) return false;
+  auto& s = state();
+  std::scoped_lock lock(s.mutex);
+  return static_cast<bool>(s.factories[static_cast<std::size_t>(platform)]);
+}
+
 }  // namespace digitor
 
 extern "C" {
@@ -217,11 +230,11 @@ DigitorResult digitor_flutter_production_plugin_detach(
     std::scoped_lock lock(s.mutex);
     if (!s.registration) return DIGITOR_RESULT_OK;
     if (s.registrar != flutter_texture_registrar) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    const auto result = s.registration->unregister();
+    if (result != DIGITOR_RESULT_OK) return result;
     s.registration.reset();
     s.registrar = nullptr;
-    return digitor_flutter_production_host_registered() == 0
-               ? DIGITOR_RESULT_OK
-               : DIGITOR_RESULT_RESOURCE_IN_USE;
+    return DIGITOR_RESULT_OK;
   } catch (...) {
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }

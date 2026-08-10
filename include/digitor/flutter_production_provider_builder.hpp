@@ -38,4 +38,13 @@ DigitorResult install_flutter_production_provider_builder(
     FlutterProductionProviderBuildFactory factory,
     std::string* diagnostic = nullptr) noexcept;
 
+// Removes a builder installed by the engine-owned production runtime.  Active
+// plugin registration is never disturbed; shutdown must first close sessions
+// and detach the Flutter plugin.
+DigitorResult uninstall_flutter_production_provider_builder(
+    DigitorFlutterProductionPluginPlatform platform) noexcept;
+
+[[nodiscard]] bool flutter_production_provider_builder_installed(
+    DigitorFlutterProductionPluginPlatform platform) noexcept;
+
 }  // namespace digitor
