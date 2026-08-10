@@ -115,6 +115,36 @@ final class DigitorRegisteredProductionSession {
     }
   }
 
+  void setPreviewTarget({
+    required int nativeTargetHandle,
+    required int width,
+    required int height,
+    required DigitorNativeTextureHandleType handleType,
+  }) {
+    _ensureAlive();
+    if (nativeTargetHandle == 0 || width <= 0 || height <= 0) {
+      throw ArgumentError(
+        'A live native preview target and dimensions are required.',
+      );
+    }
+    final target = calloc<DigitorFlutterPreviewTargetNative>();
+    try {
+      target.ref
+        ..structSize = sizeOf<DigitorFlutterPreviewTargetNative>()
+        ..apiVersion = 1
+        ..nativeTargetHandle = nativeTargetHandle
+        ..width = width
+        ..height = height
+        ..handleType = handleType.nativeValue;
+      _check(
+        'setPreviewTarget',
+        digitorFlutterProductionSetPreviewTarget(_handle, target),
+      );
+    } finally {
+      calloc.free(target);
+    }
+  }
+
   DigitorNativeGpuTextureFrame preview({
     required int timestampUs,
     required int width,

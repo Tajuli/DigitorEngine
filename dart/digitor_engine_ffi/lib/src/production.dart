@@ -118,6 +118,7 @@ final class DigitorProductionHost {
     required this.renderFrame,
     required this.exportMedia,
     required this.queryPreview,
+    required this.setPreviewTarget,
     required this.cancel,
     required this.closeMedia,
     required this.releaseTexture,
@@ -133,6 +134,7 @@ final class DigitorProductionHost {
   final Pointer<Void> renderFrame;
   final Pointer<Void> exportMedia;
   final Pointer<Void> queryPreview;
+  final Pointer<Void> setPreviewTarget;
   final Pointer<Void> cancel;
   final Pointer<Void> closeMedia;
   final Pointer<Void> releaseTexture;
@@ -142,6 +144,7 @@ final class DigitorProductionHost {
         renderFrame == nullptr ||
         exportMedia == nullptr ||
         queryPreview == nullptr ||
+        setPreviewTarget == nullptr ||
         cancel == nullptr ||
         closeMedia == nullptr ||
         releaseTexture == nullptr) {
@@ -149,7 +152,7 @@ final class DigitorProductionHost {
     }
     native.ref
       ..structSize = sizeOf<DigitorFlutterProductionHostNative>()
-      ..apiVersion = 1
+      ..apiVersion = 2
       ..userData = userData ?? nullptr
       ..requiredDeviceIdentity = requiredDeviceIdentity
       ..requiredContextIdentity = requiredContextIdentity
@@ -161,6 +164,8 @@ final class DigitorProductionHost {
           .cast<NativeFunction<DigitorFlutterExportMediaNative>>()
       ..queryPreview = queryPreview
           .cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
+      ..setPreviewTarget = setPreviewTarget
+          .cast<NativeFunction<DigitorFlutterSetPreviewTargetNative>>()
       ..cancel = cancel.cast<NativeFunction<DigitorFlutterCancelNative>>()
       ..closeMedia = closeMedia
           .cast<NativeFunction<DigitorFlutterCloseMediaNative>>()

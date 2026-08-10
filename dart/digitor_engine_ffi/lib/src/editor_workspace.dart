@@ -198,12 +198,71 @@ final class DigitorEditorWorkspace {
     if (capabilities == null) {
       throw StateError('Flutter platform texture host is unavailable.');
     }
-    if (!capabilities.directDescriptorPresentation) {
-      throw UnsupportedError(
-        'This platform requires the native render-target preview presenter.',
+    final previewCapabilities = _productionSession!.previewCapabilities;
+    if (capabilities.renderTargetPresentation) {
+      final handleType = previewCapabilities.handleType;
+      if (!capabilities.supports(handleType)) {
+        throw StateError(
+          'Flutter host does not support render-target handle ${handleType.name}.',
+        );
+      }
+      var target = _previewTexture;
+      final needsTexture =
+          target == null ||
+          target.requestedHandleType != handleType ||
+          _previewWidth != width ||
+          _previewHeight != height;
+      if (needsTexture) {
+        if (target != null) await _platformHost.disposeTexture(target);
+        target = await _platformHost.createTexture(
+          handleType: handleType,
+          width: width,
+          height: height,
+        );
+        _previewTexture = target;
+        _previewWidth = width;
+        _previewHeight = height;
+      } else {
+        target = await _platformHost.refreshTextureTarget(target);
+        _previewTexture = target;
+      }
+      if (target.nativeTargetHandle == 0) {
+        throw StateError('Flutter render target is not currently available.');
+      }
+      _productionSession!.setPreviewTarget(
+        nativeTargetHandle: target.nativeTargetHandle,
+        width: width,
+        height: height,
+        handleType: handleType,
       );
+      final frame = _productionSession!.preview(
+        timestampUs: timestampUs,
+        width: width,
+        height: height,
+      );
+      try {
+        await _platformHost.markFrameAvailable(
+          target,
+          generation: frame.generation,
+        );
+        return DigitorWorkspacePreviewState(
+          generation: frame.generation,
+          timestampUs: frame.timestampUs,
+          width: frame.width,
+          height: frame.height,
+          backend: frame.backend,
+          textureId: target.textureId,
+        );
+      } finally {
+        _productionSession!.previewConsumed(frame.generation);
+      }
     }
 
+    if (!capabilities.directDescriptorPresentation) {
+      throw UnsupportedError(
+        'Flutter platform exposes no production preview path.',
+      );
+    }
     final frame = _productionSession!.preview(
       timestampUs: timestampUs,
       width: width,
@@ -215,7 +274,6 @@ final class DigitorEditorWorkspace {
           'Flutter host does not support preview handle ${frame.handleType.name}.',
         );
       }
-
       var target = _previewTexture;
       final needsTexture =
           target == null ||
@@ -223,9 +281,7 @@ final class DigitorEditorWorkspace {
           _previewWidth != frame.width ||
           _previewHeight != frame.height;
       if (needsTexture) {
-        if (target != null) {
-          await _platformHost.disposeTexture(target);
-        }
+        if (target != null) await _platformHost.disposeTexture(target);
         target = await _platformHost.createTexture(
           handleType: frame.handleType,
           width: frame.width,
@@ -235,7 +291,6 @@ final class DigitorEditorWorkspace {
         _previewWidth = frame.width;
         _previewHeight = frame.height;
       }
-
       await _platformHost.present(target, frame);
       return DigitorWorkspacePreviewState(
         generation: frame.generation,
