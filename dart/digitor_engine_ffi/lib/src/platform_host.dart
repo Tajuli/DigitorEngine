@@ -223,6 +223,20 @@ final class DigitorFlutterPlatformHost {
         'textureId': target.textureId,
       });
 
+  /// Returns the stable native registrar token owned by the platform plugin.
+  ///
+  /// DigitorEngine uses this opaque token only for production-host lifecycle
+  /// ownership. Dart never dereferences it.
+  Future<int> productionRegistrarToken() async {
+    final value = await _channel.invokeMethod<int>('productionRegistrarToken');
+    if (value == null || value == 0) {
+      throw StateError(
+        'Flutter platform host returned no production registrar token.',
+      );
+    }
+    return value;
+  }
+
   Future<void> close() async {
     if (_closed) return;
     _closed = true;

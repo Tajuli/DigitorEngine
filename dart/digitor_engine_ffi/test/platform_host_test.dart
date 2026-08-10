@@ -233,4 +233,15 @@ void main() {
       await host.close();
     },
   );
+
+  test('production registrar token is opaque and non-zero', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'productionRegistrarToken');
+      return 0x1234;
+    });
+
+    final host = DigitorFlutterPlatformHost(channel: channel);
+    expect(await host.productionRegistrarToken(), 0x1234);
+    await host.close();
+  });
 }

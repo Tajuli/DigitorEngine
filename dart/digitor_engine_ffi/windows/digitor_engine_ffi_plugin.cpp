@@ -182,6 +182,17 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
     return;
   }
 
+  if (call.method_name() == "productionRegistrarToken") {
+    if (!texture_registrar_) {
+      result->Error("registrar_unavailable",
+                    "Flutter Windows texture registrar is unavailable.");
+      return;
+    }
+    result->Success(Value(static_cast<std::int64_t>(
+        reinterpret_cast<std::uintptr_t>(texture_registrar_))));
+    return;
+  }
+
   const auto* args = Arguments(call);
   if (!args) {
     result->Error("invalid_arguments", "Expected a map of arguments.");

@@ -152,6 +152,32 @@ final class DigitorFlutterProductionHostNative extends Struct {
 @Native<Int32 Function()>(symbol: 'digitor_flutter_production_host_registered')
 external int digitorFlutterProductionHostRegistered();
 
+final class DigitorFlutterProductionPluginAttachmentNative extends Struct {
+  @Uint32()
+  external int structSize;
+  @Uint32()
+  external int apiVersion;
+  @Uint32()
+  external int platform;
+  external Pointer<Void> flutterTextureRegistrar;
+  external Pointer<Utf8> implementationIdentity;
+}
+
+@Native<
+  Int32 Function(Pointer<DigitorFlutterProductionPluginAttachmentNative>)
+>(symbol: 'digitor_flutter_production_plugin_attach')
+external int digitorFlutterProductionPluginAttach(
+  Pointer<DigitorFlutterProductionPluginAttachmentNative> attachment,
+);
+
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'digitor_flutter_production_plugin_detach',
+)
+external int digitorFlutterProductionPluginDetach(Pointer<Void> registrar);
+
+@Native<Uint8 Function()>(symbol: 'digitor_flutter_production_plugin_attached')
+external int digitorFlutterProductionPluginAttached();
+
 @Native<
   Int32 Function(
     Pointer<Utf8>,

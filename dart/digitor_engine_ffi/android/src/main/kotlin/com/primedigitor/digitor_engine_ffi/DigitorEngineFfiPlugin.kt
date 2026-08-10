@@ -31,6 +31,8 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private external fun nativeReleaseWindow(handle: Long)
 
+    private external fun nativeProductionRegistrarToken(): Long
+
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         textures = binding.textureRegistry
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
@@ -52,6 +54,18 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     "renderTargetPresentation" to true,
                 ),
             )
+            "productionRegistrarToken" -> {
+                val token = nativeProductionRegistrarToken()
+                if (token == 0L) {
+                    result.error(
+                        "registrar_unavailable",
+                        "Android production registrar token is unavailable.",
+                        null,
+                    )
+                } else {
+                    result.success(token)
+                }
+            }
             "createTexture" -> createTexture(call, result)
             "refreshTextureTarget" -> refreshTextureTarget(call, result)
             "present" -> result.error(
