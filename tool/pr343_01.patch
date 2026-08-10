@@ -1,0 +1,171 @@
++    if (!session || !target ||
++        target->struct_size < sizeof(DigitorFlutterPreviewTarget) ||
++        target->api_version != DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION ||
++        !target->native_target_handle || !target->width || !target->height) {
++        return DIGITOR_RESULT_INVALID_ARGUMENT;
++    }
++    try {
++        std::lock_guard registry_lock(g_flutter_sessions_mutex);
++        if (!registered(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
++        std::lock_guard session_lock(session->mutex);
++        if (session->active_operation || session->has_current_preview)
++            return DIGITOR_RESULT_RESOURCE_IN_USE;
++        char diagnostic[kDiagnosticCapacity]{};
++        const auto result = session->host.set_preview_target(
++            session->host.user_data, target, diagnostic, kDiagnosticCapacity);
++        if (result != DIGITOR_RESULT_OK) {
++            session->last_error = diagnostic[0]
++                ? diagnostic : "production preview target binding failed";
++            return result;
++        }
++        session->last_error.clear();
++        return DIGITOR_RESULT_OK;
++    } catch (...) {
+         return DIGITOR_RESULT_INTERNAL_ERROR;
+     }
+ }
+--- digitor_orig/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/native_production_api.dart	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/native_production_api.dart	2026-08-10 09:24:29.049033118 +0000
+@@ -63,6 +63,21 @@
+   external int readiness;
+ }
+ 
++final class DigitorFlutterPreviewTargetNative extends Struct {
++  @Uint32()
++  external int structSize;
++  @Uint32()
++  external int apiVersion;
++  @Uint64()
++  external int nativeTargetHandle;
++  @Uint32()
++  external int width;
++  @Uint32()
++  external int height;
++  @Int32()
++  external int handleType;
++}
++
+ final class DigitorFlutterExportRequestNative extends Struct {
+   @Uint32()
+   external int structSize;
+@@ -114,6 +129,14 @@
+       Uint32,
+     );
+ 
++typedef DigitorFlutterSetPreviewTargetNative =
++    Int32 Function(
++      Pointer<Void>,
++      Pointer<DigitorFlutterPreviewTargetNative>,
++      Pointer<Uint8>,
++      Uint32,
++    );
++
+ typedef DigitorFlutterQueryPreviewNative =
+     Int32 Function(
+       Pointer<Void>,
+@@ -143,6 +166,8 @@
+   external Pointer<NativeFunction<DigitorFlutterExportMediaNative>> exportMedia;
+   external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>>
+   queryPreview;
++  external Pointer<NativeFunction<DigitorFlutterSetPreviewTargetNative>>
++  setPreviewTarget;
+   external Pointer<NativeFunction<DigitorFlutterCancelNative>> cancel;
+   external Pointer<NativeFunction<DigitorFlutterCloseMediaNative>> closeMedia;
+   external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>>
+@@ -225,6 +250,17 @@
+ );
+ 
+ @Native<
++  Int32 Function(
++    Pointer<DigitorFlutterProductionSessionNative>,
++    Pointer<DigitorFlutterPreviewTargetNative>,
++  )
++>(symbol: 'digitor_flutter_production_set_preview_target')
++external int digitorFlutterProductionSetPreviewTarget(
++  Pointer<DigitorFlutterProductionSessionNative> session,
++  Pointer<DigitorFlutterPreviewTargetNative> target,
++);
++
++@Native<
+   Int32 Function(
+     Pointer<DigitorFlutterProductionSessionNative>,
+     Int64,
+--- digitor_orig/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/production.dart	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/production.dart	2026-08-10 09:24:29.049209128 +0000
+@@ -118,6 +118,7 @@
+     required this.renderFrame,
+     required this.exportMedia,
+     required this.queryPreview,
++    required this.setPreviewTarget,
+     required this.cancel,
+     required this.closeMedia,
+     required this.releaseTexture,
+@@ -133,6 +134,7 @@
+   final Pointer<Void> renderFrame;
+   final Pointer<Void> exportMedia;
+   final Pointer<Void> queryPreview;
++  final Pointer<Void> setPreviewTarget;
+   final Pointer<Void> cancel;
+   final Pointer<Void> closeMedia;
+   final Pointer<Void> releaseTexture;
+@@ -142,6 +144,7 @@
+         renderFrame == nullptr ||
+         exportMedia == nullptr ||
+         queryPreview == nullptr ||
++        setPreviewTarget == nullptr ||
+         cancel == nullptr ||
+         closeMedia == nullptr ||
+         releaseTexture == nullptr) {
+@@ -149,7 +152,7 @@
+     }
+     native.ref
+       ..structSize = sizeOf<DigitorFlutterProductionHostNative>()
+-      ..apiVersion = 1
++      ..apiVersion = 2
+       ..userData = userData ?? nullptr
+       ..requiredDeviceIdentity = requiredDeviceIdentity
+       ..requiredContextIdentity = requiredContextIdentity
+@@ -161,6 +164,8 @@
+           .cast<NativeFunction<DigitorFlutterExportMediaNative>>()
+       ..queryPreview = queryPreview
+           .cast<NativeFunction<DigitorFlutterQueryPreviewNative>>()
++      ..setPreviewTarget = setPreviewTarget
++          .cast<NativeFunction<DigitorFlutterSetPreviewTargetNative>>()
+       ..cancel = cancel.cast<NativeFunction<DigitorFlutterCancelNative>>()
+       ..closeMedia = closeMedia
+           .cast<NativeFunction<DigitorFlutterCloseMediaNative>>()
+--- digitor_orig/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/registered_production_session.dart	2026-08-10 09:03:46.000000000 +0000
++++ digitor_fullready/DigitorEngine-main/dart/digitor_engine_ffi/lib/src/registered_production_session.dart	2026-08-10 09:21:47.451580696 +0000
+@@ -115,6 +115,34 @@
+     }
+   }
+ 
++  void setPreviewTarget({
++    required int nativeTargetHandle,
++    required int width,
++    required int height,
++    required DigitorNativeTextureHandleType handleType,
++  }) {
++    _ensureAlive();
++    if (nativeTargetHandle == 0 || width <= 0 || height <= 0) {
++      throw ArgumentError('A live native preview target and dimensions are required.');
++    }
++    final target = calloc<DigitorFlutterPreviewTargetNative>();
++    try {
++      target.ref
++        ..structSize = sizeOf<DigitorFlutterPreviewTargetNative>()
++        ..apiVersion = 1
++        ..nativeTargetHandle = nativeTargetHandle
++        ..width = width
++        ..height = height
++        ..handleType = handleType.nativeValue;
++      _check(
++        'setPreviewTarget',
++        digitorFlutterProductionSetPreviewTarget(_handle, target),
++      );
++    } finally {
++      calloc.free(target);
++    }
++  }
++
+   DigitorNativeGpuTextureFrame preview({
