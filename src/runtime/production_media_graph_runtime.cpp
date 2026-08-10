@@ -148,12 +148,21 @@ DigitorResult ProductionMediaGraphRuntime::preview(
 DigitorResult ProductionMediaGraphRuntime::export_frames(
     std::span<const FrameNumber> frame_numbers, HardwareEncodeConfig config,
     std::string* diagnostic, ProductionExportProgress progress) noexcept {
+  return export_frames_with_encoder(
+      frame_numbers, std::move(config), encoder_callbacks_, diagnostic,
+      std::move(progress));
+}
+
+DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
+    std::span<const FrameNumber> frame_numbers, HardwareEncodeConfig config,
+    HardwareEncoderCallbacks encoder_callbacks, std::string* diagnostic,
+    ProductionExportProgress progress) noexcept {
   try {
     if (frame_numbers.empty()) {
       set_diagnostic(diagnostic, "production export frame range is empty");
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    if (!encoder_callbacks_complete(encoder_callbacks_)) {
+    if (!encoder_callbacks_complete(encoder_callbacks)) {
       set_diagnostic(diagnostic, "production hardware encoder callbacks are incomplete");
       return DIGITOR_RESULT_NOT_INITIALIZED;
     }
@@ -173,7 +182,7 @@ DigitorResult ProductionMediaGraphRuntime::export_frames(
     config.require_monotonic_timestamps = true;
     config.require_atomic_finalize = true;
 
-    ProductionHardwareEncodeSession encoder(config, encoder_callbacks_);
+    ProductionHardwareEncodeSession encoder(config, std::move(encoder_callbacks));
     {
       std::lock_guard lock(mutex_);
       if (active_export_) {

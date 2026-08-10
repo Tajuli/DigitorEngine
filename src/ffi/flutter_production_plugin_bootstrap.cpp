@@ -42,9 +42,10 @@ std::optional<ProductionPlatform> production_platform(
 }
 
 bool host_inputs_complete(const FlutterProductionProviderBuild& build) noexcept {
+  // Attachment readiness is preview-only. Export backend/snapshot validation
+  // is deferred until frozen V2 export starts.
   return build.decoder_factory && build.frame_resolver &&
          build.texture_descriptor_builder && build.preview_target_binder &&
-         build.encoder_backend != EncoderBackend::software &&
          build.fps_num > 0 && build.fps_den > 0 && build.video_bitrate > 0 &&
          build.required_device_identity != 0 &&
          build.required_context_identity != 0;
@@ -138,6 +139,7 @@ DigitorResult install_flutter_production_provider_builder(
           out.frame_resolver = std::move(build->frame_resolver);
           out.preview_session = std::move(assembly.preview_session);
           out.encoder_callbacks = std::move(assembly.encoder_callbacks);
+          out.encoder_factory = std::move(assembly.encoder_factory);
           out.texture_descriptor_builder =
               std::move(build->texture_descriptor_builder);
           out.preview_target_binder = std::move(build->preview_target_binder);

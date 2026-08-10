@@ -64,6 +64,16 @@ class ProductionMediaGraphRuntime final {
       std::string* diagnostic = nullptr,
       ProductionExportProgress progress = {}) noexcept;
 
+  // Export-time encoder override used by the Flutter V2 frozen-snapshot path.
+  // Preview runtimes can therefore be created without encoder callbacks and
+  // receive a snapshot-bound hardware adapter only when export actually starts.
+  [[nodiscard]] DigitorResult export_frames_with_encoder(
+      std::span<const FrameNumber> frame_numbers,
+      HardwareEncodeConfig config,
+      HardwareEncoderCallbacks encoder_callbacks,
+      std::string* diagnostic = nullptr,
+      ProductionExportProgress progress = {}) noexcept;
+
   void cancel() noexcept;
   [[nodiscard]] ProductionMediaGraphRuntimeTelemetry telemetry() const;
   [[nodiscard]] const std::string& graph_identity() const noexcept {

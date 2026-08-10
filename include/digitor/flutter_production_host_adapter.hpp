@@ -4,6 +4,7 @@
 #include "digitor/native_preview_presentation.hpp"
 #include "digitor/production_hardware_decode.hpp"
 #include "digitor/production_media_graph_runtime.hpp"
+#include "digitor/production_encoder_factory.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -28,7 +29,11 @@ struct FlutterProductionHostAdapterInputs {
   ProductionDecoderFactory decoder_factory;
   ProductionTimestampFrameResolver frame_resolver;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
+  // Legacy eager encoder callbacks remain supported for V1 callers. New
+  // production Flutter attachment supplies encoder_factory and creates the
+  // snapshot-bound adapter only from export_v2().
   HardwareEncoderCallbacks encoder_callbacks;
+  ProductionEncoderFactory encoder_factory;
   ProductionTextureDescriptorBuilder texture_descriptor_builder;
   ProductionPreviewTargetBinder preview_target_binder;
   DigitorNativePreviewCapabilities preview_capabilities{};
@@ -53,6 +58,7 @@ class FlutterProductionHostAdapter final {
 
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] DigitorFlutterProductionHost host() noexcept;
+  [[nodiscard]] DigitorFlutterProductionHostV2 host_v2() noexcept;
 
  private:
   struct Impl;
@@ -91,9 +97,9 @@ inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
       result_ = DIGITOR_RESULT_NOT_INITIALIZED;
       return;
     }
-    auto host = adapter_->host();
-    result_ = digitor_flutter_production_register_host(&host);
-    if (result_ == DIGITOR_RESULT_OK) registered_user_data_ = host.user_data;
+    auto host = adapter_->host_v2();
+    result_ = digitor_flutter_production_register_host_v2(&host);
+    if (result_ == DIGITOR_RESULT_OK) registered_user_data_ = host.base.user_data;
   } catch (const std::bad_alloc&) {
     result_ = DIGITOR_RESULT_OUT_OF_MEMORY;
   } catch (...) {

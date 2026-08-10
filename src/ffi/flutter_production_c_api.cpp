@@ -11,6 +11,7 @@
 struct DigitorFlutterProductionSession {
     std::mutex mutex;
     DigitorFlutterProductionHost host{};
+    DigitorFlutterExportMediaV2Callback export_media_v2{};
     DigitorNodeGraph* graph{};
     uint64_t graph_revision{};
     uint64_t parameter_revision{};
@@ -26,7 +27,11 @@ constexpr uint32_t kDiagnosticCapacity = 512;
 std::mutex g_flutter_sessions_mutex;
 std::unordered_set<DigitorFlutterProductionSession*> g_flutter_sessions;
 std::mutex g_registered_host_mutex;
-std::optional<DigitorFlutterProductionHost> g_registered_host;
+struct RegisteredProductionHost final {
+    DigitorFlutterProductionHost base{};
+    DigitorFlutterExportMediaV2Callback export_media_v2{};
+};
+std::optional<RegisteredProductionHost> g_registered_host;
 
 bool valid_host(const DigitorFlutterProductionHost* host) noexcept {
     return host &&
@@ -36,6 +41,13 @@ bool valid_host(const DigitorFlutterProductionHost* host) noexcept {
            host->query_preview && host->set_preview_target &&
            host->cancel && host->close_media &&
            host->release_texture;
+}
+
+bool valid_host_v2(const DigitorFlutterProductionHostV2* host) noexcept {
+    return host &&
+           host->struct_size >= sizeof(DigitorFlutterProductionHostV2) &&
+           host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_V2_VERSION &&
+           valid_host(&host->base) && host->export_media_v2;
 }
 
 bool registered(const DigitorFlutterProductionSession* session) noexcept {
@@ -100,67 +112,21 @@ DigitorResult copy_error(const std::string& value, char* buffer,
     return DIGITOR_RESULT_OK;
 }
 
-} // namespace
-
-extern "C" {
-
-DigitorResult digitor_flutter_production_register_host(
-    const DigitorFlutterProductionHost* host) {
-    if (!valid_host(host)) return DIGITOR_RESULT_INVALID_ARGUMENT;
-    std::lock_guard lock(g_registered_host_mutex);
-    if (g_registered_host.has_value()) return DIGITOR_RESULT_RESOURCE_IN_USE;
-    g_registered_host = *host;
-    return DIGITOR_RESULT_OK;
-}
-
-DigitorResult digitor_flutter_production_unregister_host(
-    void* expected_user_data) {
-    std::lock_guard host_lock(g_registered_host_mutex);
-    if (!g_registered_host.has_value()) return DIGITOR_RESULT_NOT_INITIALIZED;
-    if (g_registered_host->user_data != expected_user_data)
-        return DIGITOR_RESULT_INVALID_ARGUMENT;
-    {
-        std::lock_guard sessions_lock(g_flutter_sessions_mutex);
-        if (!g_flutter_sessions.empty()) return DIGITOR_RESULT_RESOURCE_IN_USE;
-    }
-    g_registered_host.reset();
-    return DIGITOR_RESULT_OK;
-}
-
-int32_t digitor_flutter_production_host_registered(void) {
-    std::lock_guard lock(g_registered_host_mutex);
-    return g_registered_host.has_value() ? 1 : 0;
-}
-
-DigitorResult digitor_flutter_production_create_registered(
-    const char* utf8_media_path,
-    DigitorFlutterProductionSession** out_session) {
-    DigitorFlutterProductionHost host{};
-    {
-        std::lock_guard lock(g_registered_host_mutex);
-        if (!g_registered_host.has_value()) {
-            if (out_session) *out_session = nullptr;
-            return DIGITOR_RESULT_NOT_INITIALIZED;
-        }
-        host = *g_registered_host;
-    }
-    return digitor_flutter_production_create(&host, utf8_media_path, out_session);
-}
-
-DigitorResult digitor_flutter_production_create(
-    const DigitorFlutterProductionHost* host,
+DigitorResult create_session(
+    const DigitorFlutterProductionHost& host,
+    DigitorFlutterExportMediaV2Callback export_media_v2,
     const char* utf8_media_path,
     DigitorFlutterProductionSession** out_session) {
     if (out_session) *out_session = nullptr;
-    if (!valid_host(host) || !utf8_media_path || utf8_media_path[0] == '\0' ||
+    if (!valid_host(&host) || !utf8_media_path || utf8_media_path[0] == '\0' ||
         !out_session) {
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-
     try {
         auto* session = new (std::nothrow) DigitorFlutterProductionSession{};
         if (!session) return DIGITOR_RESULT_OUT_OF_MEMORY;
-        session->host = *host;
+        session->host = host;
+        session->export_media_v2 = export_media_v2;
 
         char diagnostic[kDiagnosticCapacity]{};
         const auto result = session->host.open_media(
@@ -189,6 +155,84 @@ DigitorResult digitor_flutter_production_create(
     } catch (...) {
         return DIGITOR_RESULT_INTERNAL_ERROR;
     }
+}
+
+} // namespace
+
+extern "C" {
+
+DigitorResult digitor_flutter_production_register_host(
+    const DigitorFlutterProductionHost* host) {
+    if (!valid_host(host)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    std::lock_guard lock(g_registered_host_mutex);
+    if (g_registered_host.has_value()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+    g_registered_host = RegisteredProductionHost{*host, nullptr};
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_flutter_production_register_host_v2(
+    const DigitorFlutterProductionHostV2* host) {
+    if (!valid_host_v2(host)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    std::lock_guard lock(g_registered_host_mutex);
+    if (g_registered_host.has_value()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+    g_registered_host = RegisteredProductionHost{host->base, host->export_media_v2};
+    return DIGITOR_RESULT_OK;
+}
+
+DigitorResult digitor_flutter_production_unregister_host(
+    void* expected_user_data) {
+    std::lock_guard host_lock(g_registered_host_mutex);
+    if (!g_registered_host.has_value()) return DIGITOR_RESULT_NOT_INITIALIZED;
+    if (g_registered_host->base.user_data != expected_user_data)
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    {
+        std::lock_guard sessions_lock(g_flutter_sessions_mutex);
+        if (!g_flutter_sessions.empty()) return DIGITOR_RESULT_RESOURCE_IN_USE;
+    }
+    g_registered_host.reset();
+    return DIGITOR_RESULT_OK;
+}
+
+int32_t digitor_flutter_production_host_registered(void) {
+    std::lock_guard lock(g_registered_host_mutex);
+    return g_registered_host.has_value() ? 1 : 0;
+}
+
+DigitorResult digitor_flutter_production_create_registered(
+    const char* utf8_media_path,
+    DigitorFlutterProductionSession** out_session) {
+    RegisteredProductionHost registered_host{};
+    {
+        std::lock_guard lock(g_registered_host_mutex);
+        if (!g_registered_host.has_value()) {
+            if (out_session) *out_session = nullptr;
+            return DIGITOR_RESULT_NOT_INITIALIZED;
+        }
+        registered_host = *g_registered_host;
+    }
+    return create_session(registered_host.base, registered_host.export_media_v2,
+                          utf8_media_path, out_session);
+}
+
+DigitorResult digitor_flutter_production_create(
+    const DigitorFlutterProductionHost* host,
+    const char* utf8_media_path,
+    DigitorFlutterProductionSession** out_session) {
+    if (!host) {
+        if (out_session) *out_session = nullptr;
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    return create_session(*host, nullptr, utf8_media_path, out_session);
+}
+
+DigitorResult digitor_flutter_production_create_v2(
+    const DigitorFlutterProductionHostV2* host,
+    const char* utf8_media_path,
+    DigitorFlutterProductionSession** out_session) {
+    if (out_session) *out_session = nullptr;
+    if (!valid_host_v2(host)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    return create_session(host->base, host->export_media_v2,
+                          utf8_media_path, out_session);
 }
 
 DigitorResult digitor_flutter_production_destroy(
@@ -451,6 +495,80 @@ DigitorResult digitor_flutter_production_export(
         } else {
             session->last_error = diagnostic[0]
                 ? diagnostic : "production export host failed";
+        }
+    }
+    return result;
+}
+
+DigitorResult digitor_flutter_production_export_v2(
+    DigitorFlutterProductionSession* session,
+    const DigitorFlutterExportRequestV2* request,
+    DigitorExportProgressCallback progress,
+    void* progress_user_data) {
+    if (!session || !request ||
+        request->struct_size < sizeof(DigitorFlutterExportRequestV2) ||
+        request->api_version != DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION ||
+        !request->utf8_output_path || request->utf8_output_path[0] == '\0' ||
+        !request->utf8_color_metadata || request->utf8_color_metadata[0] == '\0' ||
+        !request->utf8_graph_recipe_identity ||
+        request->utf8_graph_recipe_identity[0] == '\0' ||
+        request->last_frame < request->first_frame || request->first_frame < 0 ||
+        request->width == 0 || request->height == 0 ||
+        request->snapshot_identity == 0 || request->timeline_revision == 0 ||
+        request->render_revision == 0 || request->node_graph_revision == 0 ||
+        request->color_pipeline_revision == 0 || request->audio_revision == 0 ||
+        request->fps_num <= 0 || request->fps_den <= 0 ||
+        request->duration_us <= 0 || request->video_bitrate <= 0 ||
+        request->alpha_policy < 1 || request->alpha_policy > 3 ||
+        (request->working_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+         request->working_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT) ||
+        request->codec < 0 || request->codec > 3 || request->variable_frame_rate) {
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+
+    DigitorFlutterProductionHost host{};
+    DigitorFlutterExportMediaV2Callback export_media_v2 = nullptr;
+    DigitorNodeGraph* graph = nullptr;
+    uint64_t graph_revision = 0;
+    uint64_t parameter_revision = 0;
+    {
+        std::lock_guard registry_lock(g_flutter_sessions_mutex);
+        if (!registered(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
+        if (!session->media_open || !session->graph)
+            return DIGITOR_RESULT_NOT_INITIALIZED;
+        if (!session->export_media_v2) return DIGITOR_RESULT_UNSUPPORTED;
+        if (session->active_operation || session->has_current_preview)
+            return DIGITOR_RESULT_RESOURCE_IN_USE;
+        if (request->node_graph_revision != session->graph_revision ||
+            request->color_pipeline_revision != session->parameter_revision) {
+            session->last_error =
+                "frozen export revisions do not match the currently bound graph";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        session->active_operation = true;
+        host = session->host;
+        export_media_v2 = session->export_media_v2;
+        graph = session->graph;
+        graph_revision = session->graph_revision;
+        parameter_revision = session->parameter_revision;
+    }
+
+    char diagnostic[kDiagnosticCapacity]{};
+    const auto result = export_media_v2(
+        host.user_data, graph, graph_revision, parameter_revision, request,
+        progress, progress_user_data, diagnostic, kDiagnosticCapacity);
+
+    {
+        std::lock_guard registry_lock(g_flutter_sessions_mutex);
+        if (!registered(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
+        session->active_operation = false;
+        if (result == DIGITOR_RESULT_OK) {
+            session->last_error.clear();
+        } else {
+            session->last_error = diagnostic[0]
+                ? diagnostic : "production V2 export host failed";
         }
     }
     return result;
