@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstring>
 #include <mutex>
+#include <limits>
+#include <optional>
 #include <new>
 #include <utility>
 #include <vector>
@@ -31,9 +33,30 @@ ExportCodec export_codec(std::int32_t value) noexcept {
   }
 }
 
-bool callbacks_complete(const HardwareEncoderCallbacks& value) noexcept {
-  return value.open && value.submit_gpu_frame && value.drain &&
-         value.finalize_atomic && value.cancel;
+std::optional<DigitorRendererBackend> renderer_backend(
+    std::int32_t native_backend) noexcept {
+  switch (native_backend) {
+    case DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12:
+      return DIGITOR_RENDERER_D3D12;
+    case DIGITOR_NATIVE_TEXTURE_BACKEND_VULKAN:
+      return DIGITOR_RENDERER_VULKAN;
+    case DIGITOR_NATIVE_TEXTURE_BACKEND_METAL:
+      return DIGITOR_RENDERER_METAL;
+    case DIGITOR_NATIVE_TEXTURE_BACKEND_OPENGL_ES:
+      return DIGITOR_RENDERER_OPENGL_ES;
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<ExportAlphaPolicy> export_alpha_policy(
+    std::uint32_t value) noexcept {
+  switch (value) {
+    case 1: return ExportAlphaPolicy::discard;
+    case 2: return ExportAlphaPolicy::straight;
+    case 3: return ExportAlphaPolicy::premultiplied;
+    default: return std::nullopt;
+  }
 }
 
 bool native_preview_capabilities_valid(
@@ -62,12 +85,13 @@ struct FlutterProductionHostAdapter::Impl {
   bool opened{};
 
   bool valid() const noexcept {
+    // Preview attachment is intentionally independent of export. Encoder
+    // callbacks, codec selection and immutable export snapshots are validated
+    // only when V1/V2 export is invoked.
     return inputs.decoder_factory && inputs.frame_resolver &&
            inputs.preview_session && inputs.texture_descriptor_builder &&
-           inputs.preview_target_binder &&
-           callbacks_complete(inputs.encoder_callbacks) &&
-           inputs.encoder_backend != EncoderBackend::software &&
-           inputs.fps_num > 0 && inputs.fps_den > 0 &&
+           inputs.preview_target_binder && inputs.fps_num > 0 &&
+           inputs.fps_den > 0 &&
            native_preview_capabilities_valid(inputs.preview_capabilities);
   }
 
@@ -252,6 +276,13 @@ struct FlutterProductionHostAdapter::Impl {
         !request->width || !request->height || request->codec < 0 ||
         request->codec > 3) return DIGITOR_RESULT_INVALID_ARGUMENT;
 
+    if (!hardware_encoder_callbacks_complete(p->inputs.encoder_callbacks) ||
+        p->inputs.encoder_backend == EncoderBackend::software) {
+      write_diagnostic(diagnostic, diagnostic_capacity,
+          "legacy V1 export has no eager hardware encoder; use frozen export V2");
+      return DIGITOR_RESULT_NOT_INITIALIZED;
+    }
+
     std::string message;
     ProductionMediaGraphRuntime* runtime = nullptr;
     HardwareEncodeConfig config{};
@@ -309,6 +340,186 @@ struct FlutterProductionHostAdapter::Impl {
     } catch (...) {
       write_diagnostic(diagnostic, diagnostic_capacity,
                        "unexpected production export adapter failure");
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+  }
+
+  static DigitorResult export_media_v2(
+      void* user_data, DigitorNodeGraph* graph, std::uint64_t graph_rev,
+      std::uint64_t parameter_rev, const DigitorFlutterExportRequestV2* request,
+      DigitorExportProgressCallback progress, void* progress_user_data,
+      char* diagnostic, std::uint32_t diagnostic_capacity) {
+    auto* p = self(user_data);
+    if (!p || !graph || !request || !request->utf8_output_path ||
+        !request->utf8_color_metadata || !request->utf8_graph_recipe_identity ||
+        request->last_frame < request->first_frame || request->first_frame < 0 ||
+        !request->width || !request->height || request->codec < 0 ||
+        request->codec > 3 || request->snapshot_identity == 0 ||
+        request->timeline_revision == 0 || request->render_revision == 0 ||
+        request->node_graph_revision == 0 ||
+        request->color_pipeline_revision == 0 || request->audio_revision == 0 ||
+        request->fps_num <= 0 || request->fps_den <= 0 ||
+        request->duration_us <= 0 || request->video_bitrate <= 0 ||
+        request->variable_frame_rate) {
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    if (!p->inputs.encoder_factory ||
+        p->inputs.encoder_backend == EncoderBackend::software) {
+      write_diagnostic(diagnostic, diagnostic_capacity,
+          "production hardware encoder factory is unavailable");
+      return DIGITOR_RESULT_NOT_INITIALIZED;
+    }
+
+    const auto renderer = renderer_backend(p->inputs.preview_capabilities.backend);
+    const auto alpha = export_alpha_policy(request->alpha_policy);
+    if (!renderer || !alpha) {
+      write_diagnostic(diagnostic, diagnostic_capacity,
+          "frozen export renderer or alpha policy is unsupported");
+      return DIGITOR_RESULT_UNSUPPORTED;
+    }
+
+    std::string message;
+    ProductionMediaGraphRuntime* runtime = nullptr;
+    std::shared_ptr<const ExportRenderSnapshot> snapshot;
+    ProductionEncoderFactoryResult encoder;
+    HardwareEncodeConfig config{};
+    try {
+      {
+        std::lock_guard lock(p->mutex);
+        if (request->node_graph_revision != graph_rev ||
+            request->color_pipeline_revision != parameter_rev) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+              "frozen export revisions differ from the bound production graph");
+          return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        const auto current_identity = graph->impl.recipe_identity();
+        if (current_identity != request->utf8_graph_recipe_identity) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+              "frozen graph recipe identity differs from the bound graph");
+          return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+
+        const auto ensure =
+            p->ensure_runtime(graph, graph_rev, parameter_rev, message);
+        if (ensure != DIGITOR_RESULT_OK) {
+          write_diagnostic(diagnostic, diagnostic_capacity, message);
+          return ensure;
+        }
+        runtime = p->runtime.get();
+
+        const auto frame_count =
+            request->last_frame - request->first_frame + 1;
+        const auto scale = 1'000'000LL *
+            static_cast<std::int64_t>(request->fps_den);
+        if (frame_count <= 0 || scale <= 0 ||
+            frame_count > std::numeric_limits<std::int64_t>::max() / scale) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+              "frozen export frame range overflows duration calculation");
+          return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        const auto expected_duration =
+            frame_count * scale / request->fps_num;
+        if (expected_duration <= 0 || request->duration_us != expected_duration) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+              "frozen export duration does not match frame range and frame rate");
+          return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+
+        ExportRenderSnapshotData data{};
+        data.snapshot_identity = request->snapshot_identity;
+        data.timeline_revision = request->timeline_revision;
+        data.render_revision = request->render_revision;
+        data.node_graph_revision = request->node_graph_revision;
+        data.color_pipeline_revision = request->color_pipeline_revision;
+        data.audio_revision = request->audio_revision;
+        data.width = request->width;
+        data.height = request->height;
+        data.working_format =
+            static_cast<DigitorPixelFormat>(request->working_format);
+        data.alpha_policy = *alpha;
+        data.fps_num = request->fps_num;
+        data.fps_den = request->fps_den;
+        data.duration_us = request->duration_us;
+        data.variable_frame_rate = false;
+        data.hdr = request->hdr != 0;
+        data.color_metadata = request->utf8_color_metadata;
+        data.output_path = request->utf8_output_path;
+        data.profile.codec = export_codec(request->codec);
+        data.profile.width = static_cast<std::int32_t>(request->width);
+        data.profile.height = static_cast<std::int32_t>(request->height);
+        data.profile.fps_num = request->fps_num;
+        data.profile.fps_den = request->fps_den;
+        data.profile.video_bitrate = request->video_bitrate;
+        data.profile.ten_bit = request->ten_bit != 0;
+        data.profile.prefer_hardware = true;
+        data.profile.allow_software_fallback = false;
+        data.policy = ExportExecutionPolicy::hardware_required;
+        data.renderer_backend = *renderer;
+        data.encoder_backend = p->inputs.encoder_backend;
+
+        auto mutable_snapshot =
+            std::make_shared<const ExportRenderSnapshot>(std::move(data));
+        const auto validation = validate_export_snapshot(*mutable_snapshot);
+        if (!validation) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+                           validation.diagnostic);
+          return validation.result;
+        }
+        snapshot = std::move(mutable_snapshot);
+        encoder = p->inputs.encoder_factory(snapshot);
+        if (!encoder) {
+          write_diagnostic(diagnostic, diagnostic_capacity,
+              encoder.diagnostic.empty()
+                  ? "failed to create snapshot-bound hardware encoder"
+                  : encoder.diagnostic);
+          return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        }
+
+        config.profile = snapshot->data().profile;
+        config.backend = snapshot->encoder_backend();
+        config.output_path = snapshot->data().output_path;
+        config.duration_us = snapshot->data().duration_us;
+        config.require_hardware = true;
+        config.require_zero_copy = true;
+        config.require_monotonic_timestamps = true;
+        config.require_atomic_finalize = true;
+      }
+
+      std::vector<FrameNumber> frames;
+      frames.reserve(static_cast<std::size_t>(
+          request->last_frame - request->first_frame + 1));
+      for (auto frame = request->first_frame; frame <= request->last_frame; ++frame)
+        frames.push_back(frame);
+
+      auto progress_bridge = [progress, progress_user_data](
+          std::uint64_t completed, std::uint64_t total) {
+        if (!progress) return;
+        const auto fraction = total == 0 ? 0.0
+            : static_cast<double>(completed) / static_cast<double>(total);
+        progress(fraction, static_cast<std::int64_t>(completed),
+                 static_cast<std::int64_t>(total), progress_user_data);
+      };
+
+      const auto result = runtime->export_frames_with_encoder(
+          frames, std::move(config), std::move(encoder.callbacks), &message,
+          std::move(progress_bridge));
+      if (result != DIGITOR_RESULT_OK) {
+        write_diagnostic(diagnostic, diagnostic_capacity, message);
+        return result;
+      }
+      if (!encoder.zero_copy_qualified || !encoder.zero_copy_qualified()) {
+        write_diagnostic(diagnostic, diagnostic_capacity,
+            "hardware export completed without final zero-copy qualification");
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+      }
+      return DIGITOR_RESULT_OK;
+    } catch (const std::bad_alloc&) {
+      write_diagnostic(diagnostic, diagnostic_capacity,
+                       "out of memory preparing frozen production export");
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+    } catch (...) {
+      write_diagnostic(diagnostic, diagnostic_capacity,
+                       "unexpected frozen production export adapter failure");
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }
   }
@@ -410,6 +621,16 @@ DigitorFlutterProductionHost FlutterProductionHostAdapter::host() noexcept {
   value.cancel = &Impl::cancel;
   value.close_media = &Impl::close_media;
   value.release_texture = &Impl::release_texture;
+  return value;
+}
+
+DigitorFlutterProductionHostV2 FlutterProductionHostAdapter::host_v2() noexcept {
+  DigitorFlutterProductionHostV2 value{};
+  if (!valid()) return value;
+  value.struct_size = sizeof(value);
+  value.api_version = DIGITOR_FLUTTER_PRODUCTION_HOST_V2_VERSION;
+  value.base = host();
+  value.export_media_v2 = &Impl::export_media_v2;
   return value;
 }
 

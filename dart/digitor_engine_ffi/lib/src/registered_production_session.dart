@@ -226,6 +226,20 @@ final class DigitorRegisteredProductionSession {
     required int lastFrame,
     required int width,
     required int height,
+    required int snapshotIdentity,
+    required int timelineRevision,
+    required int renderRevision,
+    required int nodeGraphRevision,
+    required int colorPipelineRevision,
+    required int audioRevision,
+    required String graphRecipeIdentity,
+    int workingFormat = 4, // DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT
+    String colorMetadata = 'linear-rgba',
+    int fpsNum = 30,
+    int fpsDen = 1,
+    int videoBitrate = 12000000,
+    bool hdr = false,
+    bool tenBit = false,
     DigitorExportFormat format = DigitorExportFormat.mp4,
     DigitorVideoCodec codec = DigitorVideoCodec.h264,
     void Function(DigitorExportProgress progress)? onProgress,
@@ -233,20 +247,62 @@ final class DigitorRegisteredProductionSession {
     _ensureAlive();
     previewConsumed();
     bindNodeGraph();
+    if (firstFrame < 0 || lastFrame < firstFrame || width <= 0 || height <= 0) {
+      throw ArgumentError('Invalid frozen export frame range or dimensions.');
+    }
+    if (snapshotIdentity <= 0 ||
+        timelineRevision <= 0 ||
+        renderRevision <= 0 ||
+        nodeGraphRevision <= 0 ||
+        colorPipelineRevision <= 0 ||
+        audioRevision <= 0 ||
+        graphRecipeIdentity.isEmpty ||
+        colorMetadata.isEmpty ||
+        fpsNum <= 0 ||
+        fpsDen <= 0 ||
+        videoBitrate <= 0) {
+      throw ArgumentError('Frozen export V2 metadata is incomplete.');
+    }
+    final frameCount = lastFrame - firstFrame + 1;
+    final durationUs = frameCount * 1000000 * fpsDen ~/ fpsNum;
+    if (durationUs <= 0) {
+      throw ArgumentError('Frozen export duration must be positive.');
+    }
+
     final nativePath = path.toNativeUtf8();
-    final request = calloc<DigitorFlutterExportRequestNative>();
+    final nativeColorMetadata = colorMetadata.toNativeUtf8();
+    final nativeGraphIdentity = graphRecipeIdentity.toNativeUtf8();
+    final request = calloc<DigitorFlutterExportRequestV2Native>();
     NativeCallable<DigitorProgressNative>? callback;
     try {
       request.ref
-        ..structSize = sizeOf<DigitorFlutterExportRequestNative>()
-        ..apiVersion = 1
+        ..structSize = sizeOf<DigitorFlutterExportRequestV2Native>()
+        ..apiVersion = 2
         ..outputPath = nativePath
         ..format = format.index
         ..codec = codec.index
         ..firstFrame = firstFrame
         ..lastFrame = lastFrame
         ..width = width
-        ..height = height;
+        ..height = height
+        ..snapshotIdentity = snapshotIdentity
+        ..timelineRevision = timelineRevision
+        ..renderRevision = renderRevision
+        ..nodeGraphRevision = nodeGraphRevision
+        ..colorPipelineRevision = colorPipelineRevision
+        ..audioRevision = audioRevision
+        ..workingFormat = workingFormat
+        ..alphaPolicy = 1
+        ..fpsNum = fpsNum
+        ..fpsDen = fpsDen
+        ..durationUs = durationUs
+        ..videoBitrate = videoBitrate
+        ..variableFrameRate = 0
+        ..hdr = hdr ? 1 : 0
+        ..tenBit = tenBit ? 1 : 0
+        ..reserved0 = 0
+        ..colorMetadata = nativeColorMetadata
+        ..graphRecipeIdentity = nativeGraphIdentity;
       if (onProgress != null) {
         callback = NativeCallable<DigitorProgressNative>.listener((
           double fraction,
@@ -264,8 +320,8 @@ final class DigitorRegisteredProductionSession {
         });
       }
       _check(
-        'export',
-        digitorFlutterProductionExport(
+        'exportV2',
+        digitorFlutterProductionExportV2(
           _handle,
           request,
           callback?.nativeFunction ?? nullptr,
@@ -275,6 +331,8 @@ final class DigitorRegisteredProductionSession {
     } finally {
       callback?.close();
       calloc.free(request);
+      calloc.free(nativeGraphIdentity);
+      calloc.free(nativeColorMetadata);
       calloc.free(nativePath);
     }
   }

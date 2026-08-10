@@ -115,6 +115,8 @@ final class DigitorEditorWorkspace {
   int _previewWidth = 0;
   int _previewHeight = 0;
   int _timelineRevision = 0;
+  int _audioRevision = 1;
+  int _exportSnapshotIdentity = 0;
   bool _closed = false;
 
   DigitorRendererInfo get renderer => _renderer;
@@ -321,12 +323,20 @@ final class DigitorEditorWorkspace {
     void Function(DigitorExportProgress progress)? onProgress,
   }) {
     _ensureProductionReady();
+    final snapshotIdentity = ++_exportSnapshotIdentity;
     _productionSession!.export(
       path: path,
       firstFrame: firstFrame,
       lastFrame: lastFrame,
       width: width,
       height: height,
+      snapshotIdentity: snapshotIdentity,
+      timelineRevision: _timelineRevision,
+      renderRevision: _graph.graphRevision,
+      nodeGraphRevision: _graph.graphRevision,
+      colorPipelineRevision: _graph.parameterRevision,
+      audioRevision: _audioRevision,
+      graphRecipeIdentity: _graph.recipeIdentity,
       format: format,
       codec: codec,
       onProgress: onProgress,
@@ -381,6 +391,7 @@ final class DigitorEditorWorkspace {
       preservePitch: preservePitch,
       enableDynamics: enableDynamics,
     );
+    _audioRevision += 1;
   }
 
   void selectNode(int node) {

@@ -4,6 +4,7 @@
 #include "digitor/apple_hardware_encode_adapter.hpp"
 #include "digitor/native_preview_presentation.hpp"
 #include "digitor/production_timeline_gpu_binding.hpp"
+#include "digitor/production_encoder_factory.hpp"
 #include "digitor/windows_hardware_encode_adapter.hpp"
 
 #include <cstdint>
@@ -121,6 +122,9 @@ struct WindowsVulkanZeroCopyInterop final {
 }
 
 struct ProductionEncoderFactoryInputs final {
+  // Optional legacy eager snapshot. Production Flutter attachment no longer
+  // requires this value; when omitted, encoder adapters are created lazily at
+  // export start from the V2 frozen export snapshot.
   std::shared_ptr<const ExportRenderSnapshot> snapshot;
   WindowsHardwareEncoderHost windows;
   AndroidHardwareEncoderHost android;
@@ -140,6 +144,14 @@ struct ProductionPlatformAssembly final {
   std::shared_ptr<ConcreteFlutterTextureHost> preview_host;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
   std::shared_ptr<ProductionTimelineGpuBinding> timeline_binding;
+
+  // Export is intentionally lazy. The factory binds a frozen export snapshot
+  // only when export starts, so plugin attachment and preview never depend on
+  // an export path, codec selection, output path, or encoder-open operation.
+  ProductionEncoderFactory encoder_factory;
+
+  // Compatibility surface for callers that still provide an eager snapshot.
+  // New production Flutter code uses encoder_factory instead.
   HardwareEncoderCallbacks encoder_callbacks;
   std::function<bool()> encoder_zero_copy_qualified;
   bool windows_vulkan_interop_qualified{};
@@ -148,24 +160,116 @@ struct ProductionPlatformAssembly final {
   [[nodiscard]] explicit operator bool() const noexcept {
     return preview_host && preview_host->valid() && preview_session &&
            timeline_binding && timeline_binding->valid() &&
-           static_cast<bool>(encoder_callbacks.open) &&
-           static_cast<bool>(encoder_callbacks.submit_gpu_frame) &&
-           static_cast<bool>(encoder_callbacks.drain) &&
-           static_cast<bool>(encoder_callbacks.finalize_atomic) &&
-           static_cast<bool>(encoder_callbacks.cancel) &&
-           static_cast<bool>(encoder_zero_copy_qualified) && diagnostic.empty();
+           static_cast<bool>(encoder_factory) && diagnostic.empty();
   }
 };
+
+[[nodiscard]] inline ProductionEncoderFactoryResult create_production_encoder(
+    ProductionPlatform platform,
+    std::shared_ptr<const ExportRenderSnapshot> snapshot,
+    WindowsHardwareEncoderHost windows,
+    AndroidHardwareEncoderHost android,
+    AppleHardwareEncoderHost apple,
+    WindowsVulkanZeroCopyInterop windows_vulkan) {
+  ProductionEncoderFactoryResult out{};
+  if (!snapshot) {
+    out.diagnostic = "immutable export snapshot is required at export start";
+    return out;
+  }
+  const auto validation = validate_export_snapshot(*snapshot);
+  if (!validation) {
+    out.diagnostic = validation.diagnostic;
+    return out;
+  }
+
+  const auto renderer = snapshot->renderer_backend();
+  switch (platform) {
+    case ProductionPlatform::windows: {
+      if (renderer != DIGITOR_RENDERER_D3D12 &&
+          renderer != DIGITOR_RENDERER_VULKAN) {
+        out.diagnostic = "Windows production export requires D3D12 or Vulkan";
+        return out;
+      }
+      if (renderer == DIGITOR_RENDERER_VULKAN) {
+        out.windows_vulkan_interop_qualified =
+            validate_windows_vulkan_zero_copy_interop(windows_vulkan);
+        if (!out.windows_vulkan_interop_qualified) {
+          out.diagnostic =
+              "Windows Vulkan external-memory/semaphore interop unavailable";
+          return out;
+        }
+      }
+      auto adapter = create_windows_hardware_encode_adapter(
+          std::move(snapshot), std::move(windows));
+      out.callbacks = std::move(adapter.callbacks);
+      out.zero_copy_qualified =
+          [qualification = std::move(adapter.qualification)] {
+            const auto q = qualification();
+            return q.adapter_opened && q.gpu_frame_submitted &&
+                   q.synchronization_waited && q.native_resource_registered &&
+                   q.bitstream_produced && q.atomic_output_finalized &&
+                   q.no_cpu_readback && q.no_cpu_staging;
+          };
+      break;
+    }
+    case ProductionPlatform::android: {
+      if (renderer != DIGITOR_RENDERER_VULKAN &&
+          renderer != DIGITOR_RENDERER_OPENGL_ES) {
+        out.diagnostic = "Android production export requires Vulkan or GLES";
+        return out;
+      }
+      auto adapter = create_android_hardware_encode_adapter(
+          std::move(snapshot), std::move(android));
+      out.callbacks = std::move(adapter.callbacks);
+      out.zero_copy_qualified =
+          [qualification = std::move(adapter.qualification)] {
+            const auto q = qualification();
+            return q.codec_opened && q.input_surface_created &&
+                   q.gpu_frame_submitted && q.acquire_sync_waited &&
+                   q.release_sync_published &&
+                   q.ahardwarebuffer_or_surface_bound &&
+                   q.bitstream_produced && q.mp4_finalized &&
+                   q.no_cpu_readback && q.no_cpu_staging;
+          };
+      break;
+    }
+    case ProductionPlatform::macos:
+    case ProductionPlatform::ios: {
+      if (renderer != DIGITOR_RENDERER_METAL) {
+        out.diagnostic = "Apple production export requires Metal";
+        return out;
+      }
+      auto adapter = create_apple_hardware_encode_adapter(
+          std::move(snapshot), std::move(apple));
+      out.callbacks = std::move(adapter.callbacks);
+      out.zero_copy_qualified =
+          [qualification = std::move(adapter.qualification)] {
+            const auto q = qualification();
+            return q.adapter_opened && q.metal_completion_waited &&
+                   q.iosurface_pixel_buffer_acquired &&
+                   q.attachments_propagated && q.bitstream_produced &&
+                   q.atomic_output_finalized && q.no_cpu_readback &&
+                   q.no_cpu_staging;
+          };
+      break;
+    }
+  }
+
+  if (!hardware_encoder_callbacks_complete(out.callbacks) ||
+      !out.zero_copy_qualified) {
+    out.callbacks = {};
+    out.zero_copy_qualified = {};
+    out.diagnostic = "native hardware encoder bindings are incomplete";
+    return out;
+  }
+  return out;
+}
 
 [[nodiscard]] inline ProductionPlatformAssembly create_production_platform_assembly(
     ProductionPlatformFactoryInputs inputs) {
   ProductionPlatformAssembly out{};
   out.platform = inputs.platform;
 
-  if (!inputs.encoder.snapshot) {
-    out.diagnostic = "immutable export snapshot is required";
-    return out;
-  }
   if (inputs.timeline.backend != inputs.flutter.backend ||
       inputs.timeline.context_identity != inputs.flutter.device_identity) {
     out.diagnostic = "timeline and Flutter texture host must share backend/device";
@@ -183,70 +287,33 @@ struct ProductionPlatformAssembly final {
   out.preview_session =
       std::make_shared<NativePreviewPresentationSession>(out.preview_host);
 
-  const auto renderer = inputs.encoder.snapshot->renderer_backend();
-  switch (inputs.platform) {
-    case ProductionPlatform::windows: {
-      if (renderer != DIGITOR_RENDERER_D3D12 &&
-          renderer != DIGITOR_RENDERER_VULKAN) {
-        out.diagnostic = "Windows production assembly requires D3D12 or Vulkan";
-        return out;
-      }
-      if (renderer == DIGITOR_RENDERER_VULKAN) {
-        out.windows_vulkan_interop_qualified =
-            validate_windows_vulkan_zero_copy_interop(inputs.windows_vulkan);
-        if (!out.windows_vulkan_interop_qualified) {
-          out.diagnostic = "Windows Vulkan external-memory/semaphore interop unavailable";
-          return out;
-        }
-      }
-      auto adapter = create_windows_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.windows));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.adapter_opened && q.gpu_frame_submitted &&
-               q.synchronization_waited && q.native_resource_registered &&
-               q.no_cpu_readback && q.no_cpu_staging;
+  const auto platform = inputs.platform;
+  auto windows = std::move(inputs.encoder.windows);
+  auto android = std::move(inputs.encoder.android);
+  auto apple = std::move(inputs.encoder.apple);
+  auto windows_vulkan = std::move(inputs.windows_vulkan);
+  out.encoder_factory =
+      [platform, windows, android, apple, windows_vulkan](
+          std::shared_ptr<const ExportRenderSnapshot> snapshot) mutable {
+        return create_production_encoder(
+            platform, std::move(snapshot), windows, android, apple,
+            windows_vulkan);
       };
-      break;
+
+  // Preserve the previous eager behavior only when an explicit snapshot was
+  // supplied. Omitting the snapshot is now the normal preview-attachment path.
+  if (inputs.encoder.snapshot) {
+    auto eager = out.encoder_factory(inputs.encoder.snapshot);
+    if (!eager) {
+      out.diagnostic = eager.diagnostic.empty()
+                           ? "failed to prepare eager production encoder"
+                           : std::move(eager.diagnostic);
+      return out;
     }
-    case ProductionPlatform::android: {
-      if (renderer != DIGITOR_RENDERER_VULKAN &&
-          renderer != DIGITOR_RENDERER_OPENGL_ES) {
-        out.diagnostic = "Android production assembly requires Vulkan or GLES";
-        return out;
-      }
-      auto adapter = create_android_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.android));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.codec_opened && q.input_surface_created &&
-               q.gpu_frame_submitted && q.acquire_sync_waited &&
-               q.release_sync_published &&
-               q.ahardwarebuffer_or_surface_bound && q.no_cpu_readback &&
-               q.no_cpu_staging;
-      };
-      break;
-    }
-    case ProductionPlatform::macos:
-    case ProductionPlatform::ios: {
-      if (renderer != DIGITOR_RENDERER_METAL) {
-        out.diagnostic = "Apple production assembly requires Metal";
-        return out;
-      }
-      auto adapter = create_apple_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.apple));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.adapter_opened && q.metal_completion_waited &&
-               q.iosurface_pixel_buffer_acquired &&
-               q.attachments_propagated && q.no_cpu_readback &&
-               q.no_cpu_staging;
-      };
-      break;
-    }
+    out.encoder_callbacks = std::move(eager.callbacks);
+    out.encoder_zero_copy_qualified = std::move(eager.zero_copy_qualified);
+    out.windows_vulkan_interop_qualified =
+        eager.windows_vulkan_interop_qualified;
   }
 
   return out;

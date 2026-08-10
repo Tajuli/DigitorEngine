@@ -24,6 +24,7 @@ struct EndToEndHostState {
   int opens{};
   int renders{};
   int exports{};
+  int exports_v2{};
   int cancels{};
   int closes{};
   int releases{};
@@ -72,6 +73,23 @@ DigitorResult export_media(
   if (!state || !graph || !graph_revision || !parameter_revision || !request)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   ++state->exports;
+  if (progress) progress(1.0, 1, 1, progress_user_data);
+  return DIGITOR_RESULT_OK;
+}
+
+DigitorResult export_media_v2(
+    void* user_data, DigitorNodeGraph* graph, std::uint64_t graph_revision,
+    std::uint64_t parameter_revision, const DigitorFlutterExportRequestV2* request,
+    DigitorExportProgressCallback progress, void* progress_user_data,
+    char*, std::uint32_t) {
+  auto* state = static_cast<EndToEndHostState*>(user_data);
+  if (!state || !graph || !graph_revision || !parameter_revision || !request ||
+      request->snapshot_identity == 0 || request->node_graph_revision != graph_revision ||
+      request->color_pipeline_revision != parameter_revision ||
+      !request->utf8_graph_recipe_identity || !*request->utf8_graph_recipe_identity) {
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+  ++state->exports_v2;
   if (progress) progress(1.0, 1, 1, progress_user_data);
   return DIGITOR_RESULT_OK;
 }
@@ -133,17 +151,6 @@ int main() {
       DigitorNativeGpuTextureDescriptor&, std::string&) {
     return DIGITOR_RESULT_OK;
   };
-  inputs.encoder_backend = digitor::EncoderBackend::nvenc;
-  inputs.encoder_callbacks.open = [](const digitor::HardwareEncodeConfig&, std::string&) {
-    return DIGITOR_RESULT_OK;
-  };
-  inputs.encoder_callbacks.submit_gpu_frame = [](
-      const digitor::HardwareEncodeFrame&, std::string&) {
-    return DIGITOR_RESULT_OK;
-  };
-  inputs.encoder_callbacks.drain = [](std::string&) { return DIGITOR_RESULT_OK; };
-  inputs.encoder_callbacks.finalize_atomic = [](std::string&) { return DIGITOR_RESULT_OK; };
-  inputs.encoder_callbacks.cancel = [] {};
   inputs.preview_capabilities.native_gpu_preview_available = 1;
   inputs.preview_capabilities.true_shared_resource_zero_copy = 1;
   inputs.preview_capabilities.backend = DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12;
@@ -185,7 +192,12 @@ int main() {
   host.cancel = &cancel;
   host.close_media = &close_media;
   host.release_texture = &release_texture;
-  assert(digitor_flutter_production_register_host(&host) == DIGITOR_RESULT_OK);
+  DigitorFlutterProductionHostV2 host_v2{};
+  host_v2.struct_size = sizeof(host_v2);
+  host_v2.api_version = DIGITOR_FLUTTER_PRODUCTION_HOST_V2_VERSION;
+  host_v2.base = host;
+  host_v2.export_media_v2 = &export_media_v2;
+  assert(digitor_flutter_production_register_host_v2(&host_v2) == DIGITOR_RESULT_OK);
 
   DigitorFlutterProductionSession* session = nullptr;
   assert(digitor_flutter_production_create_registered("fixture.mp4", &session) ==
@@ -234,6 +246,51 @@ int main() {
   assert(digitor_flutter_production_export(session, &request, nullptr, nullptr) ==
          DIGITOR_RESULT_OK);
   assert(state.exports == 1);
+
+
+  std::uint64_t recipe_size = 0;
+  assert(digitor_node_graph_recipe_identity(graph, nullptr, 0, &recipe_size) ==
+         DIGITOR_RESULT_OK);
+  std::string recipe(recipe_size, '\0');
+  assert(digitor_node_graph_recipe_identity(graph, recipe.data(), recipe.size(),
+                                            &recipe_size) == DIGITOR_RESULT_OK);
+  if (!recipe.empty() && recipe.back() == '\0') recipe.pop_back();
+
+  DigitorFlutterExportRequestV2 request_v2{};
+  request_v2.struct_size = sizeof(request_v2);
+  request_v2.api_version = DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION;
+  request_v2.utf8_output_path = "out-v2.mp4";
+  request_v2.codec = 0;
+  request_v2.first_frame = 0;
+  request_v2.last_frame = 0;
+  request_v2.width = 1920;
+  request_v2.height = 1080;
+  request_v2.snapshot_identity = 10;
+  request_v2.timeline_revision = 1;
+  request_v2.render_revision = 1;
+  request_v2.node_graph_revision = 1;
+  request_v2.color_pipeline_revision = 1;
+  request_v2.audio_revision = 1;
+  request_v2.working_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+  request_v2.alpha_policy = 1;
+  request_v2.fps_num = 30;
+  request_v2.fps_den = 1;
+  request_v2.duration_us = 33333;
+  request_v2.video_bitrate = 12000000;
+  request_v2.utf8_color_metadata = "linear-rgba";
+  request_v2.utf8_graph_recipe_identity = recipe.c_str();
+  assert(digitor_flutter_production_export_v2(session, &request_v2, nullptr,
+                                              nullptr) == DIGITOR_RESULT_OK);
+  assert(state.exports_v2 == 1);
+  request_v2.node_graph_revision = 2;
+  assert(digitor_flutter_production_export_v2(session, &request_v2, nullptr,
+                                              nullptr) ==
+         DIGITOR_RESULT_INVALID_ARGUMENT);
+  assert(state.exports_v2 == 1);
+  request_v2.node_graph_revision = 1;
+  assert(digitor_flutter_production_export_v2(session, &request_v2, nullptr,
+                                              nullptr) == DIGITOR_RESULT_OK);
+  assert(state.exports_v2 == 2);
   assert(digitor_flutter_production_cancel(session) == DIGITOR_RESULT_OK);
   assert(state.cancels == 1);
 
