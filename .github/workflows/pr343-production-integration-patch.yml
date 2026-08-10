@@ -1,0 +1,53 @@
+name: PR 343 Production Integration Patch
+
+on:
+  push:
+    branches:
+      - agent/production-app-integration-fullready
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Wire production render-target integration path'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/production-app-integration-fullready
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Apply production integration patch
+        shell: bash
+        run: |
+          cat tool/pr343_00.patch tool/pr343_01.patch tool/pr343_02.patch > /tmp/pr343.patch
+          patch -p2 < /tmp/pr343.patch
+      - name: Format Dart package
+        working-directory: dart/digitor_engine_ffi
+        run: dart format lib test hook
+      - name: Syntax-check changed native paths
+        shell: bash
+        run: |
+          c++ -std=c++20 -Iinclude -Isrc -fsyntax-only src/ffi/flutter_production_c_api.cpp
+          c++ -std=c++20 -Iinclude -Isrc -fsyntax-only src/ffi/flutter_production_host_adapter.cpp
+          c++ -std=c++20 -Iinclude -Isrc -fsyntax-only src/ffi/flutter_production_plugin_bootstrap.cpp
+          c++ -std=c++20 -Iinclude -Isrc -fsyntax-only tests/test_flutter_production_host_adapter.cpp
+      - name: Commit production wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add include/digitor/flutter_production_host_adapter.hpp \
+                  include/digitor/flutter_production_provider_builder.hpp \
+                  src/ffi/flutter_production_plugin_bootstrap.cpp \
+                  src/ffi/flutter_production_host_adapter.cpp \
+                  src/ffi/flutter_production_c_api.cpp \
+                  dart/digitor_engine_ffi/lib/src/native_production_api.dart \
+                  dart/digitor_engine_ffi/lib/src/production.dart \
+                  dart/digitor_engine_ffi/lib/src/registered_production_session.dart \
+                  dart/digitor_engine_ffi/lib/src/editor_workspace.dart \
+                  tests/test_flutter_production_host_adapter.cpp
+          git commit -m "Wire production render-target integration path"
+          git push origin HEAD:agent/production-app-integration-fullready
