@@ -1,4 +1,5 @@
 #include "digitor/flutter_production_plugin_bootstrap.hpp"
+#include "digitor/flutter_production_provider_builder.hpp"
 
 #include <array>
 #include <memory>
@@ -23,6 +24,30 @@ State& state() {
 bool valid_platform(std::uint32_t value) noexcept {
   return value >= DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS &&
          value <= DIGITOR_FLUTTER_PRODUCTION_PLUGIN_IOS;
+}
+
+std::optional<ProductionPlatform> production_platform(
+    DigitorFlutterProductionPluginPlatform platform) noexcept {
+  switch (platform) {
+    case DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS:
+      return ProductionPlatform::windows;
+    case DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID:
+      return ProductionPlatform::android;
+    case DIGITOR_FLUTTER_PRODUCTION_PLUGIN_MACOS:
+      return ProductionPlatform::macos;
+    case DIGITOR_FLUTTER_PRODUCTION_PLUGIN_IOS:
+      return ProductionPlatform::ios;
+  }
+  return std::nullopt;
+}
+
+bool host_inputs_complete(const FlutterProductionProviderBuild& build) noexcept {
+  return build.decoder_factory && build.frame_resolver &&
+         build.texture_descriptor_builder &&
+         build.encoder_backend != EncoderBackend::software &&
+         build.fps_num > 0 && build.fps_den > 0 && build.video_bitrate > 0 &&
+         build.required_device_identity != 0 &&
+         build.required_context_identity != 0;
 }
 
 }  // namespace
@@ -60,6 +85,76 @@ DigitorResult clear_flutter_production_host_inputs_factory(
   if (s.registration && s.platform == platform) return DIGITOR_RESULT_RESOURCE_IN_USE;
   s.factories[static_cast<std::size_t>(platform)] = {};
   return DIGITOR_RESULT_OK;
+}
+
+DigitorResult install_flutter_production_provider_builder(
+    DigitorFlutterProductionPluginPlatform platform,
+    FlutterProductionProviderBuildFactory factory,
+    std::string* diagnostic) noexcept {
+  try {
+    const auto expected = production_platform(platform);
+    if (!expected || !factory) {
+      if (diagnostic) *diagnostic = "valid production provider builder is required";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+
+    return install_flutter_production_host_inputs_factory(
+        platform,
+        [expected = *expected, factory = std::move(factory)](
+            const FlutterProductionPluginAttachment& attachment,
+            std::string& local) mutable
+            -> std::optional<FlutterProductionHostAdapterInputs> {
+          auto build = factory(attachment, local);
+          if (!build) {
+            if (local.empty()) local = "concrete production provider build unavailable";
+            return std::nullopt;
+          }
+          if (build->provider.platform != expected ||
+              build->platform_inputs.platform != expected) {
+            local = "production provider platform does not match Flutter attachment";
+            return std::nullopt;
+          }
+          const auto provider_validation =
+              validate_native_platform_provider(build->provider);
+          if (!provider_validation) {
+            local = provider_validation.diagnostic;
+            return std::nullopt;
+          }
+          if (!host_inputs_complete(*build)) {
+            local = "production provider host inputs are incomplete";
+            return std::nullopt;
+          }
+
+          auto assembly = build->provider.create(std::move(build->platform_inputs));
+          if (!assembly) {
+            local = assembly.diagnostic.empty()
+                        ? "production platform assembly failed"
+                        : std::move(assembly.diagnostic);
+            return std::nullopt;
+          }
+
+          FlutterProductionHostAdapterInputs out{};
+          out.decoder_factory = std::move(build->decoder_factory);
+          out.frame_resolver = std::move(build->frame_resolver);
+          out.preview_session = std::move(assembly.preview_session);
+          out.encoder_callbacks = std::move(assembly.encoder_callbacks);
+          out.texture_descriptor_builder =
+              std::move(build->texture_descriptor_builder);
+          out.preview_capabilities = build->preview_capabilities;
+          out.encoder_backend = build->encoder_backend;
+          out.fps_num = build->fps_num;
+          out.fps_den = build->fps_den;
+          out.video_bitrate = build->video_bitrate;
+          out.required_device_identity = build->required_device_identity;
+          out.required_context_identity = build->required_context_identity;
+          local.clear();
+          return out;
+        },
+        diagnostic);
+  } catch (...) {
+    if (diagnostic) *diagnostic = "failed to install production provider builder";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
 }
 
 }  // namespace digitor

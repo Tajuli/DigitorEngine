@@ -106,18 +106,12 @@ WindowsNativeProviderResult create_windows_native_provider(
                         ProductionPlatformFactoryInputs inputs) mutable {
     inputs.platform = ProductionPlatform::windows;
     inputs.timeline = bindings.timeline;
-    inputs.timeline_evidence = evidence(
-        "windows.timeline." + bindings.capabilities.adapter_identity);
     inputs.flutter.platform = ProductionPlatform::windows;
     inputs.flutter.backend = bindings.timeline.backend;
     inputs.flutter.device_identity = bindings.device_identity;
     inputs.flutter.device_name = bindings.capabilities.adapter_identity;
-    inputs.flutter.evidence = evidence(
-        "windows.flutter." + bindings.flutter.implementation_identity);
     inputs.flutter.attached = bindings.flutter.attached;
     inputs.flutter.register_or_present = bindings.flutter.present;
-    inputs.encoder.evidence = evidence(
-        "windows.encoder." + bindings.capabilities.encoder_identity);
     inputs.encoder.windows = bindings.encoder;
     inputs.windows_vulkan = bindings.vulkan_interop;
     return create_production_platform_assembly(std::move(inputs));
