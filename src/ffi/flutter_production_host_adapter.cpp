@@ -64,6 +64,7 @@ struct FlutterProductionHostAdapter::Impl {
   bool valid() const noexcept {
     return inputs.decoder_factory && inputs.frame_resolver &&
            inputs.preview_session && inputs.texture_descriptor_builder &&
+           inputs.preview_target_binder &&
            callbacks_complete(inputs.encoder_callbacks) &&
            inputs.encoder_backend != EncoderBackend::software &&
            inputs.fps_num > 0 && inputs.fps_den > 0 &&
@@ -312,6 +313,27 @@ struct FlutterProductionHostAdapter::Impl {
     }
   }
 
+  static DigitorResult set_preview_target(
+      void* user_data, const DigitorFlutterPreviewTarget* target,
+      char* diagnostic, std::uint32_t diagnostic_capacity) {
+    auto* p = self(user_data);
+    if (!p || !target ||
+        target->struct_size < sizeof(DigitorFlutterPreviewTarget) ||
+        target->api_version != DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION ||
+        !target->native_target_handle || !target->width || !target->height ||
+        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_NONE ||
+        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER) {
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    std::string message;
+    const auto result = p->inputs.preview_target_binder(
+        target->native_target_handle, target->width, target->height,
+        target->handle_type, message);
+    if (result != DIGITOR_RESULT_OK)
+      write_diagnostic(diagnostic, diagnostic_capacity, message);
+    return result;
+  }
+
   static DigitorResult query_preview(
       void* user_data, DigitorNativePreviewCapabilities* output) {
     auto* p = self(user_data);
@@ -384,6 +406,7 @@ DigitorFlutterProductionHost FlutterProductionHostAdapter::host() noexcept {
   value.render_frame = &Impl::render_frame;
   value.export_media = &Impl::export_media;
   value.query_preview = &Impl::query_preview;
+  value.set_preview_target = &Impl::set_preview_target;
   value.cancel = &Impl::cancel;
   value.close_media = &Impl::close_media;
   value.release_texture = &Impl::release_texture;

@@ -63,6 +63,21 @@ final class DigitorNativeGpuTextureDescriptorNative extends Struct {
   external int readiness;
 }
 
+final class DigitorFlutterPreviewTargetNative extends Struct {
+  @Uint32()
+  external int structSize;
+  @Uint32()
+  external int apiVersion;
+  @Uint64()
+  external int nativeTargetHandle;
+  @Uint32()
+  external int width;
+  @Uint32()
+  external int height;
+  @Int32()
+  external int handleType;
+}
+
 final class DigitorFlutterExportRequestNative extends Struct {
   @Uint32()
   external int structSize;
@@ -114,6 +129,14 @@ typedef DigitorFlutterExportMediaNative =
       Uint32,
     );
 
+typedef DigitorFlutterSetPreviewTargetNative =
+    Int32 Function(
+      Pointer<Void>,
+      Pointer<DigitorFlutterPreviewTargetNative>,
+      Pointer<Uint8>,
+      Uint32,
+    );
+
 typedef DigitorFlutterQueryPreviewNative =
     Int32 Function(
       Pointer<Void>,
@@ -143,6 +166,8 @@ final class DigitorFlutterProductionHostNative extends Struct {
   external Pointer<NativeFunction<DigitorFlutterExportMediaNative>> exportMedia;
   external Pointer<NativeFunction<DigitorFlutterQueryPreviewNative>>
   queryPreview;
+  external Pointer<NativeFunction<DigitorFlutterSetPreviewTargetNative>>
+  setPreviewTarget;
   external Pointer<NativeFunction<DigitorFlutterCancelNative>> cancel;
   external Pointer<NativeFunction<DigitorFlutterCloseMediaNative>> closeMedia;
   external Pointer<NativeFunction<DigitorFlutterReleaseTextureNative>>
@@ -222,6 +247,17 @@ external int digitorFlutterProductionBindNodeGraph(
   Pointer<DigitorNodeGraphNative> graph,
   int graphRevision,
   int parameterRevision,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<DigitorFlutterProductionSessionNative>,
+    Pointer<DigitorFlutterPreviewTargetNative>,
+  )
+>(symbol: 'digitor_flutter_production_set_preview_target')
+external int digitorFlutterProductionSetPreviewTarget(
+  Pointer<DigitorFlutterProductionSessionNative> session,
+  Pointer<DigitorFlutterPreviewTargetNative> target,
 );
 
 @Native<

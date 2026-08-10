@@ -15,6 +15,7 @@ struct FlutterProductionProviderBuild final {
   ProductionDecoderFactory decoder_factory;
   ProductionTimestampFrameResolver frame_resolver;
   ProductionTextureDescriptorBuilder texture_descriptor_builder;
+  ProductionPreviewTargetBinder preview_target_binder;
   DigitorNativePreviewCapabilities preview_capabilities{};
   EncoderBackend encoder_backend{EncoderBackend::software};
   std::int32_t fps_num{30};

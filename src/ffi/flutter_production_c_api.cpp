@@ -33,7 +33,8 @@ bool valid_host(const DigitorFlutterProductionHost* host) noexcept {
            host->struct_size >= sizeof(DigitorFlutterProductionHost) &&
            host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION &&
            host->open_media && host->render_frame && host->export_media &&
-           host->query_preview && host->cancel && host->close_media &&
+           host->query_preview && host->set_preview_target &&
+           host->cancel && host->close_media &&
            host->release_texture;
 }
 
@@ -247,6 +248,36 @@ DigitorResult digitor_flutter_production_bind_node_graph(
         session->graph = graph;
         session->graph_revision = graph_revision;
         session->parameter_revision = parameter_revision;
+        session->last_error.clear();
+        return DIGITOR_RESULT_OK;
+    } catch (...) {
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+}
+
+DigitorResult digitor_flutter_production_set_preview_target(
+    DigitorFlutterProductionSession* session,
+    const DigitorFlutterPreviewTarget* target) {
+    if (!session || !target ||
+        target->struct_size < sizeof(DigitorFlutterPreviewTarget) ||
+        target->api_version != DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION ||
+        !target->native_target_handle || !target->width || !target->height) {
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    try {
+        std::lock_guard registry_lock(g_flutter_sessions_mutex);
+        if (!registered(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
+        std::lock_guard session_lock(session->mutex);
+        if (session->active_operation || session->has_current_preview)
+            return DIGITOR_RESULT_RESOURCE_IN_USE;
+        char diagnostic[kDiagnosticCapacity]{};
+        const auto result = session->host.set_preview_target(
+            session->host.user_data, target, diagnostic, kDiagnosticCapacity);
+        if (result != DIGITOR_RESULT_OK) {
+            session->last_error = diagnostic[0]
+                ? diagnostic : "production preview target binding failed";
+            return result;
+        }
         session->last_error.clear();
         return DIGITOR_RESULT_OK;
     } catch (...) {

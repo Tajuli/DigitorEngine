@@ -27,6 +27,7 @@ struct EndToEndHostState {
   int cancels{};
   int closes{};
   int releases{};
+  int target_binds{};
   std::uint64_t generation{};
 };
 
@@ -86,6 +87,16 @@ DigitorResult query_preview(void*, DigitorNativePreviewCapabilities* output) {
   return DIGITOR_RESULT_OK;
 }
 
+DigitorResult set_preview_target(
+    void* user_data, const DigitorFlutterPreviewTarget* target, char*,
+    std::uint32_t) {
+  auto* state = static_cast<EndToEndHostState*>(user_data);
+  if (!state || !target || !target->native_target_handle || !target->width ||
+      !target->height) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  ++state->target_binds;
+  return DIGITOR_RESULT_OK;
+}
+
 DigitorResult cancel(void* user_data) {
   auto* state = static_cast<EndToEndHostState*>(user_data);
   if (!state) return DIGITOR_RESULT_INVALID_ARGUMENT;
@@ -116,6 +127,7 @@ int main() {
   };
   inputs.preview_session = std::make_shared<digitor::NativePreviewPresentationSession>(
       std::make_shared<DummyTextureHost>());
+  inputs.preview_target_binder = [](std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t, std::string&) { return DIGITOR_RESULT_OK; };
   inputs.texture_descriptor_builder = [](
       const digitor::ProcessedGpuFramePtr&, std::uint64_t,
       DigitorNativeGpuTextureDescriptor&, std::string&) {
@@ -169,6 +181,7 @@ int main() {
   host.render_frame = &render_frame;
   host.export_media = &export_media;
   host.query_preview = &query_preview;
+  host.set_preview_target = &set_preview_target;
   host.cancel = &cancel;
   host.close_media = &close_media;
   host.release_texture = &release_texture;
@@ -189,6 +202,17 @@ int main() {
   assert(digitor_flutter_production_query_preview(session, &caps) ==
          DIGITOR_RESULT_OK);
   assert(caps.native_gpu_preview_available == 1);
+
+  DigitorFlutterPreviewTarget target{};
+  target.struct_size = sizeof(target);
+  target.api_version = DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION;
+  target.native_target_handle = 0x999u;
+  target.width = 1920;
+  target.height = 1080;
+  target.handle_type = DIGITOR_NATIVE_TEXTURE_HANDLE_D3D12_RESOURCE;
+  assert(digitor_flutter_production_set_preview_target(session, &target) ==
+         DIGITOR_RESULT_OK);
+  assert(state.target_binds == 1);
 
   DigitorNativeGpuTextureDescriptor texture{};
   assert(digitor_flutter_production_preview(session, 123456, 1920, 1080,

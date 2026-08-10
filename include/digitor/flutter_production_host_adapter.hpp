@@ -17,6 +17,9 @@ namespace digitor {
 using ProductionDecoderFactory = std::function<std::unique_ptr<ProductionHardwareDecodeSession>(
     const std::string& media_path, std::string& diagnostic)>;
 using ProductionTimestampFrameResolver = std::function<FrameNumber(std::int64_t timestamp_us)>;
+using ProductionPreviewTargetBinder = std::function<DigitorResult(
+    std::uint64_t native_target_handle, std::uint32_t width,
+    std::uint32_t height, std::int32_t handle_type, std::string& diagnostic)>;
 using ProductionTextureDescriptorBuilder = std::function<DigitorResult(
     const ProcessedGpuFramePtr& frame, std::uint64_t generation,
     DigitorNativeGpuTextureDescriptor& descriptor, std::string& diagnostic)>;
@@ -27,6 +30,7 @@ struct FlutterProductionHostAdapterInputs {
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
   HardwareEncoderCallbacks encoder_callbacks;
   ProductionTextureDescriptorBuilder texture_descriptor_builder;
+  ProductionPreviewTargetBinder preview_target_binder;
   DigitorNativePreviewCapabilities preview_capabilities{};
   EncoderBackend encoder_backend{EncoderBackend::software};
   std::int32_t fps_num{30};

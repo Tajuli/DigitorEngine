@@ -9,7 +9,8 @@
 extern "C" {
 #endif
 
-#define DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION 1u
+#define DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION 2u
+#define DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION 1u
 #define DIGITOR_FLUTTER_EXPORT_REQUEST_VERSION 1u
 
 typedef struct DigitorFlutterProductionSession DigitorFlutterProductionSession;
@@ -18,6 +19,15 @@ typedef enum DigitorFlutterProductionRenderMode {
     DIGITOR_FLUTTER_RENDER_PREVIEW = 0,
     DIGITOR_FLUTTER_RENDER_EXPORT = 1
 } DigitorFlutterProductionRenderMode;
+
+typedef struct DigitorFlutterPreviewTarget {
+    uint32_t struct_size;
+    uint32_t api_version;
+    uint64_t native_target_handle;
+    uint32_t width;
+    uint32_t height;
+    int32_t handle_type;
+} DigitorFlutterPreviewTarget;
 
 typedef struct DigitorFlutterExportRequest {
     uint32_t struct_size;
@@ -64,6 +74,13 @@ typedef DigitorResult (*DigitorFlutterExportMediaCallback)(
     uint32_t diagnostic_capacity
 );
 
+typedef DigitorResult (*DigitorFlutterSetPreviewTargetCallback)(
+    void* user_data,
+    const DigitorFlutterPreviewTarget* target,
+    char* diagnostic,
+    uint32_t diagnostic_capacity
+);
+
 typedef DigitorResult (*DigitorFlutterQueryPreviewCallback)(
     void* user_data,
     DigitorNativePreviewCapabilities* out_capabilities
@@ -86,6 +103,7 @@ typedef struct DigitorFlutterProductionHost {
     DigitorFlutterRenderFrameCallback render_frame;
     DigitorFlutterExportMediaCallback export_media;
     DigitorFlutterQueryPreviewCallback query_preview;
+    DigitorFlutterSetPreviewTargetCallback set_preview_target;
     DigitorFlutterCancelCallback cancel;
     DigitorFlutterCloseMediaCallback close_media;
     DigitorFlutterReleaseTextureCallback release_texture;
@@ -128,6 +146,11 @@ DIGITOR_API DigitorResult digitor_flutter_production_bind_node_graph(
     DigitorNodeGraph* graph,
     uint64_t graph_revision,
     uint64_t parameter_revision
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_set_preview_target(
+    DigitorFlutterProductionSession* session,
+    const DigitorFlutterPreviewTarget* target
 );
 
 DIGITOR_API DigitorResult digitor_flutter_production_preview(
