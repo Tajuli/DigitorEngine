@@ -98,6 +98,34 @@ final class DigitorFlutterExportRequestNative extends Struct {
   external int height;
 }
 
+final class DigitorFlutterExportRequestV2Native extends Struct {
+  @Uint32() external int structSize;
+  @Uint32() external int apiVersion;
+  external Pointer<Utf8> outputPath;
+  @Int32() external int format;
+  @Int32() external int codec;
+  @Int64() external int firstFrame;
+  @Int64() external int lastFrame;
+  @Uint32() external int width;
+  @Uint32() external int height;
+  @Uint64() external int snapshotIdentity;
+  @Uint64() external int timelineRevision;
+  @Uint64() external int renderRevision;
+  @Uint64() external int graphRevision;
+  @Uint64() external int parameterRevision;
+  @Uint64() external int audioRevision;
+  @Int32() external int workingPixelFormat;
+  @Int32() external int alphaPolicy;
+  @Uint8() external int variableFrameRate;
+  @Uint8() external int hdr;
+  @Array(6) external Array<Uint8> reserved;
+  external Pointer<Utf8> colorMetadata;
+  @Int32() external int rendererBackend;
+  @Int32() external int encoderBackend;
+  @Uint64() external int deviceIdentity;
+  @Uint64() external int contextIdentity;
+}
+
 typedef DigitorFlutterOpenMediaNative =
     Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Uint8>, Uint32);
 
@@ -307,6 +335,14 @@ external int digitorFlutterProductionQueryPreview(
 external int digitorFlutterProductionExport(
   Pointer<DigitorFlutterProductionSessionNative> session,
   Pointer<DigitorFlutterExportRequestNative> request,
+  Pointer<NativeFunction<DigitorProgressNative>> progress,
+  Pointer<Void> progressUserData,
+);
+
+@Native<Int32 Function(Pointer<DigitorFlutterProductionSessionNative>, Pointer<DigitorFlutterExportRequestV2Native>, Pointer<NativeFunction<DigitorProgressNative>>, Pointer<Void>)>(symbol: 'digitor_flutter_production_export_v2')
+external int digitorFlutterProductionExportV2(
+  Pointer<DigitorFlutterProductionSessionNative> session,
+  Pointer<DigitorFlutterExportRequestV2Native> request,
   Pointer<NativeFunction<DigitorProgressNative>> progress,
   Pointer<Void> progressUserData,
 );

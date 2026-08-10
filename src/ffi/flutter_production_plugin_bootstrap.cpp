@@ -125,6 +125,7 @@ DigitorResult install_flutter_production_provider_builder(
             return std::nullopt;
           }
 
+          const auto renderer_backend = build->platform_inputs.timeline.backend;
           auto assembly = build->provider.create(std::move(build->platform_inputs));
           if (!assembly) {
             local = assembly.diagnostic.empty()
@@ -137,12 +138,13 @@ DigitorResult install_flutter_production_provider_builder(
           out.decoder_factory = std::move(build->decoder_factory);
           out.frame_resolver = std::move(build->frame_resolver);
           out.preview_session = std::move(assembly.preview_session);
-          out.encoder_callbacks = std::move(assembly.encoder_callbacks);
+          out.encoder_factory = std::move(assembly.create_encoder);
           out.texture_descriptor_builder =
               std::move(build->texture_descriptor_builder);
           out.preview_target_binder = std::move(build->preview_target_binder);
           out.preview_capabilities = build->preview_capabilities;
           out.encoder_backend = build->encoder_backend;
+          out.renderer_backend = renderer_backend;
           out.fps_num = build->fps_num;
           out.fps_den = build->fps_den;
           out.video_bitrate = build->video_bitrate;

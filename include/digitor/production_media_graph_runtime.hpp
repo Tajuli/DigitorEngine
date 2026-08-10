@@ -62,7 +62,8 @@ class ProductionMediaGraphRuntime final {
       std::span<const FrameNumber> frame_numbers,
       HardwareEncodeConfig config,
       std::string* diagnostic = nullptr,
-      ProductionExportProgress progress = {}) noexcept;
+      ProductionExportProgress progress = {},
+      HardwareEncoderCallbacks lazy_encoder_callbacks = {}) noexcept;
 
   void cancel() noexcept;
   [[nodiscard]] ProductionMediaGraphRuntimeTelemetry telemetry() const;

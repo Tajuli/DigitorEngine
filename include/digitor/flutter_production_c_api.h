@@ -12,6 +12,8 @@ extern "C" {
 #define DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION 2u
 #define DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION 1u
 #define DIGITOR_FLUTTER_EXPORT_REQUEST_VERSION 1u
+#define DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION 2u
+#define DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION_3 3u
 
 typedef struct DigitorFlutterProductionSession DigitorFlutterProductionSession;
 
@@ -40,6 +42,36 @@ typedef struct DigitorFlutterExportRequest {
     uint32_t width;
     uint32_t height;
 } DigitorFlutterExportRequest;
+
+/* V1 remains layout- and binary-compatible. V2 carries the canonical frozen
+ * ExportRenderSnapshot revisions plus the selected GPU identity. */
+typedef struct DigitorFlutterExportRequestV2 {
+    uint32_t struct_size;
+    uint32_t api_version;
+    const char* utf8_output_path;
+    int32_t format;
+    int32_t codec;
+    int64_t first_frame;
+    int64_t last_frame;
+    uint32_t width;
+    uint32_t height;
+    uint64_t snapshot_identity;
+    uint64_t timeline_revision;
+    uint64_t render_revision;
+    uint64_t graph_revision;
+    uint64_t parameter_revision;
+    uint64_t audio_revision;
+    int32_t working_pixel_format;
+    int32_t alpha_policy;
+    uint8_t variable_frame_rate;
+    uint8_t hdr;
+    uint8_t reserved[6];
+    const char* utf8_color_metadata;
+    int32_t renderer_backend;
+    int32_t encoder_backend;
+    uint64_t device_identity;
+    uint64_t context_identity;
+} DigitorFlutterExportRequestV2;
 
 typedef DigitorResult (*DigitorFlutterOpenMediaCallback)(
     void* user_data,
@@ -73,6 +105,10 @@ typedef DigitorResult (*DigitorFlutterExportMediaCallback)(
     char* diagnostic,
     uint32_t diagnostic_capacity
 );
+typedef DigitorResult (*DigitorFlutterExportMediaV2Callback)(
+    void*, DigitorNodeGraph*, uint64_t, uint64_t,
+    const DigitorFlutterExportRequestV2*, DigitorExportProgressCallback, void*,
+    char*, uint32_t);
 
 typedef DigitorResult (*DigitorFlutterSetPreviewTargetCallback)(
     void* user_data,
@@ -107,6 +143,7 @@ typedef struct DigitorFlutterProductionHost {
     DigitorFlutterCancelCallback cancel;
     DigitorFlutterCloseMediaCallback close_media;
     DigitorFlutterReleaseTextureCallback release_texture;
+    DigitorFlutterExportMediaV2Callback export_media_v2;
 } DigitorFlutterProductionHost;
 
 /* Native Flutter plugins install exactly one engine-owned production host after
@@ -174,6 +211,12 @@ DIGITOR_API DigitorResult digitor_flutter_production_query_preview(
 DIGITOR_API DigitorResult digitor_flutter_production_export(
     DigitorFlutterProductionSession* session,
     const DigitorFlutterExportRequest* request,
+    DigitorExportProgressCallback progress,
+    void* progress_user_data
+);
+DIGITOR_API DigitorResult digitor_flutter_production_export_v2(
+    DigitorFlutterProductionSession* session,
+    const DigitorFlutterExportRequestV2* request,
     DigitorExportProgressCallback progress,
     void* progress_user_data
 );

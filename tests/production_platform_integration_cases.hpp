@@ -92,7 +92,6 @@ inline void run_production_platform_integration_cases() {
     return flutter_presented ? DIGITOR_RESULT_OK : DIGITOR_RESULT_INVALID_ARGUMENT;
   };
 
-  inputs.encoder.snapshot = snapshot;
   WindowsHardwareEncodeQualification qualification{};
   inputs.encoder.windows.open = [&](const HardwareEncodeConfig&,
                                     const ExportRenderSnapshot&,
@@ -141,10 +140,16 @@ inline void run_production_platform_integration_cases() {
   config.require_hardware = true;
   config.require_zero_copy = true;
   config.require_atomic_finalize = true;
-  ProductionHardwareEncodeSession session(config, assembly.encoder_callbacks);
+  HardwareEncoderCallbacks encoder_callbacks;
+  std::function<bool()> encoder_zero_copy_qualified;
+  std::string encoder_diagnostic;
+  assert(assembly.create_encoder(snapshot, encoder_callbacks,
+                                 encoder_zero_copy_qualified,
+                                 encoder_diagnostic) == DIGITOR_RESULT_OK);
+  ProductionHardwareEncodeSession session(config, std::move(encoder_callbacks));
   assert(session.start() == DIGITOR_RESULT_OK);
   assert(session.submit({make_frame(0, 21), 0, 33333, true}) == DIGITOR_RESULT_OK);
-  assert(assembly.encoder_zero_copy_qualified());
+  assert(encoder_zero_copy_qualified());
 
   WindowsVulkanZeroCopyInterop invalid{};
   assert(!validate_windows_vulkan_zero_copy_interop(invalid));

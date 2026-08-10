@@ -115,6 +115,7 @@ final class DigitorEditorWorkspace {
   int _previewWidth = 0;
   int _previewHeight = 0;
   int _timelineRevision = 0;
+  int _exportSnapshotIdentity = 0;
   bool _closed = false;
 
   DigitorRendererInfo get renderer => _renderer;
@@ -330,6 +331,10 @@ final class DigitorEditorWorkspace {
       format: format,
       codec: codec,
       onProgress: onProgress,
+      snapshotIdentity: ++_exportSnapshotIdentity,
+      timelineRevision: _timelineRevision,
+      renderRevision: _graph.graphRevision,
+      audioRevision: _timelineRevision,
     );
   }
 

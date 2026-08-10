@@ -60,6 +60,7 @@ final class DigitorRegisteredProductionSession {
   Pointer<DigitorFlutterProductionSessionNative> _handle;
   final DigitorNodeGraph _graph;
   int? _outstandingPreviewGeneration;
+  DigitorNativeGpuTextureFrame? _lastPreview;
   bool _disposed = false;
 
   void bindNodeGraph() {
@@ -199,6 +200,7 @@ final class DigitorRegisteredProductionSession {
         readiness: DigitorNativeTextureReadiness.fromNative(value.readiness),
       );
       _outstandingPreviewGeneration = frame.generation;
+      _lastPreview = frame;
       return frame;
     } finally {
       calloc.free(native);
@@ -229,24 +231,46 @@ final class DigitorRegisteredProductionSession {
     DigitorExportFormat format = DigitorExportFormat.mp4,
     DigitorVideoCodec codec = DigitorVideoCodec.h264,
     void Function(DigitorExportProgress progress)? onProgress,
+    required int snapshotIdentity,
+    required int timelineRevision,
+    required int renderRevision,
+    required int audioRevision,
   }) {
     _ensureAlive();
     previewConsumed();
     bindNodeGraph();
     final nativePath = path.toNativeUtf8();
-    final request = calloc<DigitorFlutterExportRequestNative>();
+    final frame = _lastPreview;
+    if (frame == null) throw StateError('Render a production preview before export so the selected GPU identity can be frozen.');
+    final colorMetadata = 'primaries=${frame.colorPrimaries};transfer=${frame.transferFunction};matrix=${frame.matrixCoefficients};range=${frame.colorRange}'.toNativeUtf8();
+    final request = calloc<DigitorFlutterExportRequestV2Native>();
     NativeCallable<DigitorProgressNative>? callback;
     try {
       request.ref
-        ..structSize = sizeOf<DigitorFlutterExportRequestNative>()
-        ..apiVersion = 1
+        ..structSize = sizeOf<DigitorFlutterExportRequestV2Native>()
+        ..apiVersion = 2
         ..outputPath = nativePath
         ..format = format.index
         ..codec = codec.index
         ..firstFrame = firstFrame
         ..lastFrame = lastFrame
         ..width = width
-        ..height = height;
+        ..height = height
+        ..snapshotIdentity = snapshotIdentity
+        ..timelineRevision = timelineRevision
+        ..renderRevision = renderRevision
+        ..graphRevision = _graph.graphRevision
+        ..parameterRevision = _graph.parameterRevision
+        ..audioRevision = audioRevision
+        ..workingPixelFormat = frame.pixelFormat.nativeValue
+        ..alphaPolicy = 1
+        ..variableFrameRate = 0
+        ..hdr = 0
+        ..colorMetadata = colorMetadata
+        ..rendererBackend = _rendererBackend(frame.backend)
+        ..encoderBackend = 0
+        ..deviceIdentity = frame.deviceIdentity
+        ..contextIdentity = frame.contextIdentity;
       if (onProgress != null) {
         callback = NativeCallable<DigitorProgressNative>.listener((
           double fraction,
@@ -265,7 +289,7 @@ final class DigitorRegisteredProductionSession {
       }
       _check(
         'export',
-        digitorFlutterProductionExport(
+        digitorFlutterProductionExportV2(
           _handle,
           request,
           callback?.nativeFunction ?? nullptr,
@@ -276,8 +300,17 @@ final class DigitorRegisteredProductionSession {
       callback?.close();
       calloc.free(request);
       calloc.free(nativePath);
+      calloc.free(colorMetadata);
     }
   }
+
+  int _rendererBackend(DigitorNativeTextureBackend backend) => switch (backend) {
+    DigitorNativeTextureBackend.vulkan => 1,
+    DigitorNativeTextureBackend.metal => 2,
+    DigitorNativeTextureBackend.d3d12 => 3,
+    DigitorNativeTextureBackend.openGles || DigitorNativeTextureBackend.androidHardwareBuffer => 4,
+    _ => throw StateError('Production export requires the selected GPU backend.'),
+  };
 
   void cancel() {
     _ensureAlive();

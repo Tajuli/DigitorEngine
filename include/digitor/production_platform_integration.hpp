@@ -121,7 +121,6 @@ struct WindowsVulkanZeroCopyInterop final {
 }
 
 struct ProductionEncoderFactoryInputs final {
-  std::shared_ptr<const ExportRenderSnapshot> snapshot;
   WindowsHardwareEncoderHost windows;
   AndroidHardwareEncoderHost android;
   AppleHardwareEncoderHost apple;
@@ -140,20 +139,17 @@ struct ProductionPlatformAssembly final {
   std::shared_ptr<ConcreteFlutterTextureHost> preview_host;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
   std::shared_ptr<ProductionTimelineGpuBinding> timeline_binding;
-  HardwareEncoderCallbacks encoder_callbacks;
-  std::function<bool()> encoder_zero_copy_qualified;
+  using LazyEncoderFactory = std::function<DigitorResult(
+      std::shared_ptr<const ExportRenderSnapshot>, HardwareEncoderCallbacks&,
+      std::function<bool()>&, std::string&)>;
+  LazyEncoderFactory create_encoder;
   bool windows_vulkan_interop_qualified{};
   std::string diagnostic;
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return preview_host && preview_host->valid() && preview_session &&
            timeline_binding && timeline_binding->valid() &&
-           static_cast<bool>(encoder_callbacks.open) &&
-           static_cast<bool>(encoder_callbacks.submit_gpu_frame) &&
-           static_cast<bool>(encoder_callbacks.drain) &&
-           static_cast<bool>(encoder_callbacks.finalize_atomic) &&
-           static_cast<bool>(encoder_callbacks.cancel) &&
-           static_cast<bool>(encoder_zero_copy_qualified) && diagnostic.empty();
+           static_cast<bool>(create_encoder) && diagnostic.empty();
   }
 };
 
@@ -162,10 +158,6 @@ struct ProductionPlatformAssembly final {
   ProductionPlatformAssembly out{};
   out.platform = inputs.platform;
 
-  if (!inputs.encoder.snapshot) {
-    out.diagnostic = "immutable export snapshot is required";
-    return out;
-  }
   if (inputs.timeline.backend != inputs.flutter.backend ||
       inputs.timeline.context_identity != inputs.flutter.device_identity) {
     out.diagnostic = "timeline and Flutter texture host must share backend/device";
@@ -183,7 +175,7 @@ struct ProductionPlatformAssembly final {
   out.preview_session =
       std::make_shared<NativePreviewPresentationSession>(out.preview_host);
 
-  const auto renderer = inputs.encoder.snapshot->renderer_backend();
+  const auto renderer = inputs.timeline.backend;
   switch (inputs.platform) {
     case ProductionPlatform::windows: {
       if (renderer != DIGITOR_RENDERER_D3D12 &&
@@ -199,14 +191,15 @@ struct ProductionPlatformAssembly final {
           return out;
         }
       }
-      auto adapter = create_windows_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.windows));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.adapter_opened && q.gpu_frame_submitted &&
-               q.synchronization_waited && q.native_resource_registered &&
-               q.no_cpu_readback && q.no_cpu_staging;
+      out.create_encoder = [host = std::move(inputs.encoder.windows)](
+          std::shared_ptr<const ExportRenderSnapshot> snapshot,
+          HardwareEncoderCallbacks& callbacks, std::function<bool()>& qualified,
+          std::string& diagnostic) mutable {
+        if (!snapshot) { diagnostic = "immutable export snapshot is required"; return DIGITOR_RESULT_INVALID_ARGUMENT; }
+        auto adapter = create_windows_hardware_encode_adapter(std::move(snapshot), host);
+        callbacks = std::move(adapter.callbacks);
+        qualified = [qualification = std::move(adapter.qualification)] { const auto q = qualification(); return q.adapter_opened && q.gpu_frame_submitted && q.synchronization_waited && q.native_resource_registered && q.no_cpu_readback && q.no_cpu_staging; };
+        return DIGITOR_RESULT_OK;
       };
       break;
     }
@@ -216,16 +209,10 @@ struct ProductionPlatformAssembly final {
         out.diagnostic = "Android production assembly requires Vulkan or GLES";
         return out;
       }
-      auto adapter = create_android_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.android));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.codec_opened && q.input_surface_created &&
-               q.gpu_frame_submitted && q.acquire_sync_waited &&
-               q.release_sync_published &&
-               q.ahardwarebuffer_or_surface_bound && q.no_cpu_readback &&
-               q.no_cpu_staging;
+      out.create_encoder = [host = std::move(inputs.encoder.android)](std::shared_ptr<const ExportRenderSnapshot> snapshot, HardwareEncoderCallbacks& callbacks, std::function<bool()>& qualified, std::string& diagnostic) mutable {
+        if (!snapshot) { diagnostic = "immutable export snapshot is required"; return DIGITOR_RESULT_INVALID_ARGUMENT; }
+        auto adapter = create_android_hardware_encode_adapter(std::move(snapshot), host); callbacks = std::move(adapter.callbacks);
+        qualified = [qualification = std::move(adapter.qualification)] { const auto q = qualification(); return q.codec_opened && q.input_surface_created && q.gpu_frame_submitted && q.acquire_sync_waited && q.release_sync_published && q.ahardwarebuffer_or_surface_bound && q.no_cpu_readback && q.no_cpu_staging; }; return DIGITOR_RESULT_OK;
       };
       break;
     }
@@ -235,15 +222,10 @@ struct ProductionPlatformAssembly final {
         out.diagnostic = "Apple production assembly requires Metal";
         return out;
       }
-      auto adapter = create_apple_hardware_encode_adapter(
-          inputs.encoder.snapshot, std::move(inputs.encoder.apple));
-      out.encoder_callbacks = std::move(adapter.callbacks);
-      out.encoder_zero_copy_qualified = [qualification = std::move(adapter.qualification)] {
-        const auto q = qualification();
-        return q.adapter_opened && q.metal_completion_waited &&
-               q.iosurface_pixel_buffer_acquired &&
-               q.attachments_propagated && q.no_cpu_readback &&
-               q.no_cpu_staging;
+      out.create_encoder = [host = std::move(inputs.encoder.apple)](std::shared_ptr<const ExportRenderSnapshot> snapshot, HardwareEncoderCallbacks& callbacks, std::function<bool()>& qualified, std::string& diagnostic) mutable {
+        if (!snapshot) { diagnostic = "immutable export snapshot is required"; return DIGITOR_RESULT_INVALID_ARGUMENT; }
+        auto adapter = create_apple_hardware_encode_adapter(std::move(snapshot), host); callbacks = std::move(adapter.callbacks);
+        qualified = [qualification = std::move(adapter.qualification)] { const auto q = qualification(); return q.adapter_opened && q.metal_completion_waited && q.iosurface_pixel_buffer_acquired && q.attachments_propagated && q.no_cpu_readback && q.no_cpu_staging; }; return DIGITOR_RESULT_OK;
       };
       break;
     }

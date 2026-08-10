@@ -1,6 +1,7 @@
 #include "digitor/flutter_production_c_api.h"
 
 #include <cstring>
+#include <cstddef>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -14,6 +15,9 @@ struct DigitorFlutterProductionSession {
     DigitorNodeGraph* graph{};
     uint64_t graph_revision{};
     uint64_t parameter_revision{};
+    uint64_t timeline_revision{};
+    uint64_t render_revision{};
+    uint64_t audio_revision{};
     DigitorNativeGpuTextureDescriptor current_preview{};
     std::string last_error;
     bool has_current_preview{};
@@ -30,8 +34,9 @@ std::optional<DigitorFlutterProductionHost> g_registered_host;
 
 bool valid_host(const DigitorFlutterProductionHost* host) noexcept {
     return host &&
-           host->struct_size >= sizeof(DigitorFlutterProductionHost) &&
-           host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION &&
+           host->struct_size >= offsetof(DigitorFlutterProductionHost, export_media_v2) &&
+           (host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION ||
+            host->api_version == DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION_3) &&
            host->open_media && host->render_frame && host->export_media &&
            host->query_preview && host->set_preview_target &&
            host->cancel && host->close_media &&
@@ -408,6 +413,8 @@ DigitorResult digitor_flutter_production_export(
     const DigitorFlutterExportRequest* request,
     DigitorExportProgressCallback progress,
     void* progress_user_data) {
+    (void)progress;
+    (void)progress_user_data;
     if (!session || !request ||
         request->struct_size < sizeof(DigitorFlutterExportRequest) ||
         request->api_version != DIGITOR_FLUTTER_EXPORT_REQUEST_VERSION ||
@@ -417,6 +424,33 @@ DigitorResult digitor_flutter_production_export(
         return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
+    /* V1 cannot prove the immutable timeline/render/audio or GPU identities.
+       Never synthesize those values for a strict production export. */
+    {
+        std::lock_guard registry_lock(g_flutter_sessions_mutex);
+        if (registered(session)) {
+            std::lock_guard session_lock(session->mutex);
+            session->last_error = "export request V1 lacks frozen revisions and GPU identity; use digitor_flutter_production_export_v2";
+        }
+    }
+    return DIGITOR_RESULT_UNSUPPORTED;
+}
+
+DigitorResult digitor_flutter_production_export_v2(
+    DigitorFlutterProductionSession* session,
+    const DigitorFlutterExportRequestV2* request,
+    DigitorExportProgressCallback progress,
+    void* progress_user_data) {
+    if (!session || !request || request->struct_size < sizeof(*request) ||
+        request->api_version != DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION ||
+        !request->utf8_output_path || !request->utf8_output_path[0] ||
+        !request->utf8_color_metadata || !request->utf8_color_metadata[0] ||
+        request->last_frame < request->first_frame || request->first_frame < 0 ||
+        !request->width || !request->height || !request->snapshot_identity ||
+        !request->timeline_revision || !request->render_revision ||
+        !request->graph_revision || !request->parameter_revision ||
+        !request->audio_revision || !request->device_identity ||
+        !request->context_identity) return DIGITOR_RESULT_INVALID_ARGUMENT;
     DigitorFlutterProductionHost host{};
     DigitorNodeGraph* graph = nullptr;
     uint64_t graph_revision = 0;
@@ -429,15 +463,39 @@ DigitorResult digitor_flutter_production_export(
             return DIGITOR_RESULT_NOT_INITIALIZED;
         if (session->active_operation || session->has_current_preview)
             return DIGITOR_RESULT_RESOURCE_IN_USE;
-        session->active_operation = true;
         host = session->host;
         graph = session->graph;
         graph_revision = session->graph_revision;
         parameter_revision = session->parameter_revision;
+        if (request->graph_revision != graph_revision ||
+            request->parameter_revision != parameter_revision) {
+            session->last_error = "frozen export graph or parameter revision is stale";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        if ((session->timeline_revision && request->timeline_revision < session->timeline_revision) ||
+            (session->render_revision && request->render_revision < session->render_revision) ||
+            (session->audio_revision && request->audio_revision < session->audio_revision)) {
+            session->last_error = "frozen timeline, render, or audio revision is stale";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        if (request->device_identity != host.required_device_identity ||
+            request->context_identity != host.required_context_identity) {
+            session->last_error = "frozen export GPU device/context identity does not match the production host";
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        }
+        if (host.api_version < DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION_3 ||
+            host.struct_size < sizeof(host) || !host.export_media_v2) {
+            session->last_error = "registered production host does not support strict export request V2";
+            return DIGITOR_RESULT_UNSUPPORTED;
+        }
+        session->active_operation = true;
+        session->timeline_revision = request->timeline_revision;
+        session->render_revision = request->render_revision;
+        session->audio_revision = request->audio_revision;
     }
 
     char diagnostic[kDiagnosticCapacity]{};
-    const auto result = host.export_media(
+    const auto result = host.export_media_v2(
         host.user_data, graph, graph_revision, parameter_revision, request,
         progress, progress_user_data, diagnostic, kDiagnosticCapacity);
 

@@ -134,6 +134,7 @@ int main() {
     return DIGITOR_RESULT_OK;
   };
   inputs.encoder_backend = digitor::EncoderBackend::nvenc;
+  inputs.renderer_backend = DIGITOR_RENDERER_D3D12;
   inputs.encoder_callbacks.open = [](const digitor::HardwareEncodeConfig&, std::string&) {
     return DIGITOR_RESULT_OK;
   };
@@ -232,8 +233,8 @@ int main() {
   request.width = 1920;
   request.height = 1080;
   assert(digitor_flutter_production_export(session, &request, nullptr, nullptr) ==
-         DIGITOR_RESULT_OK);
-  assert(state.exports == 1);
+         DIGITOR_RESULT_UNSUPPORTED);
+  assert(state.exports == 0);
   assert(digitor_flutter_production_cancel(session) == DIGITOR_RESULT_OK);
   assert(state.cancels == 1);
 
@@ -241,7 +242,7 @@ int main() {
   assert(digitor_flutter_production_get_last_error(session, nullptr,
                                                    &error_size) ==
          DIGITOR_RESULT_OK);
-  assert(error_size == 1);
+  assert(error_size > 1);
 
   assert(digitor_flutter_production_destroy(session) == DIGITOR_RESULT_OK);
   assert(state.closes == 1);

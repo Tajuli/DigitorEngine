@@ -31,17 +31,16 @@ ExportCodec export_codec(std::int32_t value) noexcept {
   }
 }
 
-bool callbacks_complete(const HardwareEncoderCallbacks& value) noexcept {
-  return value.open && value.submit_gpu_frame && value.drain &&
-         value.finalize_atomic && value.cancel;
-}
-
 bool native_preview_capabilities_valid(
     const DigitorNativePreviewCapabilities& value) noexcept {
   return value.backend != DIGITOR_NATIVE_TEXTURE_BACKEND_NONE &&
          value.backend != DIGITOR_NATIVE_TEXTURE_BACKEND_CPU_RGBA8 &&
          value.handle_type != DIGITOR_NATIVE_TEXTURE_HANDLE_NONE &&
          value.handle_type != DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER;
+}
+bool callbacks_complete(const HardwareEncoderCallbacks& value) noexcept {
+  return value.open && value.submit_gpu_frame && value.drain &&
+         value.finalize_atomic && value.cancel;
 }
 }  // namespace
 
@@ -65,8 +64,9 @@ struct FlutterProductionHostAdapter::Impl {
     return inputs.decoder_factory && inputs.frame_resolver &&
            inputs.preview_session && inputs.texture_descriptor_builder &&
            inputs.preview_target_binder &&
-           callbacks_complete(inputs.encoder_callbacks) &&
+           (inputs.encoder_factory || callbacks_complete(inputs.encoder_callbacks)) &&
            inputs.encoder_backend != EncoderBackend::software &&
+           inputs.renderer_backend != DIGITOR_RENDERER_CPU &&
            inputs.fps_num > 0 && inputs.fps_den > 0 &&
            native_preview_capabilities_valid(inputs.preview_capabilities);
   }
@@ -123,7 +123,7 @@ struct FlutterProductionHostAdapter::Impl {
     try {
       runtime = std::make_unique<ProductionMediaGraphRuntime>(
           std::move(decoder), graph->impl, std::move(presenter),
-          inputs.encoder_callbacks);
+          inputs.encoder_factory ? HardwareEncoderCallbacks{} : inputs.encoder_callbacks);
     } catch (const std::bad_alloc&) {
       diagnostic = "out of memory creating production media graph runtime";
       return DIGITOR_RESULT_OUT_OF_MEMORY;
@@ -313,6 +313,76 @@ struct FlutterProductionHostAdapter::Impl {
     }
   }
 
+  static DigitorResult export_media_v2(
+      void* user_data, DigitorNodeGraph* graph, std::uint64_t graph_rev,
+      std::uint64_t parameter_rev, const DigitorFlutterExportRequestV2* request,
+      DigitorExportProgressCallback progress, void* progress_user_data,
+      char* diagnostic, std::uint32_t diagnostic_capacity) {
+    auto* p = self(user_data);
+    if (!p || !graph || !request || !request->utf8_output_path ||
+        !request->utf8_color_metadata || request->graph_revision != graph_rev ||
+        request->parameter_revision != parameter_rev ||
+        request->device_identity != p->inputs.required_device_identity ||
+        request->context_identity != p->inputs.required_context_identity ||
+        request->renderer_backend != static_cast<std::int32_t>(p->inputs.renderer_backend))
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    std::string message;
+    try {
+      ProductionMediaGraphRuntime* runtime{};
+      HardwareEncodeConfig config{};
+      std::shared_ptr<const ExportRenderSnapshot> snapshot;
+      HardwareEncoderCallbacks callbacks;
+      std::function<bool()> qualified;
+      {
+        std::lock_guard lock(p->mutex);
+        auto result = p->ensure_runtime(graph, graph_rev, parameter_rev, message);
+        if (result != DIGITOR_RESULT_OK) { write_diagnostic(diagnostic, diagnostic_capacity, message); return result; }
+        runtime = p->runtime.get();
+        ExportRenderSnapshotData data{};
+        data.snapshot_identity = request->snapshot_identity;
+        data.timeline_revision = request->timeline_revision;
+        data.render_revision = request->render_revision;
+        data.node_graph_revision = request->graph_revision;
+        data.color_pipeline_revision = request->parameter_revision;
+        data.audio_revision = request->audio_revision;
+        data.width = request->width; data.height = request->height;
+        data.working_format = static_cast<DigitorPixelFormat>(request->working_pixel_format);
+        data.alpha_policy = static_cast<ExportAlphaPolicy>(request->alpha_policy);
+        data.fps_num = p->inputs.fps_num; data.fps_den = p->inputs.fps_den;
+        const auto count = request->last_frame - request->first_frame + 1;
+        data.duration_us = count * 1'000'000LL * data.fps_den / data.fps_num;
+        data.variable_frame_rate = request->variable_frame_rate != 0;
+        data.hdr = request->hdr != 0; data.color_metadata = request->utf8_color_metadata;
+        data.output_path = request->utf8_output_path;
+        data.profile.codec = export_codec(request->codec);
+        data.profile.width = static_cast<std::int32_t>(data.width); data.profile.height = static_cast<std::int32_t>(data.height);
+        data.profile.fps_num = data.fps_num; data.profile.fps_den = data.fps_den;
+        data.profile.video_bitrate = p->inputs.video_bitrate; data.profile.prefer_hardware = true; data.profile.allow_software_fallback = false;
+        data.policy = ExportExecutionPolicy::hardware_required;
+        data.renderer_backend = static_cast<DigitorRendererBackend>(request->renderer_backend);
+        data.encoder_backend = p->inputs.encoder_backend;
+        snapshot = std::make_shared<const ExportRenderSnapshot>(std::move(data));
+        const auto validation = validate_export_snapshot(*snapshot);
+        if (!validation) { write_diagnostic(diagnostic, diagnostic_capacity, validation.diagnostic); return validation.result; }
+        if (p->inputs.encoder_factory) {
+          result = p->inputs.encoder_factory(snapshot, callbacks, qualified, message);
+          if (result != DIGITOR_RESULT_OK) { write_diagnostic(diagnostic, diagnostic_capacity, message); return result; }
+        } else {
+          callbacks = p->inputs.encoder_callbacks;
+        }
+        config.profile = snapshot->data().profile; config.backend = p->inputs.encoder_backend;
+        config.output_path = snapshot->data().output_path; config.duration_us = snapshot->data().duration_us;
+        config.require_hardware = config.require_zero_copy = config.require_monotonic_timestamps = config.require_atomic_finalize = true;
+      }
+      std::vector<FrameNumber> frames;
+      for (auto frame = request->first_frame; frame <= request->last_frame; ++frame) frames.push_back(frame);
+      auto bridge = [progress, progress_user_data](std::uint64_t done, std::uint64_t total) { if (progress) progress(total ? static_cast<double>(done) / total : 0.0, done, total, progress_user_data); };
+      const auto result = runtime->export_frames(frames, std::move(config), &message, std::move(bridge), std::move(callbacks));
+      if (result != DIGITOR_RESULT_OK) write_diagnostic(diagnostic, diagnostic_capacity, message);
+      return result;
+    } catch (...) { write_diagnostic(diagnostic, diagnostic_capacity, "failed to freeze or start strict production export"); return DIGITOR_RESULT_INTERNAL_ERROR; }
+  }
+
   static DigitorResult set_preview_target(
       void* user_data, const DigitorFlutterPreviewTarget* target,
       char* diagnostic, std::uint32_t diagnostic_capacity) {
@@ -398,7 +468,7 @@ DigitorFlutterProductionHost FlutterProductionHostAdapter::host() noexcept {
   DigitorFlutterProductionHost value{};
   if (!valid()) return value;
   value.struct_size = sizeof(value);
-  value.api_version = DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION;
+  value.api_version = DIGITOR_FLUTTER_PRODUCTION_HOST_VERSION_3;
   value.user_data = impl_.get();
   value.required_device_identity = impl_->inputs.required_device_identity;
   value.required_context_identity = impl_->inputs.required_context_identity;
@@ -410,6 +480,7 @@ DigitorFlutterProductionHost FlutterProductionHostAdapter::host() noexcept {
   value.cancel = &Impl::cancel;
   value.close_media = &Impl::close_media;
   value.release_texture = &Impl::release_texture;
+  value.export_media_v2 = &Impl::export_media_v2;
   return value;
 }
 

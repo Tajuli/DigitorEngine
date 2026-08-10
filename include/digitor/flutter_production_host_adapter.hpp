@@ -4,6 +4,7 @@
 #include "digitor/native_preview_presentation.hpp"
 #include "digitor/production_hardware_decode.hpp"
 #include "digitor/production_media_graph_runtime.hpp"
+#include "digitor/production_platform_integration.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -28,11 +29,15 @@ struct FlutterProductionHostAdapterInputs {
   ProductionDecoderFactory decoder_factory;
   ProductionTimestampFrameResolver frame_resolver;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
+  ProductionPlatformAssembly::LazyEncoderFactory encoder_factory;
+  // Legacy embedding seam. Production provider builders use encoder_factory;
+  // retained so existing native hosts remain source-compatible.
   HardwareEncoderCallbacks encoder_callbacks;
   ProductionTextureDescriptorBuilder texture_descriptor_builder;
   ProductionPreviewTargetBinder preview_target_binder;
   DigitorNativePreviewCapabilities preview_capabilities{};
   EncoderBackend encoder_backend{EncoderBackend::software};
+  DigitorRendererBackend renderer_backend{DIGITOR_RENDERER_CPU};
   std::int32_t fps_num{30};
   std::int32_t fps_den{1};
   std::int64_t video_bitrate{12'000'000};
