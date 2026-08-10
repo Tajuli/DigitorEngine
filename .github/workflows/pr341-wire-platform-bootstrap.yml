@@ -26,392 +26,395 @@ jobs:
           from pathlib import Path
           root = Path('.')
 
-          p = root / 'dart/digitor_engine_ffi/lib/src/native_production_api.dart'
+          def replace_once(path, old, new):
+              p = root / path
+              s = p.read_text()
+              if old not in s:
+                  raise RuntimeError(f'anchor not found in {path}: {old[:80]!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          # Engine FFI ABI for plugin lifecycle.
+          path = 'dart/digitor_engine_ffi/lib/src/native_production_api.dart'
+          p = root / path
           s = p.read_text()
-          needle = "@Native<Int32 Function()>(symbol: 'digitor_flutter_production_host_registered')\nexternal int digitorFlutterProductionHostRegistered();\n"
-          insert = needle + """
+          if 'DigitorFlutterProductionPluginAttachmentNative' not in s:
+              anchor = "@Native<Int32 Function()>(symbol: 'digitor_flutter_production_host_registered')\nexternal int digitorFlutterProductionHostRegistered();\n"
+              addition = anchor + """
 
-          final class DigitorFlutterProductionPluginAttachmentNative extends Struct {
-            @Uint32()
-            external int structSize;
-            @Uint32()
-            external int apiVersion;
-            @Uint32()
-            external int platform;
-            external Pointer<Void> flutterTextureRegistrar;
-            external Pointer<Utf8> implementationIdentity;
-          }
+final class DigitorFlutterProductionPluginAttachmentNative extends Struct {
+  @Uint32()
+  external int structSize;
+  @Uint32()
+  external int apiVersion;
+  @Uint32()
+  external int platform;
+  external Pointer<Void> flutterTextureRegistrar;
+  external Pointer<Utf8> implementationIdentity;
+}
 
-          @Native<
-            Int32 Function(Pointer<DigitorFlutterProductionPluginAttachmentNative>)
-          >(symbol: 'digitor_flutter_production_plugin_attach')
-          external int digitorFlutterProductionPluginAttach(
-            Pointer<DigitorFlutterProductionPluginAttachmentNative> attachment,
-          );
+@Native<Int32 Function(Pointer<DigitorFlutterProductionPluginAttachmentNative>)>(
+  symbol: 'digitor_flutter_production_plugin_attach',
+)
+external int digitorFlutterProductionPluginAttach(
+  Pointer<DigitorFlutterProductionPluginAttachmentNative> attachment,
+);
 
-          @Native<Int32 Function(Pointer<Void>)>(
-            symbol: 'digitor_flutter_production_plugin_detach',
-          )
-          external int digitorFlutterProductionPluginDetach(Pointer<Void> registrar);
+@Native<Int32 Function(Pointer<Void>)>(
+  symbol: 'digitor_flutter_production_plugin_detach',
+)
+external int digitorFlutterProductionPluginDetach(Pointer<Void> registrar);
 
-          @Native<Uint8 Function()>(symbol: 'digitor_flutter_production_plugin_attached')
-          external int digitorFlutterProductionPluginAttached();
-          """
-          assert needle in s
-          p.write_text(s.replace(needle, insert, 1))
+@Native<Uint8 Function()>(symbol: 'digitor_flutter_production_plugin_attached')
+external int digitorFlutterProductionPluginAttached();
+"""
+              if anchor not in s:
+                  raise RuntimeError('native production host registered anchor missing')
+              p.write_text(s.replace(anchor, addition, 1))
 
-          p = root / 'dart/digitor_engine_ffi/lib/src/platform_host.dart'
+          # Flutter platform bridge exposes one opaque stable native token.
+          path = 'dart/digitor_engine_ffi/lib/src/platform_host.dart'
+          p = root / path
           s = p.read_text()
-          needle = """  Future<void> disposeTexture(DigitorFlutterTextureTarget target) =>
-              _channel.invokeMethod<void>('disposeTexture', <String, Object>{
-                'textureId': target.textureId,
-              });
+          if 'Future<int> productionRegistrarToken()' not in s:
+              anchor = '  Future<void> close() async {\n'
+              addition = """  /// Returns the stable native registrar token owned by the platform plugin.
+  ///
+  /// DigitorEngine uses this opaque token only for production-host lifecycle
+  /// ownership. Dart never dereferences it.
+  Future<int> productionRegistrarToken() async {
+    final value = await _channel.invokeMethod<int>('productionRegistrarToken');
+    if (value == null || value == 0) {
+      throw StateError(
+        'Flutter platform host returned no production registrar token.',
+      );
+    }
+    return value;
+  }
 
-          """
-          insert = needle + """  /// Returns the stable native registrar token owned by the platform plugin.
-            ///
-            /// DigitorEngine uses this opaque token only for production-host lifecycle
-            /// ownership. Dart never dereferences it.
-            Future<int> productionRegistrarToken() async {
-              final value = await _channel.invokeMethod<int>('productionRegistrarToken');
-              if (value == null || value == 0) {
-                throw StateError(
-                  'Flutter platform host returned no production registrar token.',
-                );
-              }
-              return value;
-            }
+""" + anchor
+              if anchor not in s:
+                  raise RuntimeError('platform host close anchor missing')
+              p.write_text(s.replace(anchor, addition, 1))
 
-          """
-          assert needle in s
-          p.write_text(s.replace(needle, insert, 1))
+          # Bootstrap happens only after the engine native asset is loaded.
+          (root / 'dart/digitor_engine_ffi/lib/src/app_bootstrap.dart').write_text("""import 'dart:ffi';
 
-          p = root / 'dart/digitor_engine_ffi/lib/src/app_bootstrap.dart'
-          p.write_text("""import 'dart:ffi';
+import 'package:ffi/ffi.dart';
 
-          import 'package:ffi/ffi.dart';
+import 'native_production_api.dart';
+import 'platform_host.dart';
+import 'registered_production_session.dart';
 
-          import 'native_production_api.dart';
-          import 'platform_host.dart';
-          import 'registered_production_session.dart';
+/// Flutter app bootstrap status for the production editing path.
+///
+/// The engine native asset must already be loaded before [resolve] is called.
+/// The Flutter plugin contributes only an opaque registrar token; registration
+/// itself is executed through DigitorEngine's stable FFI ABI from Dart.
+final class DigitorFlutterProductionBootstrap {
+  const DigitorFlutterProductionBootstrap({
+    required this.platform,
+    required this.textureHostReady,
+    required this.productionHostRegistered,
+    required this.diagnostic,
+    this.registrarToken,
+  });
 
-          /// Flutter app bootstrap status for the production editing path.
-          ///
-          /// The engine native asset must already be loaded before [resolve] is called.
-          /// The Flutter plugin contributes only an opaque registrar token; registration
-          /// itself is executed through DigitorEngine's stable FFI ABI from Dart.
-          final class DigitorFlutterProductionBootstrap {
-            const DigitorFlutterProductionBootstrap({
-              required this.platform,
-              required this.textureHostReady,
-              required this.productionHostRegistered,
-              required this.diagnostic,
-              this.registrarToken,
-            });
+  final String platform;
+  final bool textureHostReady;
+  final bool productionHostRegistered;
+  final String diagnostic;
+  final int? registrarToken;
 
-            final String platform;
-            final bool textureHostReady;
-            final bool productionHostRegistered;
-            final String diagnostic;
-            final int? registrarToken;
+  bool get ready => textureHostReady && productionHostRegistered;
 
-            bool get ready => textureHostReady && productionHostRegistered;
+  static int _platformCode(String platform) => switch (platform) {
+    'windows' => 1,
+    'android' => 2,
+    'macos' => 3,
+    'ios' => 4,
+    _ => 0,
+  };
 
-            static int _platformCode(String platform) => switch (platform) {
-              'windows' => 1,
-              'android' => 2,
-              'macos' => 3,
-              'ios' => 4,
-              _ => 0,
-            };
+  static Future<DigitorFlutterProductionBootstrap> resolve({
+    bool requestRegistration = true,
+  }) async {
+    final host = DigitorFlutterPlatformHost();
+    try {
+      final capabilities = await host.capabilities();
+      final textureReady =
+          capabilities.directDescriptorPresentation ||
+          capabilities.renderTargetPresentation;
+      int? registrarToken;
+      var registrationResult = 0;
 
-            static Future<DigitorFlutterProductionBootstrap> resolve({
-              bool requestRegistration = true,
-            }) async {
-              final host = DigitorFlutterPlatformHost();
-              try {
-                final capabilities = await host.capabilities();
-                final textureReady =
-                    capabilities.directDescriptorPresentation ||
-                    capabilities.renderTargetPresentation;
-                int? registrarToken;
-                var registrationResult = 0;
-
-                if (textureReady &&
-                    requestRegistration &&
-                    !DigitorRegisteredProductionSession.hostRegistered) {
-                  registrarToken = await host.productionRegistrarToken();
-                  final platformCode = _platformCode(capabilities.platform);
-                  if (platformCode == 0) {
-                    registrationResult = 1;
-                  } else {
-                    final attachment =
-                        calloc<DigitorFlutterProductionPluginAttachmentNative>();
-                    final identity =
-                        'flutter.${capabilities.platform}.production-host.v1'
-                            .toNativeUtf8();
-                    try {
-                      attachment.ref
-                        ..structSize =
-                            sizeOf<DigitorFlutterProductionPluginAttachmentNative>()
-                        ..apiVersion = 1
-                        ..platform = platformCode
-                        ..flutterTextureRegistrar =
-                            Pointer<Void>.fromAddress(registrarToken)
-                        ..implementationIdentity = identity;
-                      registrationResult =
-                          digitorFlutterProductionPluginAttach(attachment);
-                    } finally {
-                      calloc.free(identity);
-                      calloc.free(attachment);
-                    }
-                  }
-                } else if (textureReady) {
-                  try {
-                    registrarToken = await host.productionRegistrarToken();
-                  } catch (_) {
-                    registrarToken = null;
-                  }
-                }
-
-                final registered =
-                    DigitorRegisteredProductionSession.hostRegistered;
-                final diagnostic = !textureReady
-                    ? 'Flutter native texture presentation is unavailable.'
-                    : registered
-                        ? ''
-                        : registrationResult != 0
-                            ? 'Concrete native production provider registration failed '
-                                '(result $registrationResult). The platform factory must '
-                                'supply real decode, render, preview and hardware encode bindings.'
-                            : 'Flutter texture presentation is ready, but the concrete native '
-                                'production provider has not registered the process-wide host.';
-                return DigitorFlutterProductionBootstrap(
-                  platform: capabilities.platform,
-                  textureHostReady: textureReady,
-                  productionHostRegistered: registered,
-                  diagnostic: diagnostic,
-                  registrarToken: registrarToken,
-                );
-              } catch (error) {
-                return DigitorFlutterProductionBootstrap(
-                  platform: 'unknown',
-                  textureHostReady: false,
-                  productionHostRegistered:
-                      DigitorRegisteredProductionSession.hostRegistered,
-                  diagnostic: 'Flutter production bootstrap failed: $error',
-                );
-              } finally {
-                await host.close();
-              }
-            }
-
-            Future<void> detach() async {
-              final token = registrarToken;
-              if (token == null ||
-                  token == 0 ||
-                  digitorFlutterProductionPluginAttached() == 0) {
-                return;
-              }
-              final result = digitorFlutterProductionPluginDetach(
-                Pointer<Void>.fromAddress(token),
-              );
-              if (result != 0) {
-                throw StateError(
-                  'Production plugin detach failed with result $result.',
-                );
-              }
-            }
+      if (textureReady &&
+          requestRegistration &&
+          !DigitorRegisteredProductionSession.hostRegistered) {
+        registrarToken = await host.productionRegistrarToken();
+        final platformCode = _platformCode(capabilities.platform);
+        if (platformCode == 0) {
+          registrationResult = 1;
+        } else {
+          final attachment =
+              calloc<DigitorFlutterProductionPluginAttachmentNative>();
+          final identity =
+              'flutter.${capabilities.platform}.production-host.v1'.toNativeUtf8();
+          try {
+            attachment.ref
+              ..structSize =
+                  sizeOf<DigitorFlutterProductionPluginAttachmentNative>()
+              ..apiVersion = 1
+              ..platform = platformCode
+              ..flutterTextureRegistrar = Pointer<Void>.fromAddress(registrarToken)
+              ..implementationIdentity = identity;
+            registrationResult = digitorFlutterProductionPluginAttach(attachment);
+          } finally {
+            calloc.free(identity);
+            calloc.free(attachment);
           }
-          """)
+        }
+      } else if (textureReady) {
+        try {
+          registrarToken = await host.productionRegistrarToken();
+        } catch (_) {
+          registrarToken = null;
+        }
+      }
 
-          p = root / 'dart/digitor_engine_ffi/lib/src/editor_controller.dart'
+      final registered = DigitorRegisteredProductionSession.hostRegistered;
+      final diagnostic = !textureReady
+          ? 'Flutter native texture presentation is unavailable.'
+          : registered
+              ? ''
+              : registrationResult != 0
+                  ? 'Concrete native production provider registration failed '
+                      '(result $registrationResult). The platform factory must '
+                      'supply real decode, render, preview and hardware encode bindings.'
+                  : 'Flutter texture presentation is ready, but the concrete native '
+                      'production provider has not registered the process-wide host.';
+      return DigitorFlutterProductionBootstrap(
+        platform: capabilities.platform,
+        textureHostReady: textureReady,
+        productionHostRegistered: registered,
+        diagnostic: diagnostic,
+        registrarToken: registrarToken,
+      );
+    } catch (error) {
+      return DigitorFlutterProductionBootstrap(
+        platform: 'unknown',
+        textureHostReady: false,
+        productionHostRegistered:
+            DigitorRegisteredProductionSession.hostRegistered,
+        diagnostic: 'Flutter production bootstrap failed: $error',
+      );
+    } finally {
+      await host.close();
+    }
+  }
+
+  Future<void> detach() async {
+    final token = registrarToken;
+    if (token == null ||
+        token == 0 ||
+        digitorFlutterProductionPluginAttached() == 0) {
+      return;
+    }
+    final result = digitorFlutterProductionPluginDetach(
+      Pointer<Void>.fromAddress(token),
+    );
+    if (result != 0) {
+      throw StateError('Production plugin detach failed with result $result.');
+    }
+  }
+}
+""")
+
+          # Workspace loads the engine first. Registration follows after symbols exist.
+          path = 'dart/digitor_engine_ffi/lib/src/editor_controller.dart'
+          p = root / path
           s = p.read_text()
           old = """    final productionBootstrap =
-                  await DigitorFlutterProductionBootstrap.resolve();
-              final workspace = await DigitorEditorWorkspace.create(
-                preferredBackend: preferredBackend,
-                allowCpuFallback: allowCpuFallback,
-                sampleRate: sampleRate,
-                channels: channels,
-              );
-              return DigitorEditorController._(workspace, productionBootstrap);
-          """
+        await DigitorFlutterProductionBootstrap.resolve();
+    final workspace = await DigitorEditorWorkspace.create(
+      preferredBackend: preferredBackend,
+      allowCpuFallback: allowCpuFallback,
+      sampleRate: sampleRate,
+      channels: channels,
+    );
+    return DigitorEditorController._(workspace, productionBootstrap);
+"""
           new = """    final workspace = await DigitorEditorWorkspace.create(
-                preferredBackend: preferredBackend,
-                allowCpuFallback: allowCpuFallback,
-                sampleRate: sampleRate,
-                channels: channels,
-              );
-              try {
-                final productionBootstrap =
-                    await DigitorFlutterProductionBootstrap.resolve();
-                return DigitorEditorController._(workspace, productionBootstrap);
-              } catch (_) {
-                await workspace.close();
-                rethrow;
-              }
-          """
-          assert old in s
+      preferredBackend: preferredBackend,
+      allowCpuFallback: allowCpuFallback,
+      sampleRate: sampleRate,
+      channels: channels,
+    );
+    try {
+      final productionBootstrap =
+          await DigitorFlutterProductionBootstrap.resolve();
+      return DigitorEditorController._(workspace, productionBootstrap);
+    } catch (_) {
+      await workspace.close();
+      rethrow;
+    }
+"""
+          if old not in s:
+              raise RuntimeError('editor controller create anchor missing')
           s = s.replace(old, new, 1)
           old = """    try {
-                await _workspace.close();
-              } finally {
-                super.dispose();
-              }
-          """
+      await _workspace.close();
+    } finally {
+      super.dispose();
+    }
+"""
           new = """    try {
-                await _workspace.close();
-                await _productionBootstrap.detach();
-              } finally {
-                super.dispose();
-              }
-          """
-          assert old in s
+      await _workspace.close();
+      await _productionBootstrap.detach();
+    } finally {
+      super.dispose();
+    }
+"""
+          if old not in s:
+              raise RuntimeError('editor controller close anchor missing')
           s = s.replace(old, new, 1)
           old = """    _disposed = true;
-              unawaited(_workspace.close());
-              super.dispose();
-          """
+    unawaited(_workspace.close());
+    super.dispose();
+"""
           new = """    _disposed = true;
-              unawaited(() async {
-                await _workspace.close();
-                await _productionBootstrap.detach();
-              }());
-              super.dispose();
-          """
-          assert old in s
+    unawaited(() async {
+      await _workspace.close();
+      await _productionBootstrap.detach();
+    }());
+    super.dispose();
+"""
+          if old not in s:
+              raise RuntimeError('editor controller dispose anchor missing')
           p.write_text(s.replace(old, new, 1))
 
-          p = root / 'dart/digitor_engine_ffi/windows/digitor_engine_ffi_plugin.cpp'
+          # Windows: actual Flutter texture registrar pointer is already stable.
+          path = 'dart/digitor_engine_ffi/windows/digitor_engine_ffi_plugin.cpp'
+          p = root / path
           s = p.read_text()
-          needle = """  if (call.method_name() == \"capabilities\") {
-              Map response;
-              response[Value(\"platform\")] = Value(\"windows\");
-              response[Value(\"supportedHandleTypes\")] = Value(SupportedHandleTypes());
-              response[Value(\"directDescriptorPresentation\")] = Value(true);
-              response[Value(\"renderTargetPresentation\")] = Value(false);
-              result->Success(Value(response));
-              return;
-            }
+          if 'productionRegistrarToken' not in s:
+              anchor = '  const auto* args = Arguments(call);\n'
+              addition = """  if (call.method_name() == \"productionRegistrarToken\") {
+    if (!texture_registrar_) {
+      result->Error(\"registrar_unavailable\",
+                    \"Flutter Windows texture registrar is unavailable.\");
+      return;
+    }
+    result->Success(Value(static_cast<std::int64_t>(
+        reinterpret_cast<std::uintptr_t>(texture_registrar_))));
+    return;
+  }
 
-          """
-          insert = needle + """  if (call.method_name() == \"productionRegistrarToken\") {
-              if (!texture_registrar_) {
-                result->Error(\"registrar_unavailable\",
-                              \"Flutter Windows texture registrar is unavailable.\");
-                return;
-              }
-              result->Success(Value(static_cast<std::int64_t>(
-                  reinterpret_cast<std::uintptr_t>(texture_registrar_))));
-              return;
-            }
+""" + anchor
+              if anchor not in s:
+                  raise RuntimeError('windows arguments anchor missing')
+              p.write_text(s.replace(anchor, addition, 1))
 
-          """
-          assert needle in s
-          p.write_text(s.replace(needle, insert, 1))
-
-          p = root / 'dart/digitor_engine_ffi/android/src/main/cpp/platform_host_jni.cpp'
+          # Android: platform-host native library owns a process-stable token address.
+          path = 'dart/digitor_engine_ffi/android/src/main/cpp/platform_host_jni.cpp'
+          p = root / path
           s = p.read_text()
-          assert 'nativeProductionRegistrarToken' not in s
-          s += """
+          if 'nativeProductionRegistrarToken' not in s:
+              s += """
 
-          namespace {
-          int g_production_registrar_token = 0;
-          }
+namespace {
+int g_production_registrar_token = 0;
+}
 
-          extern \"C\" JNIEXPORT jlong JNICALL
-          Java_com_primedigitor_digitor_1engine_1ffi_DigitorEngineFfiPlugin_nativeProductionRegistrarToken(
-              JNIEnv* /*env*/, jobject /*thiz*/) {
-            return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(
-                &g_production_registrar_token));
-          }
-          """
+extern \"C\" JNIEXPORT jlong JNICALL
+Java_com_primedigitor_digitor_1engine_1ffi_DigitorEngineFfiPlugin_nativeProductionRegistrarToken(
+    JNIEnv* /*env*/, jobject /*thiz*/) {
+  return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(
+      &g_production_registrar_token));
+}
+"""
+              p.write_text(s)
+
+          path = 'dart/digitor_engine_ffi/android/src/main/kotlin/com/primedigitor/digitor_engine_ffi/DigitorEngineFfiPlugin.kt'
+          p = root / path
+          s = p.read_text()
+          if 'nativeProductionRegistrarToken' not in s:
+              anchor = '    private external fun nativeReleaseWindow(handle: Long)\n\n'
+              if anchor not in s:
+                  raise RuntimeError('android native method anchor missing')
+              s = s.replace(
+                  anchor,
+                  anchor + '    private external fun nativeProductionRegistrarToken(): Long\n\n',
+                  1,
+              )
+          if '"productionRegistrarToken" ->' not in s:
+              anchor = '            "createTexture" -> createTexture(call, result)\n'
+              addition = """            \"productionRegistrarToken\" -> {
+                val token = nativeProductionRegistrarToken()
+                if (token == 0L) {
+                    result.error(
+                        \"registrar_unavailable\",
+                        \"Android production registrar token is unavailable.\",
+                        null,
+                    )
+                } else {
+                    result.success(token)
+                }
+            }
+""" + anchor
+              if anchor not in s:
+                  raise RuntimeError('android method switch anchor missing')
+              s = s.replace(anchor, addition, 1)
           p.write_text(s)
 
-          p = root / 'dart/digitor_engine_ffi/android/src/main/kotlin/com/primedigitor/digitor_engine_ffi/DigitorEngineFfiPlugin.kt'
-          s = p.read_text()
-          needle = '    private external fun nativeReleaseWindow(handle: Long)\n\n'
-          assert needle in s
-          s = s.replace(
-              needle,
-              needle + '    private external fun nativeProductionRegistrarToken(): Long\n\n',
-              1,
-          )
-          needle = """            \"capabilities\" -> result.success(
-                      mapOf(
-                          \"platform\" to \"android\",
-                          \"supportedHandleTypes\" to SUPPORTED_HANDLE_TYPES,
-                          \"directDescriptorPresentation\" to false,
-                          \"renderTargetPresentation\" to true,
-                      ),
-                  )
-          """
-          insert = needle + """            \"productionRegistrarToken\" -> {
-                      val token = nativeProductionRegistrarToken()
-                      if (token == 0L) {
-                          result.error(
-                              \"registrar_unavailable\",
-                              \"Android production registrar token is unavailable.\",
-                              null,
-                          )
-                      } else {
-                          result.success(token)
-                      }
-                  }
-          """
-          assert needle in s
-          p.write_text(s.replace(needle, insert, 1))
-
+          # Apple: texture registry object identity is stable for plugin lifetime.
           for rel in [
               'dart/digitor_engine_ffi/ios/Classes/DigitorEngineFfiPlugin.mm',
               'dart/digitor_engine_ffi/macos/Classes/DigitorEngineFfiPlugin.mm',
           ]:
               p = root / rel
               s = p.read_text()
-              marker = """    return;
-            }
+              if 'productionRegistrarToken' in s:
+                  continue
+              anchor = '  NSDictionary *args = [call.arguments isKindOfClass:[NSDictionary class]] ? call.arguments : nil;\n'
+              addition = """  if ([call.method isEqualToString:@\"productionRegistrarToken\"]) {
+    if (!self.textures) {
+      result([FlutterError errorWithCode:@\"registrar_unavailable\"
+                                 message:@\"Apple Flutter texture registrar is unavailable.\"
+                                 details:nil]);
+      return;
+    }
+    uintptr_t token = (uintptr_t)(__bridge void *)self.textures;
+    result(@((unsigned long long)token));
+    return;
+  }
 
-            NSDictionary *args = [call.arguments isKindOfClass:[NSDictionary class]] ? call.arguments : nil;
-          """
-              add = """    return;
-            }
+""" + anchor
+              if anchor not in s:
+                  raise RuntimeError(f'apple arguments anchor missing: {rel}')
+              p.write_text(s.replace(anchor, addition, 1))
 
-            if ([call.method isEqualToString:@\"productionRegistrarToken\"]) {
-              if (!self.textures) {
-                result([FlutterError errorWithCode:@\"registrar_unavailable\"
-                                           message:@\"Apple Flutter texture registrar is unavailable.\"
-                                           details:nil]);
-                return;
-              }
-              uintptr_t token = (uintptr_t)(__bridge void *)self.textures;
-              result(@((unsigned long long)token));
-              return;
-            }
-
-            NSDictionary *args = [call.arguments isKindOfClass:[NSDictionary class]] ? call.arguments : nil;
-          """
-              assert marker in s, rel
-              p.write_text(s.replace(marker, add, 1))
-
-          p = root / 'dart/digitor_engine_ffi/test/platform_host_test.dart'
+          # Public platform-host contract coverage.
+          path = 'dart/digitor_engine_ffi/test/platform_host_test.dart'
+          p = root / path
           s = p.read_text()
-          insert = """
+          if "production registrar token is opaque and non-zero" not in s:
+              test = """
 
-            test('production registrar token is opaque and non-zero', () async {
-              messenger.setMockMethodCallHandler(channel, (call) async {
-                expect(call.method, 'productionRegistrarToken');
-                return 0x1234;
-              });
+  test('production registrar token is opaque and non-zero', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'productionRegistrarToken');
+      return 0x1234;
+    });
 
-              final host = DigitorFlutterPlatformHost(channel: channel);
-              expect(await host.productionRegistrarToken(), 0x1234);
-              await host.close();
-            });
-          """
-          idx = s.rfind('\n}')
-          assert idx != -1
-          p.write_text(s[:idx] + insert + s[idx:])
+    final host = DigitorFlutterPlatformHost(channel: channel);
+    expect(await host.productionRegistrarToken(), 0x1234);
+    await host.close();
+  });
+"""
+              idx = s.rfind('\n}')
+              if idx < 0:
+                  raise RuntimeError('platform host test closing anchor missing')
+              p.write_text(s[:idx] + test + s[idx:])
           PY
       - name: Format Dart package
         working-directory: dart/digitor_engine_ffi
