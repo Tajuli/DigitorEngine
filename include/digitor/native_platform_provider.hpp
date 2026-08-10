@@ -12,6 +12,20 @@
 
 namespace digitor {
 
+struct NativeImplementationEvidence final {
+  bool production_implementation{};
+  bool native_api_bound{};
+  bool synchronization_bound{};
+  bool zero_copy_telemetry_bound{};
+  std::string implementation_identity;
+
+  [[nodiscard]] bool valid() const noexcept {
+    return production_implementation && native_api_bound &&
+           synchronization_bound && zero_copy_telemetry_bound &&
+           !implementation_identity.empty();
+  }
+};
+
 struct NativePlatformProvider final {
   ProductionPlatform platform{ProductionPlatform::windows};
   NativeImplementationEvidence timeline;
