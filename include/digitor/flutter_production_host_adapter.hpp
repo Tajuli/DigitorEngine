@@ -82,6 +82,11 @@ class RegisteredFlutterProductionHost final {
            digitor_flutter_production_host_registered() != 0;
   }
   [[nodiscard]] DigitorResult result() const noexcept { return result_; }
+  // Explicitly releases the process-wide registration.  A live production
+  // session makes the C host reject unregistration; in that case this object
+  // deliberately retains both the adapter and its registration identity so a
+  // later detach retry can succeed safely.
+  DigitorResult unregister() noexcept;
 
  private:
   std::unique_ptr<FlutterProductionHostAdapter> adapter_;
@@ -108,11 +113,18 @@ inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
 }
 
 inline RegisteredFlutterProductionHost::~RegisteredFlutterProductionHost() {
-  if (!registered_user_data_) return;
-  if (digitor_flutter_production_unregister_host(registered_user_data_) ==
-      DIGITOR_RESULT_OK) {
+  (void)unregister();
+}
+
+inline DigitorResult RegisteredFlutterProductionHost::unregister() noexcept {
+  if (!registered_user_data_) return DIGITOR_RESULT_OK;
+  const auto result =
+      digitor_flutter_production_unregister_host(registered_user_data_);
+  if (result == DIGITOR_RESULT_OK) {
     registered_user_data_ = nullptr;
+    result_ = DIGITOR_RESULT_NOT_INITIALIZED;
   }
+  return result;
 }
 
 }  // namespace digitor

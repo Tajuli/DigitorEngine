@@ -991,6 +991,15 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
   }
 
 public:
+  BackendProductionCapability production_capability() const noexcept override {
+    BackendProductionCapability out{};
+    out.backend = DIGITOR_RENDERER_VULKAN;
+    out.context_identity = backend_context_identity();
+    out.resources = VulkanProductionResources{
+        reinterpret_cast<void*>(in_), reinterpret_cast<void*>(ph_),
+        reinterpret_cast<void*>(d_), reinterpret_cast<void*>(queue_), family_};
+    return out;
+  }
   [[nodiscard]] NativeNodeMaskCapabilities
   native_node_mask_capabilities() const noexcept override {
     return {true, true, true, true};

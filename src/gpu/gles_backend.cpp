@@ -210,6 +210,14 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   }
 
 public:
+  BackendProductionCapability production_capability() const noexcept override {
+    BackendProductionCapability out{};
+    out.backend = DIGITOR_RENDERER_OPENGL_ES;
+    out.context_identity = backend_context_identity();
+    out.resources = GlesProductionResources{
+        reinterpret_cast<void*>(display_), reinterpret_cast<void*>(context_)};
+    return out;
+  }
   [[nodiscard]] NativeNodeMaskCapabilities native_node_mask_capabilities() const noexcept override { return {true,true,true,true}; }
 
   DigitorResult generate_hsl_matte(const GpuSourceResource& source,std::int64_t timestamp,

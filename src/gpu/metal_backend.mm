@@ -417,6 +417,13 @@ class MetalBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   }
 
 public:
+  BackendProductionCapability production_capability() const noexcept override {
+    BackendProductionCapability out{};
+    out.backend = DIGITOR_RENDERER_METAL;
+    out.context_identity = backend_context_identity();
+    out.resources = MetalProductionResources{(__bridge void*)device_};
+    return out;
+  }
   [[nodiscard]] NativeNodeMaskCapabilities
   native_node_mask_capabilities() const noexcept override {
     return {true, true, true, true};

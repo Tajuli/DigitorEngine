@@ -606,6 +606,13 @@ class D3DBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   }
 
 public:
+  BackendProductionCapability production_capability() const noexcept override {
+    BackendProductionCapability out{};
+    out.backend = DIGITOR_RENDERER_D3D12;
+    out.context_identity = backend_context_identity();
+    out.resources = D3D12ProductionResources{device_.Get(), queue_.Get()};
+    return out;
+  }
   [[nodiscard]] NativeNodeMaskCapabilities
   native_node_mask_capabilities() const noexcept override {
     return {true, true, true, true};

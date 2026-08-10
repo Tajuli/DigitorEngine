@@ -20,6 +20,7 @@
 #include "gpu/preview_consumer.hpp"
 #include "gpu/native_pipeline_cache.hpp"
 #include "platform/platform.hpp"
+#include "gpu/backend_production_capability.hpp"
 
 namespace digitor {
 
@@ -100,6 +101,11 @@ public:
   virtual void clear_native_pipeline_cache_for_test() noexcept {}
   [[nodiscard]] virtual bool supports_native_node_operation(NodeOperationKind kind) const noexcept;
   [[nodiscard]] virtual bool supports_native_node_mixer() const noexcept { return false; }
+  // Internal, typed access to the native objects owned by this backend.  The
+  // returned handles remain valid only for the initialized backend lifetime.
+  [[nodiscard]] virtual BackendProductionCapability production_capability() const noexcept {
+    return {};
+  }
 protected:
   static const ProcessedGpuFrame::NativeOwner& native_owner(
       const ProcessedGpuFrame& frame) noexcept { return *frame.native_holder_; }
