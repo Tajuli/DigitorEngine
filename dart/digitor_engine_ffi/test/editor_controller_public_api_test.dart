@@ -2,6 +2,25 @@ import 'package:digitor_engine_ffi/digitor_engine_ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('production bootstrap state is fail-closed for app UI', () {
+    const unavailable = DigitorFlutterProductionBootstrap(
+      platform: 'android',
+      textureHostReady: true,
+      productionHostRegistered: false,
+      diagnostic: 'provider registration required',
+    );
+    const ready = DigitorFlutterProductionBootstrap(
+      platform: 'windows',
+      textureHostReady: true,
+      productionHostRegistered: true,
+      diagnostic: '',
+    );
+
+    expect(unavailable.ready, isFalse);
+    expect(unavailable.diagnostic, isNotEmpty);
+    expect(ready.ready, isTrue);
+  });
+
   test('editor state exposes UI-safe preview and operation state', () {
     const state = DigitorEditorState(
       mediaPath: 'clip.mp4',
