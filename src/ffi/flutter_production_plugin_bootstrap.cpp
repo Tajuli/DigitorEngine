@@ -4,16 +4,34 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
+#include <utility>
 
 namespace digitor {
 namespace {
+
+struct PendingAttachment final {
+  DigitorFlutterProductionPluginPlatform platform{
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS};
+  const void* flutter_texture_registrar{};
+  std::string implementation_identity;
+
+  [[nodiscard]] bool matches(
+      DigitorFlutterProductionPluginPlatform value_platform,
+      const void* registrar) const noexcept {
+    return platform == value_platform && flutter_texture_registrar == registrar;
+  }
+};
 
 struct State {
   std::mutex mutex;
   std::array<FlutterProductionHostInputsFactory, 5> factories{};
   std::unique_ptr<RegisteredFlutterProductionHost> registration;
+  std::optional<PendingAttachment> pending_attachment;
   const void* registrar{};
   DigitorFlutterProductionPluginPlatform platform{DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS};
+  std::string last_diagnostic;
 };
 
 State& state() {
@@ -41,17 +59,155 @@ std::optional<ProductionPlatform> production_platform(
   return std::nullopt;
 }
 
-bool host_inputs_complete(const FlutterProductionProviderBuild& build) noexcept {
-  // Attachment readiness is preview-only. Export backend/snapshot validation
-  // is deferred until frozen V2 export starts.
-  return build.decoder_factory && build.frame_resolver &&
-         build.texture_descriptor_builder && build.preview_target_binder &&
-         build.fps_num > 0 && build.fps_den > 0 && build.video_bitrate > 0 &&
-         build.required_device_identity != 0 &&
-         build.required_context_identity != 0;
+bool preview_backend_matches_platform(
+    ProductionPlatform platform,
+    DigitorNativeTextureBackend backend) noexcept {
+  switch (platform) {
+    case ProductionPlatform::windows:
+      return backend == DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12 ||
+             backend == DIGITOR_NATIVE_TEXTURE_BACKEND_VULKAN;
+    case ProductionPlatform::android:
+      return backend == DIGITOR_NATIVE_TEXTURE_BACKEND_VULKAN ||
+             backend == DIGITOR_NATIVE_TEXTURE_BACKEND_OPENGL_ES ||
+             backend == DIGITOR_NATIVE_TEXTURE_BACKEND_ANDROID_HARDWARE_BUFFER;
+    case ProductionPlatform::macos:
+    case ProductionPlatform::ios:
+      return backend == DIGITOR_NATIVE_TEXTURE_BACKEND_METAL;
+  }
+  return false;
+}
+
+DigitorResult register_from_factory_locked(
+    State& s, DigitorFlutterProductionPluginPlatform platform,
+    const void* registrar, const std::string& implementation_identity,
+    std::string* diagnostic) noexcept {
+  try {
+    auto& factory = s.factories[static_cast<std::size_t>(platform)];
+    if (!factory) {
+      const std::string message =
+          "production provider factory is not installed for the Flutter platform";
+      s.last_diagnostic = message;
+      if (diagnostic) *diagnostic = message;
+      return DIGITOR_RESULT_NOT_INITIALIZED;
+    }
+
+    FlutterProductionPluginAttachment resolved{};
+    resolved.platform = platform;
+    resolved.flutter_texture_registrar = registrar;
+    resolved.implementation_identity = implementation_identity;
+    std::string local;
+    auto inputs = factory(resolved, local);
+    if (!inputs) {
+      if (local.empty()) {
+        local = "production provider factory could not assemble complete host inputs";
+      }
+      s.last_diagnostic = local;
+      if (diagnostic) *diagnostic = local;
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    auto registration =
+        std::make_unique<RegisteredFlutterProductionHost>(std::move(*inputs));
+    if (!registration->registered()) {
+      const auto result = registration->result();
+      local = "complete production provider inputs were rejected by the registered Flutter host";
+      s.last_diagnostic = local;
+      if (diagnostic) *diagnostic = local;
+      return result;
+    }
+
+    s.platform = platform;
+    s.registrar = registrar;
+    s.registration = std::move(registration);
+    s.pending_attachment.reset();
+    s.last_diagnostic.clear();
+    if (diagnostic) diagnostic->clear();
+    return DIGITOR_RESULT_OK;
+  } catch (const std::bad_alloc&) {
+    s.last_diagnostic = "out of memory while registering Flutter production host";
+    if (diagnostic) *diagnostic = s.last_diagnostic;
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  } catch (...) {
+    s.last_diagnostic = "production provider factory threw during host registration";
+    if (diagnostic) *diagnostic = s.last_diagnostic;
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
 }
 
 }  // namespace
+
+FlutterProductionProviderBuildValidation
+validate_flutter_production_provider_build(
+    DigitorFlutterProductionPluginPlatform platform,
+    const FlutterProductionProviderBuild& build) noexcept {
+  try {
+    const auto expected = production_platform(platform);
+    if (!expected) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "invalid Flutter production provider platform"};
+    }
+    if (build.provider.platform != *expected ||
+        build.platform_inputs.platform != *expected) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "production provider platform does not match Flutter attachment"};
+    }
+
+    const auto provider_validation =
+        validate_native_platform_provider(build.provider);
+    if (!provider_validation) {
+      return {provider_validation.result, provider_validation.diagnostic};
+    }
+
+    if (!build.decoder_factory) {
+      return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+              "production decoder factory is required"};
+    }
+    if (!build.frame_resolver) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "production timestamp/frame resolver is required"};
+    }
+    if (!build.texture_descriptor_builder) {
+      return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+              "production GPU texture descriptor builder is required"};
+    }
+    if (!build.preview_target_binder) {
+      return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+              "production Flutter preview target binder is required"};
+    }
+    if (build.fps_num <= 0 || build.fps_den <= 0) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "production frame rate must be positive"};
+    }
+    if (build.video_bitrate <= 0) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "production video bitrate must be positive"};
+    }
+    if (build.required_device_identity == 0 ||
+        build.required_context_identity == 0) {
+      return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+              "selected production device/context identity is required"};
+    }
+
+    const auto& preview = build.preview_capabilities;
+    if (!preview.native_gpu_preview_available || preview.cpu_fallback_only ||
+        preview.backend == DIGITOR_NATIVE_TEXTURE_BACKEND_NONE ||
+        preview.backend == DIGITOR_NATIVE_TEXTURE_BACKEND_CPU_RGBA8 ||
+        preview.handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_NONE ||
+        preview.handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER) {
+      return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+              "production preview must expose a native GPU texture without CPU-only fallback"};
+    }
+    if (!preview_backend_matches_platform(*expected, preview.backend)) {
+      return {DIGITOR_RESULT_INVALID_ARGUMENT,
+              "production preview backend does not match the Flutter platform"};
+    }
+
+    return {DIGITOR_RESULT_OK, {}};
+  } catch (...) {
+    return {DIGITOR_RESULT_INTERNAL_ERROR,
+            "failed to validate Flutter production provider build"};
+  }
+}
 
 DigitorResult install_flutter_production_host_inputs_factory(
     DigitorFlutterProductionPluginPlatform platform,
@@ -70,6 +226,21 @@ DigitorResult install_flutter_production_host_inputs_factory(
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
     s.factories[index] = std::move(factory);
+    if (s.pending_attachment && s.pending_attachment->platform == platform) {
+      const auto pending = *s.pending_attachment;
+      const auto result = register_from_factory_locked(
+          s, pending.platform, pending.flutter_texture_registrar,
+          pending.implementation_identity, diagnostic);
+      if (result != DIGITOR_RESULT_OK) {
+        // A factory is only considered installed when it can satisfy an
+        // already-waiting Flutter attachment. This prevents app bootstrap from
+        // observing a nominal builder that cannot construct the production host.
+        s.factories[index] = {};
+        return result;
+      }
+      return DIGITOR_RESULT_OK;
+    }
+    s.last_diagnostic.clear();
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
   } catch (...) {
@@ -101,7 +272,7 @@ DigitorResult install_flutter_production_provider_builder(
 
     return install_flutter_production_host_inputs_factory(
         platform,
-        [expected = *expected, factory = std::move(factory)](
+        [platform, expected = *expected, factory = std::move(factory)](
             const FlutterProductionPluginAttachment& attachment,
             std::string& local) mutable
             -> std::optional<FlutterProductionHostAdapterInputs> {
@@ -110,19 +281,10 @@ DigitorResult install_flutter_production_provider_builder(
             if (local.empty()) local = "concrete production provider build unavailable";
             return std::nullopt;
           }
-          if (build->provider.platform != expected ||
-              build->platform_inputs.platform != expected) {
-            local = "production provider platform does not match Flutter attachment";
-            return std::nullopt;
-          }
-          const auto provider_validation =
-              validate_native_platform_provider(build->provider);
-          if (!provider_validation) {
-            local = provider_validation.diagnostic;
-            return std::nullopt;
-          }
-          if (!host_inputs_complete(*build)) {
-            local = "production provider host inputs are incomplete";
+          const auto validation = validate_flutter_production_provider_build(
+              platform, *build);
+          if (!validation) {
+            local = validation.diagnostic;
             return std::nullopt;
           }
 
@@ -131,6 +293,13 @@ DigitorResult install_flutter_production_provider_builder(
             local = assembly.diagnostic.empty()
                         ? "production platform assembly failed"
                         : std::move(assembly.diagnostic);
+            return std::nullopt;
+          }
+          if (assembly.platform != expected || !assembly.preview_session ||
+              !assembly.timeline_binding || !assembly.timeline_binding->valid() ||
+              !assembly.encoder_factory) {
+            local =
+                "production platform assembly is missing preview, timeline, or lazy encoder state";
             return std::nullopt;
           }
 
@@ -191,30 +360,33 @@ DigitorResult digitor_flutter_production_plugin_attach(
   try {
     auto& s = digitor::state();
     std::scoped_lock lock(s.mutex);
+    const auto platform =
+        static_cast<DigitorFlutterProductionPluginPlatform>(attachment->platform);
     if (s.registration) {
-      return s.registrar == attachment->flutter_texture_registrar
-                 ? DIGITOR_RESULT_OK
-                 : DIGITOR_RESULT_RESOURCE_IN_USE;
+      if (s.registrar == attachment->flutter_texture_registrar &&
+          s.platform == platform) {
+        s.last_diagnostic.clear();
+        return DIGITOR_RESULT_OK;
+      }
+      s.last_diagnostic =
+          "a different Flutter texture registrar already owns the production host";
+      return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
-    const auto platform = static_cast<DigitorFlutterProductionPluginPlatform>(attachment->platform);
-    auto& factory = s.factories[static_cast<std::size_t>(platform)];
-    if (!factory) return DIGITOR_RESULT_NOT_INITIALIZED;
+    if (s.pending_attachment &&
+        !s.pending_attachment->matches(
+            platform, attachment->flutter_texture_registrar)) {
+      s.last_diagnostic =
+          "a different Flutter texture registrar is already waiting for the production provider";
+      return DIGITOR_RESULT_RESOURCE_IN_USE;
+    }
 
-    digitor::FlutterProductionPluginAttachment resolved{};
-    resolved.platform = platform;
-    resolved.flutter_texture_registrar = attachment->flutter_texture_registrar;
-    resolved.implementation_identity = attachment->implementation_identity;
+    s.pending_attachment = digitor::PendingAttachment{
+        platform, attachment->flutter_texture_registrar,
+        attachment->implementation_identity};
     std::string diagnostic;
-    auto inputs = factory(resolved, diagnostic);
-    if (!inputs) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-
-    auto registration = std::make_unique<digitor::RegisteredFlutterProductionHost>(
-        std::move(*inputs));
-    if (!registration->registered()) return registration->result();
-    s.platform = platform;
-    s.registrar = attachment->flutter_texture_registrar;
-    s.registration = std::move(registration);
-    return DIGITOR_RESULT_OK;
+    return digitor::register_from_factory_locked(
+        s, platform, attachment->flutter_texture_registrar,
+        s.pending_attachment->implementation_identity, &diagnostic);
   } catch (const std::bad_alloc&) {
     return DIGITOR_RESULT_OUT_OF_MEMORY;
   } catch (...) {
@@ -228,12 +400,29 @@ DigitorResult digitor_flutter_production_plugin_detach(
   try {
     auto& s = digitor::state();
     std::scoped_lock lock(s.mutex);
-    if (!s.registration) return DIGITOR_RESULT_OK;
+    if (!s.registration) {
+      if (s.pending_attachment) {
+        if (s.pending_attachment->flutter_texture_registrar !=
+            flutter_texture_registrar) {
+          s.last_diagnostic =
+              "Flutter production detach registrar does not match pending attachment";
+          return DIGITOR_RESULT_INVALID_ARGUMENT;
+        }
+        s.pending_attachment.reset();
+      }
+      s.last_diagnostic.clear();
+      return DIGITOR_RESULT_OK;
+    }
     if (s.registrar != flutter_texture_registrar) return DIGITOR_RESULT_INVALID_ARGUMENT;
     const auto result = s.registration->unregister();
-    if (result != DIGITOR_RESULT_OK) return result;
+    if (result != DIGITOR_RESULT_OK) {
+      s.last_diagnostic =
+          "production host cannot detach while a registered session is still active";
+      return result;
+    }
     s.registration.reset();
     s.registrar = nullptr;
+    s.last_diagnostic.clear();
     return DIGITOR_RESULT_OK;
   } catch (...) {
     return DIGITOR_RESULT_INTERNAL_ERROR;
@@ -244,6 +433,18 @@ uint8_t digitor_flutter_production_plugin_attached(void) {
   auto& s = digitor::state();
   std::scoped_lock lock(s.mutex);
   return s.registration && s.registration->registered() ? 1u : 0u;
+}
+
+const char* digitor_flutter_production_plugin_last_error(void) {
+  thread_local std::string snapshot;
+  try {
+    auto& s = digitor::state();
+    std::scoped_lock lock(s.mutex);
+    snapshot = s.last_diagnostic;
+  } catch (...) {
+    snapshot = "failed to query Flutter production bootstrap diagnostic";
+  }
+  return snapshot.c_str();
 }
 
 }  // extern "C"

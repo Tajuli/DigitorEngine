@@ -29,6 +29,21 @@ using FlutterProductionProviderBuildFactory = std::function<
     std::optional<FlutterProductionProviderBuild>(
         const FlutterProductionPluginAttachment&, std::string& diagnostic)>;
 
+struct FlutterProductionProviderBuildValidation final {
+  DigitorResult result{DIGITOR_RESULT_INVALID_ARGUMENT};
+  std::string diagnostic;
+  explicit operator bool() const noexcept { return result == DIGITOR_RESULT_OK; }
+};
+
+// Authoritative validation used by the Flutter bootstrap before a provider can
+// become process-wide. This intentionally validates preview/runtime readiness
+// only; immutable export snapshots and encoder-open qualification remain lazy
+// and are validated when export V2 starts.
+[[nodiscard]] FlutterProductionProviderBuildValidation
+validate_flutter_production_provider_build(
+    DigitorFlutterProductionPluginPlatform platform,
+    const FlutterProductionProviderBuild& build) noexcept;
+
 // Installs the final engine-owned bridge between a concrete native platform
 // provider and Flutter's process-wide production-host registration. The build
 // factory is evaluated lazily at plugin attachment time so it can bind the
