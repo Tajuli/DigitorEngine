@@ -1,3 +1,4 @@
+export 'src/app_bootstrap.dart';
 export 'src/audio_sync.dart';
 export 'src/live_playback_sync.dart';
 export 'src/bindings.dart' show DigitorTimelineBindings;
