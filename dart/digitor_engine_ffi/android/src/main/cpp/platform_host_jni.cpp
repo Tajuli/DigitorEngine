@@ -19,3 +19,15 @@ Java_com_primedigitor_digitor_1engine_1ffi_DigitorEngineFfiPlugin_nativeReleaseW
   auto* window = reinterpret_cast<ANativeWindow*>(static_cast<std::uintptr_t>(handle));
   ANativeWindow_release(window);
 }
+
+
+namespace {
+int g_production_registrar_token = 0;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_primedigitor_digitor_1engine_1ffi_DigitorEngineFfiPlugin_nativeProductionRegistrarToken(
+    JNIEnv* /*env*/, jobject /*thiz*/) {
+  return static_cast<jlong>(reinterpret_cast<std::uintptr_t>(
+      &g_production_registrar_token));
+}

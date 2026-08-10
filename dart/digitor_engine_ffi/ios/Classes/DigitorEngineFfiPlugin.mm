@@ -98,6 +98,18 @@ static const NSInteger kDigitorTextureReady = 1;
     return;
   }
 
+  if ([call.method isEqualToString:@"productionRegistrarToken"]) {
+    if (!self.textures) {
+      result([FlutterError errorWithCode:@"registrar_unavailable"
+                                 message:@"Apple Flutter texture registrar is unavailable."
+                                 details:nil]);
+      return;
+    }
+    uintptr_t token = (uintptr_t)(__bridge void *)self.textures;
+    result(@((unsigned long long)token));
+    return;
+  }
+
   NSDictionary *args = [call.arguments isKindOfClass:[NSDictionary class]] ? call.arguments : nil;
   if (!args) {
     result([FlutterError errorWithCode:@"invalid_arguments"

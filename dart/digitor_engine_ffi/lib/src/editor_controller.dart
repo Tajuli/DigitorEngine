@@ -104,15 +104,20 @@ final class DigitorEditorController extends ChangeNotifier {
     int sampleRate = 48000,
     int channels = 2,
   }) async {
-    final productionBootstrap =
-        await DigitorFlutterProductionBootstrap.resolve();
     final workspace = await DigitorEditorWorkspace.create(
       preferredBackend: preferredBackend,
       allowCpuFallback: allowCpuFallback,
       sampleRate: sampleRate,
       channels: channels,
     );
-    return DigitorEditorController._(workspace, productionBootstrap);
+    try {
+      final productionBootstrap =
+          await DigitorFlutterProductionBootstrap.resolve();
+      return DigitorEditorController._(workspace, productionBootstrap);
+    } catch (_) {
+      await workspace.close();
+      rethrow;
+    }
   }
 
   final DigitorEditorWorkspace _workspace;
@@ -342,6 +347,7 @@ final class DigitorEditorController extends ChangeNotifier {
     _disposed = true;
     try {
       await _workspace.close();
+      await _productionBootstrap.detach();
     } finally {
       super.dispose();
     }
@@ -351,7 +357,10 @@ final class DigitorEditorController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    unawaited(_workspace.close());
+    unawaited(() async {
+      await _workspace.close();
+      await _productionBootstrap.detach();
+    }());
     super.dispose();
   }
 }
