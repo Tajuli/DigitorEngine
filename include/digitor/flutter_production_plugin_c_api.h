@@ -29,6 +29,10 @@ DIGITOR_API DigitorResult digitor_flutter_production_plugin_attach(
 DIGITOR_API DigitorResult digitor_flutter_production_plugin_detach(
     const void* flutter_texture_registrar);
 DIGITOR_API uint8_t digitor_flutter_production_plugin_attached(void);
+// Returns a thread-local snapshot of the latest production-plugin bootstrap
+// diagnostic. The returned pointer remains valid until the next call on the
+// same thread. An empty string means no bootstrap error is currently recorded.
+DIGITOR_API const char* digitor_flutter_production_plugin_last_error(void);
 
 #ifdef __cplusplus
 }

@@ -36,6 +36,11 @@ final class DigitorFlutterProductionBootstrap {
     _ => 0,
   };
 
+  static String _nativeRegistrationDiagnostic() {
+    final value = digitorFlutterProductionPluginLastError();
+    return value == nullptr ? '' : value.toDartString();
+  }
+
   static Future<DigitorFlutterProductionBootstrap> resolve({
     bool requestRegistration = true,
   }) async {
@@ -87,10 +92,15 @@ final class DigitorFlutterProductionBootstrap {
       }
 
       final registered = DigitorRegisteredProductionSession.hostRegistered;
+      final nativeDiagnostic = registered
+          ? ''
+          : _nativeRegistrationDiagnostic();
       final diagnostic = !textureReady
           ? 'Flutter native texture presentation is unavailable.'
           : registered
           ? ''
+          : nativeDiagnostic.isNotEmpty
+          ? nativeDiagnostic
           : registrationResult != 0
           ? 'Concrete native production provider registration failed '
                 '(result $registrationResult). The platform factory must '
@@ -119,11 +129,7 @@ final class DigitorFlutterProductionBootstrap {
 
   Future<void> detach() async {
     final token = registrarToken;
-    if (token == null ||
-        token == 0 ||
-        digitorFlutterProductionPluginAttached() == 0) {
-      return;
-    }
+    if (token == null || token == 0) return;
     final result = digitorFlutterProductionPluginDetach(
       Pointer<Void>.fromAddress(token),
     );

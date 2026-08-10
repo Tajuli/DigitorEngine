@@ -257,6 +257,11 @@ external int digitorFlutterProductionPluginDetach(Pointer<Void> registrar);
 @Native<Uint8 Function()>(symbol: 'digitor_flutter_production_plugin_attached')
 external int digitorFlutterProductionPluginAttached();
 
+@Native<Pointer<Utf8> Function()>(
+  symbol: 'digitor_flutter_production_plugin_last_error',
+)
+external Pointer<Utf8> digitorFlutterProductionPluginLastError();
+
 @Native<
   Int32 Function(
     Pointer<Utf8>,
