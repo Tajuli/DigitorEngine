@@ -1551,9 +1551,9 @@ public:
         reinterpret_cast<void*>(in_), reinterpret_cast<void*>(ph_),
         reinterpret_cast<void*>(d_), reinterpret_cast<void*>(queue_), family_};
     out.native_media_import =
-        [this](const ZeroCopyImportRequest& request,
-               ProcessedGpuFramePtr& frame) noexcept {
-          return import_native_media(request, frame);
+        [self = const_cast<VulkanBackend*>(this)](
+            const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& frame) noexcept {
+          return self->import_native_media(request, frame);
         };
     return out;
   }
