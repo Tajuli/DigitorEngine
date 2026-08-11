@@ -28,22 +28,11 @@ struct FfmpegD3D11vaExtractionResult {
     FfmpegD3D11vaExtractionResult& out) noexcept;
 
 // Production-facing overload. `timestamp_us` must already be rescaled from the
-// stream time base to microseconds by the decoder. It normalizes both public
-// descriptors after the no-copy surface extraction succeeds.
-[[nodiscard]] inline DigitorResult extract_ffmpeg_d3d11va_surface(
+// stream time base to microseconds by the decoder. Both the Windows descriptor
+// and the retained NativeMediaSurface receive the exact same engine timestamp.
+[[nodiscard]] DigitorResult extract_ffmpeg_d3d11va_surface(
     void* av_frame,
     std::int64_t timestamp_us,
-    FfmpegD3D11vaExtractionResult& out) noexcept {
-  const auto result = extract_ffmpeg_d3d11va_surface(av_frame, out);
-  if (result == DIGITOR_RESULT_OK) {
-    out.surface.timestamp_us = timestamp_us;
-    if (out.surface.lifetime) {
-      // NativeMediaSurface descriptors are immutable by design; the Windows
-      // importer consumes the normalized timestamp from WindowsZeroCopySurface.
-      // The retained native descriptor remains ownership metadata only.
-    }
-  }
-  return result;
-}
+    FfmpegD3D11vaExtractionResult& out) noexcept;
 
 } // namespace digitor
