@@ -6,6 +6,7 @@
 
 #if defined(__ANDROID__)
 #include <android/hardware_buffer.h>
+#include <dlfcn.h>
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
@@ -16,6 +17,18 @@
 #endif
 
 namespace digitor {
+namespace {
+#if defined(__ANDROID__)
+using HardwareBufferDescribeFn = void (*)(
+    const AHardwareBuffer*, AHardwareBuffer_Desc*);
+
+HardwareBufferDescribeFn resolve_hardware_buffer_describe() noexcept {
+  static auto fn = reinterpret_cast<HardwareBufferDescribeFn>(
+      dlsym(RTLD_DEFAULT, "AHardwareBuffer_describe"));
+  return fn;
+}
+#endif
+}  // namespace
 
 struct AndroidNativeZeroCopyBindings::Impl {
   AndroidNativeInteropConfig config;
@@ -122,8 +135,16 @@ DigitorResult AndroidNativeZeroCopyBindings::import_vulkan(
       !i.get_ahb_properties || !i.native_vulkan_import)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
 
+  const auto describe = resolve_hardware_buffer_describe();
+  if (!describe) {
+    std::scoped_lock lock(i.mutex);
+    ++i.telemetry.failures;
+    i.telemetry.diagnostic =
+        "AHardwareBuffer_describe is unavailable on this Android runtime";
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
   AHardwareBuffer_Desc desc{};
-  AHardwareBuffer_describe(static_cast<AHardwareBuffer*>(frame.hardware_buffer), &desc);
+  describe(static_cast<AHardwareBuffer*>(frame.hardware_buffer), &desc);
   if (desc.width != frame.width || desc.height != frame.height) {
     std::scoped_lock lock(i.mutex);
     ++i.telemetry.failures;
