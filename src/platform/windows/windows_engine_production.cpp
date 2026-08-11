@@ -31,7 +31,7 @@ bool complete_dependencies(const WindowsEngineProductionDependencies& value) noe
          value.timeline.composite_layer && value.timeline.frame_evictable &&
          complete_encoder(value.encoder) && value.decoder_factory &&
          value.frame_resolver && value.texture_descriptor_builder &&
-         value.preview_target_binder && value.flutter_present &&
+         value.preview_target_binder &&
          value.fps_num > 0 && value.fps_den > 0 && value.video_bitrate > 0 &&
          !value.package_identity.empty() && !value.build_identity.empty();
 }
@@ -117,6 +117,7 @@ WindowsEngineProductionBuildResult assemble_windows_engine_production_build(
     bindings.flutter.present =
         [attachment, presenter = dependencies.flutter_present](
             const ProcessedGpuFramePtr& frame, std::uint64_t generation) mutable {
+          if (!presenter) return DIGITOR_RESULT_NOT_INITIALIZED;
           std::string diagnostic;
           return presenter(attachment, frame, generation, diagnostic);
         };
@@ -190,10 +191,6 @@ DigitorResult install_windows_engine_production_dependencies_factory(
       state.factory = std::move(factory);
     }
 
-    // The Flutter plugin may already be attached and waiting for these exact
-    // concrete dependencies. Re-run provider assembly now instead of requiring
-    // a second Dart/plugin attach call. Do not hold the dependency mutex while
-    // retrying: provider assembly reads this same factory.
     std::string retry_diagnostic;
     const auto retry = retry_flutter_production_host_registration(
         DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS, &retry_diagnostic);
@@ -267,9 +264,6 @@ install_windows_engine_production_runtime(
 
 }  // namespace digitor
 
-// Keep the concrete Windows provider in the same platform production translation
-// unit so every DigitorEngine build surface (including Flutter Native Assets)
-// links the implementation whenever the Windows assembly path is reachable.
 #if defined(_WIN32)
 #include "windows_native_provider.cpp"
 #endif

@@ -63,7 +63,7 @@ WindowsNativeProviderResult create_windows_native_provider(
   }
   if (!bindings.flutter.flutter_texture_registrar ||
       bindings.flutter.implementation_identity.empty() ||
-      !bindings.flutter.attached || !bindings.flutter.present) {
+      !bindings.flutter.attached) {
     out.result = DIGITOR_RESULT_NOT_INITIALIZED;
     out.diagnostic = "real Flutter Windows texture bridge is required";
     return out;
@@ -111,7 +111,8 @@ WindowsNativeProviderResult create_windows_native_provider(
     inputs.flutter.device_identity = bindings.device_identity;
     inputs.flutter.device_name = bindings.capabilities.adapter_identity;
     inputs.flutter.attached = bindings.flutter.attached;
-    inputs.flutter.register_or_present = bindings.flutter.present;
+    inputs.flutter.delivery_mode =
+        FlutterPreviewDeliveryMode::deferred_to_flutter_texture;
     inputs.encoder.windows = bindings.encoder;
     inputs.windows_vulkan = bindings.vulkan_interop;
     return create_production_platform_assembly(std::move(inputs));
@@ -131,7 +132,5 @@ WindowsNativeProviderResult create_windows_native_provider(
 
 }  // namespace digitor
 
-// The Windows release package compiles the concrete D3D12 provider and the
-// repository-owned built-in HLSL shader package through one platform manifest.
 #include "windows_d3d12_effect_provider.cpp"
 #include "windows_d3d12_builtin_effect_shaders.cpp"

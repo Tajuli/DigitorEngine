@@ -22,12 +22,18 @@ enum class ProductionPlatform : std::uint32_t {
   ios = 4,
 };
 
+enum class FlutterPreviewDeliveryMode : std::uint32_t {
+  native_present = 1,
+  deferred_to_flutter_texture = 2,
+};
+
 struct FlutterNativeTextureRegistrar final {
   ProductionPlatform platform{ProductionPlatform::windows};
   DigitorRendererBackend backend{DIGITOR_RENDERER_CPU};
   const void* device_identity{};
   std::string device_name;
   std::function<bool()> attached;
+  FlutterPreviewDeliveryMode delivery_mode{FlutterPreviewDeliveryMode::native_present};
   // The platform embedding owns registration/replacement and must retain the
   // exact frame until Flutter reports that the generation was consumed.
   std::function<DigitorResult(const ProcessedGpuFramePtr&, std::uint64_t)> register_or_present;
@@ -42,7 +48,8 @@ class ConcreteFlutterTextureHost final : public NativePreviewTextureHost {
     return registrar_.backend != DIGITOR_RENDERER_CPU &&
            registrar_.device_identity != nullptr && !registrar_.device_name.empty() &&
            static_cast<bool>(registrar_.attached) &&
-           static_cast<bool>(registrar_.register_or_present) &&
+           (registrar_.delivery_mode == FlutterPreviewDeliveryMode::deferred_to_flutter_texture ||
+            static_cast<bool>(registrar_.register_or_present)) &&
            platform_backend_valid(registrar_.platform, registrar_.backend);
   }
 
@@ -70,6 +77,14 @@ class ConcreteFlutterTextureHost final : public NativePreviewTextureHost {
     if (format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
         format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT) {
       return DIGITOR_RESULT_UNSUPPORTED;
+    }
+    if (registrar_.delivery_mode ==
+        FlutterPreviewDeliveryMode::deferred_to_flutter_texture) {
+      // Final publication is intentionally performed by the platform Flutter
+      // texture host using the descriptor (Windows/Apple) or by rendering into
+      // the bound Flutter render target (Android). Reaching this point proves
+      // the exact GPU frame/backend/device/generation is valid for handoff.
+      return DIGITOR_RESULT_OK;
     }
     return registrar_.register_or_present(frame, generation);
   }
@@ -122,9 +137,6 @@ struct WindowsVulkanZeroCopyInterop final {
 }
 
 struct ProductionEncoderFactoryInputs final {
-  // Optional legacy eager snapshot. Production Flutter attachment no longer
-  // requires this value; when omitted, encoder adapters are created lazily at
-  // export start from the V2 frozen export snapshot.
   std::shared_ptr<const ExportRenderSnapshot> snapshot;
   WindowsHardwareEncoderHost windows;
   AndroidHardwareEncoderHost android;
@@ -144,14 +156,7 @@ struct ProductionPlatformAssembly final {
   std::shared_ptr<ConcreteFlutterTextureHost> preview_host;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
   std::shared_ptr<ProductionTimelineGpuBinding> timeline_binding;
-
-  // Export is intentionally lazy. The factory binds a frozen export snapshot
-  // only when export starts, so plugin attachment and preview never depend on
-  // an export path, codec selection, output path, or encoder-open operation.
   ProductionEncoderFactory encoder_factory;
-
-  // Compatibility surface for callers that still provide an eager snapshot.
-  // New production Flutter code uses encoder_factory instead.
   HardwareEncoderCallbacks encoder_callbacks;
   std::function<bool()> encoder_zero_copy_qualified;
   bool windows_vulkan_interop_qualified{};
@@ -300,8 +305,6 @@ struct ProductionPlatformAssembly final {
             windows_vulkan);
       };
 
-  // Preserve the previous eager behavior only when an explicit snapshot was
-  // supplied. Omitting the snapshot is now the normal preview-attachment path.
   if (inputs.encoder.snapshot) {
     auto eager = out.encoder_factory(inputs.encoder.snapshot);
     if (!eager) {
