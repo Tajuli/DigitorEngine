@@ -20,3 +20,9 @@ DigitorResult install_android_engine_production_dependencies_factory(AndroidEngi
 DigitorResult clear_android_engine_production_dependencies_factory() noexcept{auto&s=st();std::scoped_lock l(s.m);s.f={};return DIGITOR_RESULT_OK;}
 std::unique_ptr<ProductionIntegrationRuntime> install_android_engine_production_runtime(const BackendProductionCapability& b,std::string*d) noexcept{std::string q;if(!cap_ok(b,q)){if(d)*d=q;return{};}return ProductionIntegrationRuntime::install(DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID,[b](const FlutterProductionPluginAttachment&a,std::string&l)->std::optional<FlutterProductionProviderBuild>{AndroidEngineProductionDependenciesFactory f;{auto&s=st();std::scoped_lock g(s.m);f=s.f;}if(!f){l="engine-owned Android production dependencies are not installed";return std::nullopt;}auto x=f(b,a,l);if(!x)return std::nullopt;auto z=assemble_android_engine_production_build(b,a,std::move(*x));if(!z){l=z.diagnostic;return std::nullopt;}l.clear();return std::move(z.build);},d);}
 } // namespace digitor
+
+// Compile the concrete Android provider with the engine-owned production
+// assembly on Android so final shared-library/host links resolve the provider.
+#if defined(__ANDROID__)
+#include "android_native_provider.cpp"
+#endif
