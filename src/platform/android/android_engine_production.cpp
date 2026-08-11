@@ -16,7 +16,31 @@ o.result=DIGITOR_RESULT_UNSUPPORTED;o.diagnostic="Android production assembly re
 auto p=create_android_native_provider(std::move(x));if(!p){o.result=p.result;o.diagnostic=p.diagnostic;return o;}FlutterProductionProviderBuild z{};z.provider=std::move(p.provider);z.platform_inputs.platform=ProductionPlatform::android;z.platform_inputs.timeline=d.timeline;z.decoder_factory=std::move(d.decoder_factory);z.frame_resolver=std::move(d.frame_resolver);z.texture_descriptor_builder=std::move(d.texture_descriptor_builder);z.preview_target_binder=std::move(d.preview_target_binder);z.preview_capabilities=d.preview_capabilities;z.encoder_backend=d.encoder_backend;z.fps_num=d.fps_num;z.fps_den=d.fps_den;z.video_bitrate=d.video_bitrate;z.required_device_identity=(std::uint64_t)(std::uintptr_t)b.frame_context_identity;z.required_context_identity=b.context_identity;o.build=std::move(z);o.result=DIGITOR_RESULT_OK;return o;
 #endif
 }catch(...){o.result=DIGITOR_RESULT_INTERNAL_ERROR;o.diagnostic="Android production assembly failed";return o;}}
-DigitorResult install_android_engine_production_dependencies_factory(AndroidEngineProductionDependenciesFactory f,std::string*d) noexcept{if(!f)return DIGITOR_RESULT_INVALID_ARGUMENT;try{auto&s=st();std::scoped_lock l(s.m);if(s.f)return DIGITOR_RESULT_RESOURCE_IN_USE;s.f=std::move(f);if(d)d->clear();return DIGITOR_RESULT_OK;}catch(...){return DIGITOR_RESULT_INTERNAL_ERROR;}}
+DigitorResult install_android_engine_production_dependencies_factory(
+    AndroidEngineProductionDependenciesFactory f, std::string* d) noexcept {
+  if (!f) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  try {
+    auto& s = st();
+    {
+      std::scoped_lock l(s.m);
+      if (s.f) return DIGITOR_RESULT_RESOURCE_IN_USE;
+      s.f = std::move(f);
+    }
+    std::string retry_diagnostic;
+    const auto retry = retry_flutter_production_host_registration(
+        DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID, &retry_diagnostic);
+    if (retry != DIGITOR_RESULT_OK) {
+      std::scoped_lock l(s.m);
+      s.f = {};
+      if (d) *d = retry_diagnostic;
+      return retry;
+    }
+    if (d) d->clear();
+    return DIGITOR_RESULT_OK;
+  } catch (...) {
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
+}
 DigitorResult clear_android_engine_production_dependencies_factory() noexcept{auto&s=st();std::scoped_lock l(s.m);s.f={};return DIGITOR_RESULT_OK;}
 std::unique_ptr<ProductionIntegrationRuntime> install_android_engine_production_runtime(const BackendProductionCapability& b,std::string*d) noexcept{std::string q;if(!cap_ok(b,q)){if(d)*d=q;return{};}return ProductionIntegrationRuntime::install(DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID,[b](const FlutterProductionPluginAttachment&a,std::string&l)->std::optional<FlutterProductionProviderBuild>{AndroidEngineProductionDependenciesFactory f;{auto&s=st();std::scoped_lock g(s.m);f=s.f;}if(!f){l="engine-owned Android production dependencies are not installed";return std::nullopt;}auto x=f(b,a,l);if(!x)return std::nullopt;auto z=assemble_android_engine_production_build(b,a,std::move(*x));if(!z){l=z.diagnostic;return std::nullopt;}l.clear();return std::move(z.build);},d);}
 } // namespace digitor
