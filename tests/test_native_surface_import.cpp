@@ -50,6 +50,12 @@ int main() {
   r = import_native_media_surface(surface(), d3d, {}, &cancelled);
   assert(r.failure == NativeSurfaceImportFailure::cancelled && !r.frame);
 
+  // Windows DXGI shared decoder surfaces are a valid Vulkan zero-copy source.
+  // The actual import still fails closed until the selected renderer supplies
+  // its backend-owned Win32 external-memory callback.
+  assert(native_surface_backend_compatible(surface()->descriptor(),
+                                           DIGITOR_RENDERER_VULKAN));
+
   NativeSurfaceImportTarget vk{}; vk.backend = DIGITOR_RENDERER_VULKAN;
   r = import_native_media_surface(surface(), vk);
   assert(r.failure == NativeSurfaceImportFailure::backend_unavailable);
