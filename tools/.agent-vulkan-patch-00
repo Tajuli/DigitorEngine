@@ -1,0 +1,143 @@
+--- a/src/gpu/vulkan_backend.cpp
++++ b/src/gpu/vulkan_backend.cpp
+@@ -3,6 +3,7 @@
+ #include "core/numeric_utils.hpp"
+ #include "core/string_utils.hpp"
+ #include "digitor/shader.hpp"
++#include "digitor/native_media.hpp"
+ #include "gpu/gpu_backend.hpp"
+ #include "gpu/native_pipeline_cache.hpp"
+ #include "gpu/native_primary_wheels.hpp"
+@@ -26,10 +27,23 @@
+ #include "color_pipeline_buffer.hpp"
+ #endif
+ #include <atomic>
++#include <array>
+ #include <cstring>
+ #include <mutex>
+ #include <unordered_map>
+ #include <vector>
++#if defined(_WIN32)
++#ifndef VK_USE_PLATFORM_WIN32_KHR
++#define VK_USE_PLATFORM_WIN32_KHR
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
+ #include <vulkan/vulkan.h>
+ namespace digitor {
+ namespace {
+@@ -54,6 +68,41 @@
+ std::mutex vk_descriptor_mutex;
+ std::unordered_map<VkDescriptorPool, std::uint32_t> vk_descriptor_counts;
+ 
++#if defined(_WIN32)
++bool has_instance_extensions(std::span<const char* const> required) {
++  std::uint32_t count = 0;
++  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) !=
++      VK_SUCCESS)
++    return false;
++  std::vector<VkExtensionProperties> available(count);
++  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data()) !=
++      VK_SUCCESS)
++    return false;
++  return std::all_of(required.begin(), required.end(), [&](const char* name) {
++    return std::any_of(available.begin(), available.end(), [&](const auto& item) {
++      return std::strcmp(item.extensionName, name) == 0;
++    });
++  });
++}
++
++bool has_device_extensions(VkPhysicalDevice physical,
++                           std::span<const char* const> required) {
++  std::uint32_t count = 0;
++  if (vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr) !=
++      VK_SUCCESS)
++    return false;
++  std::vector<VkExtensionProperties> available(count);
++  if (vkEnumerateDeviceExtensionProperties(physical, nullptr, &count,
++                                            available.data()) != VK_SUCCESS)
++    return false;
++  return std::all_of(required.begin(), required.end(), [&](const char* name) {
++    return std::any_of(available.begin(), available.end(), [&](const auto& item) {
++      return std::strcmp(item.extensionName, name) == 0;
++    });
++  });
++}
++#endif
++
+ #ifdef DIGITOR_EMBEDDED_VULKAN_SPIRV
+ ShaderCompileResult embedded_vulkan_shader(const ShaderCompileRequest &request) {
+   const std::uint32_t *words = nullptr;
+@@ -990,6 +1039,508 @@
+                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+   }
+ 
++  DigitorResult import_native_media(const ZeroCopyImportRequest& request,
++                                    ProcessedGpuFramePtr& output) noexcept {
++    output.reset();
++#if !defined(_WIN32)
++    (void)request;
++    return DIGITOR_RESULT_UNSUPPORTED;
++#else
++    const auto surface = request.surface;
++    if (!surface || request.renderer_backend != DIGITOR_RENDERER_VULKAN ||
++        request.output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
++        request.working_color_space != "linear-rgba")
++      return DIGITOR_RESULT_INVALID_ARGUMENT;
++    const auto& descriptor = surface->descriptor();
++    if (descriptor.platform != NativeMediaPlatform::windows ||
++        descriptor.handle_type != NativeMediaHandleType::dxgi_shared_handle ||
++        (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
++         descriptor.pixel_format != NativeMediaPixelFormat::p010) ||
++        !descriptor.width || !descriptor.height || (descriptor.width & 1u) ||
++        (descriptor.height & 1u) || descriptor.array_slice != 0 ||
++        !descriptor.native_handle ||
++        descriptor.acquire_sync.type != NativeMediaSyncType::d3d11_fence ||
++        !descriptor.acquire_sync.handle || !descriptor.acquire_sync.value)
++      return DIGITOR_RESULT_INVALID_ARGUMENT;
++
++    const auto get_image_properties =
++        reinterpret_cast<PFN_vkGetPhysicalDeviceImageFormatProperties2KHR>(
++            vkGetInstanceProcAddr(in_,
++                                  "vkGetPhysicalDeviceImageFormatProperties2KHR"));
++    const auto get_memory_properties =
++        reinterpret_cast<PFN_vkGetMemoryWin32HandlePropertiesKHR>(
++            vkGetDeviceProcAddr(d_, "vkGetMemoryWin32HandlePropertiesKHR"));
++    const auto import_semaphore =
++        reinterpret_cast<PFN_vkImportSemaphoreWin32HandleKHR>(
++            vkGetDeviceProcAddr(d_, "vkImportSemaphoreWin32HandleKHR"));
++    const auto get_semaphore_properties =
++        reinterpret_cast<PFN_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR>(
++            vkGetInstanceProcAddr(
++                in_, "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR"));
++    if (!get_image_properties || !get_memory_properties || !import_semaphore ||
++        !get_semaphore_properties)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    const VkFormat source_format =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010
++            ? VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16
++            : VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
++    VkPhysicalDeviceExternalImageFormatInfo external_format{
++        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
++    external_format.handleType =
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
++    VkPhysicalDeviceImageFormatInfo2 format_info{
++        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2};
++    format_info.pNext = &external_format;
++    format_info.format = source_format;
++    format_info.type = VK_IMAGE_TYPE_2D;
++    format_info.tiling = VK_IMAGE_TILING_OPTIMAL;
++    format_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
++    format_info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
++    VkExternalImageFormatProperties external_properties{
++        VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
++    VkImageFormatProperties2 image_properties{
++        VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
++    image_properties.p
