@@ -1,0 +1,45 @@
+name: Apply Windows Vulkan zero-copy source patch
+
+on:
+  push:
+    branches:
+      - agent/windows-vulkan-zero-copy-import
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/windows-vulkan-zero-copy-import
+          fetch-depth: 0
+      - name: Apply tested Vulkan source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tools/.agent-vulkan-patch-00 \
+              tools/.agent-vulkan-patch-01 \
+              tools/.agent-vulkan-patch-02 \
+              tools/.agent-vulkan-patch-03 \
+              tools/.agent-vulkan-patch-04 \
+              tools/.agent-vulkan-patch-05 > /tmp/windows-vulkan-zero-copy.patch
+          git apply --check /tmp/windows-vulkan-zero-copy.patch
+          git apply /tmp/windows-vulkan-zero-copy.patch
+          actual="$(git hash-object src/gpu/vulkan_backend.cpp)"
+          test "$actual" = "61d312f3c9caf826e0ea0f8f6fd39ab4abd2473e"
+          git rm tools/.agent-vulkan-patch-00 \
+                 tools/.agent-vulkan-patch-01 \
+                 tools/.agent-vulkan-patch-02 \
+                 tools/.agent-vulkan-patch-03 \
+                 tools/.agent-vulkan-patch-04 \
+                 tools/.agent-vulkan-patch-05 \
+                 .github/workflows/agent-apply-windows-vulkan-zero-copy.yml
+          git add src/gpu/vulkan_backend.cpp
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Implement Windows Vulkan zero-copy decode import"
+          git push origin HEAD:agent/windows-vulkan-zero-copy-import
