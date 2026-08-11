@@ -1,0 +1,317 @@
+name: Finish Blockers 3 and 4
+
+on:
+  push:
+    branches:
+      - agent/engine-owned-platform-production
+
+permissions:
+  contents: write
+
+jobs:
+  finish:
+    if: github.event.head_commit.message != 'Complete engine-owned platform production wiring'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/engine-owned-platform-production
+      - name: Apply lifecycle, generation, and platform assembly wiring
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          root = Path('.')
+
+          def replace_once(rel, old, new):
+              p = root / rel
+              s = p.read_text()
+              if old not in s:
+                  raise RuntimeError(f'anchor missing in {rel}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          # Exact backend-generation identity: ProcessedGpuFrame uses the backend
+          # instance pointer as its context identity, so production capabilities
+          # must carry that same pointer.
+          for rel in [
+              'src/gpu/d3d12_backend.cpp',
+              'src/gpu/vulkan_backend.cpp',
+              'src/gpu/gles_backend.cpp',
+              'src/gpu/metal_backend.mm',
+          ]:
+              p = root / rel
+              s = p.read_text()
+              anchor = '    out.context_identity = backend_context_identity();\n'
+              if 'out.frame_context_identity = this;' not in s:
+                  if anchor not in s:
+                      raise RuntimeError(f'production capability anchor missing in {rel}')
+                  s = s.replace(anchor, anchor + '    out.frame_context_identity = this;\n', 1)
+                  p.write_text(s)
+
+          # D3D12 decode/import must produce frames owned by the selected renderer
+          # generation, not by the ID3D12Device pointer.
+          replace_once(
+              'include/digitor/windows_d3d12_yuv_converter.hpp',
+              '  explicit WindowsD3D12YuvConverter(void* d3d12_device);',
+              '  explicit WindowsD3D12YuvConverter(\n      void* d3d12_device, const void* frame_context_identity = nullptr);')
+          replace_once(
+              'src/gpu/windows_d3d12_yuv_converter.cpp',
+              'struct WindowsD3D12YuvConverter::Impl {\n#ifdef _WIN32',
+              'struct WindowsD3D12YuvConverter::Impl {\n const void* frame_context_identity{};\n#ifdef _WIN32')
+          replace_once(
+              'src/gpu/windows_d3d12_yuv_converter.cpp',
+              'WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(void* raw):impl_(std::make_shared<Impl>()){\n if(!raw)throw std::invalid_argument("D3D12 device is required");',
+              'WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(\n    void* raw, const void* frame_context_identity):impl_(std::make_shared<Impl>()){\n if(!raw)throw std::invalid_argument("D3D12 device is required");\n impl_->frame_context_identity = frame_context_identity ? frame_context_identity : raw;')
+          replace_once(
+              'src/gpu/windows_d3d12_yuv_converter.cpp',
+              '  out=std::make_shared<ProcessedGpuFrame>(impl_->device.Get(),DIGITOR_RENDERER_D3D12,std::move(m),id,owner,std::make_shared<std::atomic_bool>(true),false);',
+              '  out=std::make_shared<ProcessedGpuFrame>(impl_->frame_context_identity,DIGITOR_RENDERER_D3D12,std::move(m),id,owner,std::make_shared<std::atomic_bool>(true),false);')
+          replace_once(
+              'include/digitor/ffmpeg_d3d11va_zero_copy_decoder.hpp',
+              '                               LegacyCpuFallbackCallback legacy = {});',
+              '                               LegacyCpuFallbackCallback legacy = {},\n                               const void* frame_context_identity = nullptr);')
+          replace_once(
+              'src/media/ffmpeg_d3d11va_zero_copy_decoder.cpp',
+              '    LegacyCpuFallbackCallback legacy)\n    : options_(options), legacy_(std::move(legacy)),\n      converter_(std::make_unique<WindowsD3D12YuvConverter>(d3d12_device)),',
+              '    LegacyCpuFallbackCallback legacy,\n    const void* frame_context_identity)\n    : options_(options), legacy_(std::move(legacy)),\n      converter_(std::make_unique<WindowsD3D12YuvConverter>(\n          d3d12_device, frame_context_identity)),')
+
+          # Platform defaults must identify the actual hardware encoder family.
+          p = root / 'src/platform/windows/windows_engine_production.hpp'
+          s = p.read_text().replace('EncoderBackend encoder_backend{EncoderBackend::software};',
+                                    'EncoderBackend encoder_backend{EncoderBackend::quick_sync};')
+          p.write_text(s)
+          p = root / 'src/platform/android/android_engine_production.hpp'
+          s = p.read_text().replace('EncoderBackend encoder_backend{EncoderBackend::quick_sync};',
+                                    'EncoderBackend encoder_backend{EncoderBackend::media_codec};')
+          p.write_text(s)
+
+          # One private platform router lets Engine own the runtime lease without
+          # platform ifdefs leaking through engine.cpp.
+          (root / 'src/core/engine_production_runtime.hpp').write_text(r'''#pragma once
+
+#include "digitor/production_integration_runtime.hpp"
+#include "gpu/backend_production_capability.hpp"
+
+#include <memory>
+#include <string>
+
+namespace digitor {
+[[nodiscard]] bool engine_production_runtime_supported_platform() noexcept;
+[[nodiscard]] std::unique_ptr<ProductionIntegrationRuntime>
+install_engine_production_runtime(const BackendProductionCapability& capability,
+                                  std::string* diagnostic = nullptr) noexcept;
+}  // namespace digitor
+''')
+          (root / 'src/core/engine_production_runtime.cpp').write_text(r'''#include "core/engine_production_runtime.hpp"
+
+#include "platform/android/android_engine_production.hpp"
+#include "platform/apple/apple_engine_production.hpp"
+#include "platform/windows/windows_engine_production.hpp"
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+namespace digitor {
+bool engine_production_runtime_supported_platform() noexcept {
+#if defined(_WIN32) || defined(__ANDROID__) || defined(__APPLE__)
+  return true;
+#else
+  return false;
+#endif
+}
+
+std::unique_ptr<ProductionIntegrationRuntime> install_engine_production_runtime(
+    const BackendProductionCapability& capability, std::string* diagnostic) noexcept {
+  if (!capability.valid()) {
+    if (diagnostic) *diagnostic = "selected backend has no production GPU capability";
+    return {};
+  }
+#if defined(_WIN32)
+  return install_windows_engine_production_runtime(capability, diagnostic);
+#elif defined(__ANDROID__)
+  return install_android_engine_production_runtime(capability, diagnostic);
+#elif defined(__APPLE__)
+  #if TARGET_OS_IPHONE
+  return install_apple_engine_production_runtime(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_IOS, capability, diagnostic);
+  #else
+  return install_apple_engine_production_runtime(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_MACOS, capability, diagnostic);
+  #endif
+#else
+  if (diagnostic) *diagnostic = "Flutter production runtime is not required on this host";
+  return {};
+#endif
+}
+}  // namespace digitor
+''')
+
+          # Engine owns the provider-builder lease for exactly the selected
+          # backend generation and releases it before destroying GPU resources.
+          replace_once(
+              'src/core/engine.hpp',
+              '#include "digitor/native_node_executor.hpp"\n',
+              '#include "digitor/native_node_executor.hpp"\n#include "digitor/production_integration_runtime.hpp"\n')
+          replace_once(
+              'src/core/engine.hpp',
+              '  Engine() = default;\n  mutable std::mutex mutex_;',
+              '  Engine() = default;\n  DigitorResult finish_backend_initialization_locked();\n  mutable std::mutex mutex_;')
+          replace_once(
+              'src/core/engine.hpp',
+              '  std::unique_ptr<IRenderBackend> backend_;\n  std::unordered_set<RenderContext *> contexts_;',
+              '  std::unique_ptr<IRenderBackend> backend_;\n  std::unique_ptr<ProductionIntegrationRuntime> production_runtime_;\n  std::unordered_set<RenderContext *> contexts_;')
+          replace_once(
+              'src/core/engine.cpp',
+              '#include "core/engine.hpp"\n',
+              '#include "core/engine.hpp"\n#include "core/engine_production_runtime.hpp"\n')
+          replace_once(
+              'src/core/engine.cpp',
+              'Engine &Engine::instance() { static Engine engine; return engine; }\n\nDigitorResult Engine::initialize',
+              '''Engine &Engine::instance() { static Engine engine; return engine; }\n\nDigitorResult Engine::finish_backend_initialization_locked() {\n    if (!backend_) return DIGITOR_RESULT_NOT_INITIALIZED;\n    const auto capability = backend_->production_capability();\n    if (capability.valid() && engine_production_runtime_supported_platform()) {\n        std::string diagnostic;\n        production_runtime_ = install_engine_production_runtime(capability, &diagnostic);\n        if (!production_runtime_) {\n            backend_->shutdown();\n            backend_.reset();\n            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;\n        }\n    }\n    initialized_ = true;\n    return DIGITOR_RESULT_OK;\n}\n\nDigitorResult Engine::initialize''')
+          replace_once(
+              'src/core/engine.cpp',
+              '''    if (backend_ && backend_->initialize(config.enable_validation != 0)) {\n        initialized_ = true;\n        return DIGITOR_RESULT_OK;\n    }''',
+              '''    if (backend_ && backend_->initialize(config.enable_validation != 0)) {\n        return finish_backend_initialization_locked();\n    }''')
+          replace_once(
+              'src/core/engine.cpp',
+              '''        backend_ = std::move(cpu);\n        initialized_ = true;\n        return DIGITOR_RESULT_OK;''',
+              '''        backend_ = std::move(cpu);\n        return finish_backend_initialization_locked();''')
+          replace_once(
+              'src/core/engine.cpp',
+              'DigitorResult Engine::shutdown(){std::scoped_lock lock(mutex_);if(!initialized_)return DIGITOR_RESULT_NOT_INITIALIZED;if(!contexts_.empty())return DIGITOR_RESULT_RESOURCE_IN_USE;if(backend_){backend_->shutdown();backend_.reset();}initialized_=false;return DIGITOR_RESULT_OK;}',
+              '''DigitorResult Engine::shutdown(){std::scoped_lock lock(mutex_);if(!initialized_)return DIGITOR_RESULT_NOT_INITIALIZED;if(!contexts_.empty())return DIGITOR_RESULT_RESOURCE_IN_USE;if(production_runtime_){const auto r=production_runtime_->shutdown();if(r!=DIGITOR_RESULT_OK)return r;production_runtime_.reset();}if(backend_){backend_->shutdown();backend_.reset();}initialized_=false;return DIGITOR_RESULT_OK;}''')
+
+          # Controller shutdown must drop registered sessions before detaching the
+          # Flutter host, then close the engine. This guarantees provider/runtime
+          # callbacks cannot survive the backend they point at.
+          replace_once(
+              'dart/digitor_engine_ffi/lib/src/editor_workspace.dart',
+              '''  Future<void> close() async {\n    if (_closed) return;\n    _closed = true;\n    _productionSession?.dispose();\n    _productionSession = null;\n    final previewTexture = _previewTexture;\n    _previewTexture = null;\n    if (previewTexture != null) {\n      await _platformHost.disposeTexture(previewTexture);\n    }\n    _timeline.dispose();''',
+              '''  Future<void> releaseProductionSession() async {\n    if (_closed) return;\n    _productionSession?.dispose();\n    _productionSession = null;\n    final previewTexture = _previewTexture;\n    _previewTexture = null;\n    if (previewTexture != null) {\n      await _platformHost.disposeTexture(previewTexture);\n    }\n  }\n\n  Future<void> close() async {\n    if (_closed) return;\n    await releaseProductionSession();\n    _closed = true;\n    _timeline.dispose();''')
+          replace_once(
+              'dart/digitor_engine_ffi/lib/src/editor_controller.dart',
+              '''    try {\n      await _workspace.close();\n      await _productionBootstrap.detach();\n    } finally {''',
+              '''    try {\n      await _workspace.releaseProductionSession();\n      await _productionBootstrap.detach();\n      await _workspace.close();\n    } finally {''')
+          replace_once(
+              'dart/digitor_engine_ffi/lib/src/editor_controller.dart',
+              '''    unawaited(() async {\n      await _workspace.close();\n      await _productionBootstrap.detach();\n    }());''',
+              '''    unawaited(() async {\n      await _workspace.releaseProductionSession();\n      await _productionBootstrap.detach();\n      await _workspace.close();\n    }());''')
+
+          # CMake owns the new platform assembly units and regression target.
+          replace_once(
+              'CMakeLists.txt',
+              '    src/core/production_integration_runtime.cpp\n',
+              '    src/core/production_integration_runtime.cpp\n    src/core/engine_production_runtime.cpp\n    src/platform/windows/windows_engine_production.cpp\n    src/platform/android/android_engine_production.cpp\n    src/platform/apple/apple_engine_production.cpp\n')
+          replace_once(
+              'CMakeLists.txt',
+              '    add_executable(digitor_production_integration_runtime_test tests/test_production_integration_runtime.cpp)\n',
+              '    add_executable(digitor_production_integration_runtime_test tests/test_production_integration_runtime.cpp)\n    add_executable(digitor_engine_owned_platform_production_test tests/test_engine_owned_platform_production.cpp)\n')
+          replace_once(
+              'CMakeLists.txt',
+              '    foreach(target digitor_production_integration_runtime_test ',
+              '    foreach(target digitor_engine_owned_platform_production_test digitor_production_integration_runtime_test ')
+          replace_once(
+              'CMakeLists.txt',
+              '    add_test(NAME digitor_production_integration_runtime COMMAND digitor_production_integration_runtime_test)\n',
+              '    add_test(NAME digitor_production_integration_runtime COMMAND digitor_production_integration_runtime_test)\n    add_test(NAME digitor_engine_owned_platform_production COMMAND digitor_engine_owned_platform_production_test)\n')
+
+          (root / 'tests/test_engine_owned_platform_production.cpp').write_text(r'''#include "platform/android/android_engine_production.hpp"
+#include "platform/apple/apple_engine_production.hpp"
+#include "platform/windows/windows_engine_production.hpp"
+
+#include <cassert>
+#include <string>
+
+using namespace digitor;
+
+int main() {
+  int context = 1;
+  int device = 2;
+  int queue = 3;
+  int instance = 4;
+  int physical = 5;
+  int registrar = 6;
+
+  BackendProductionCapability windows{};
+  windows.backend = DIGITOR_RENDERER_D3D12;
+  windows.context_identity = 101;
+  windows.frame_context_identity = &context;
+  windows.resources = D3D12ProductionResources{&device, &queue};
+  assert(windows.valid());
+
+  BackendProductionCapability cpu{};
+  cpu.backend = DIGITOR_RENDERER_CPU;
+  cpu.context_identity = 1;
+  cpu.frame_context_identity = &context;
+  assert(!cpu.valid());
+
+  std::string diagnostic;
+  auto windows_runtime = install_windows_engine_production_runtime(windows, &diagnostic);
+  assert(windows_runtime && windows_runtime->active());
+  assert(flutter_production_provider_builder_installed(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
+  assert(windows_runtime->shutdown() == DIGITOR_RESULT_OK);
+  assert(!flutter_production_provider_builder_installed(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
+
+  BackendProductionCapability android{};
+  android.backend = DIGITOR_RENDERER_VULKAN;
+  android.context_identity = 202;
+  android.frame_context_identity = &context;
+  android.resources = VulkanProductionResources{&instance, &physical, &device, &queue, 0};
+  auto android_runtime = install_android_engine_production_runtime(android, &diagnostic);
+  assert(android_runtime && android_runtime->active());
+  assert(android_runtime->shutdown() == DIGITOR_RESULT_OK);
+
+  BackendProductionCapability apple{};
+  apple.backend = DIGITOR_RENDERER_METAL;
+  apple.context_identity = 303;
+  apple.frame_context_identity = &context;
+  apple.resources = MetalProductionResources{&device};
+  auto apple_runtime = install_apple_engine_production_runtime(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_MACOS, apple, &diagnostic);
+  assert(apple_runtime && apple_runtime->active());
+  assert(apple_runtime->shutdown() == DIGITOR_RESULT_OK);
+
+  FlutterProductionPluginAttachment attachment{};
+  attachment.platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS;
+  attachment.flutter_texture_registrar = &registrar;
+  attachment.implementation_identity = "test.flutter.windows";
+  auto incomplete = assemble_windows_engine_production_build(
+      windows, attachment, WindowsEngineProductionDependencies{});
+  assert(incomplete.result == DIGITOR_RESULT_NOT_INITIALIZED);
+
+  attachment.platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID;
+  incomplete = {};
+  auto android_incomplete = assemble_android_engine_production_build(
+      android, attachment, AndroidEngineProductionDependencies{});
+  assert(android_incomplete.result == DIGITOR_RESULT_NOT_INITIALIZED);
+
+  attachment.platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_MACOS;
+  auto apple_incomplete = assemble_apple_engine_production_build(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_MACOS, apple, attachment,
+      AppleEngineProductionDependencies{});
+  assert(apple_incomplete.result == DIGITOR_RESULT_NOT_INITIALIZED);
+
+  return 0;
+}
+''')
+
+          # One-shot workflow: remove itself from the final branch snapshot.
+          (root / '.github/workflows/pr348-finish-blockers34.yml').unlink()
+          PY
+      - name: Configure Release tests
+        run: cmake -S . -B build-pr348 -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release tests
+        run: cmake --build build-pr348 --parallel 2
+      - name: Run Release tests
+        run: ctest --test-dir build-pr348 --output-on-failure
+      - name: Commit completed wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Complete engine-owned platform production wiring"
+          git push origin HEAD:agent/engine-owned-platform-production
