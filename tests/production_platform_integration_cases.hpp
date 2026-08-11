@@ -129,13 +129,20 @@ inline void run_production_platform_integration_cases() {
 
   auto assembly = create_production_platform_assembly(std::move(inputs));
   assert(assembly);
+  // #344 regression: constructing the production assembly and presenting
+  // preview frames must not open or instantiate the hardware encoder.
+  assert(!qualification.adapter_opened);
   assert(assembly.preview_host->present(make_frame(0, 20), 1) == DIGITOR_RESULT_OK);
   assert(flutter_presented);
+  assert(!qualification.adapter_opened);
   // Preview assembly must be valid before any export snapshot exists.
   assert(!hardware_encoder_callbacks_complete(assembly.encoder_callbacks));
   assert(assembly.encoder_factory);
   auto lazy_encoder = assembly.encoder_factory(snapshot);
   assert(lazy_encoder);
+  // The snapshot-bound lazy factory may prepare callbacks, but native encoder
+  // ownership is still deferred until the export session starts.
+  assert(!qualification.adapter_opened);
 
   HardwareEncodeConfig config{};
   config.backend = EncoderBackend::nvenc;
@@ -147,6 +154,7 @@ inline void run_production_platform_integration_cases() {
   config.require_atomic_finalize = true;
   ProductionHardwareEncodeSession session(config, std::move(lazy_encoder.callbacks));
   assert(session.start() == DIGITOR_RESULT_OK);
+  assert(qualification.adapter_opened);
   assert(session.submit({make_frame(0, 21), 0, 33333, true}) == DIGITOR_RESULT_OK);
   assert(session.finish() == DIGITOR_RESULT_OK);
   assert(lazy_encoder.zero_copy_qualified());
