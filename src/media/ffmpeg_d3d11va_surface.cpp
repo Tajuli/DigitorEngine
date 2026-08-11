@@ -139,6 +139,8 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
   out = {};
 #if !defined(_WIN32) || !defined(DIGITOR_HAS_FFMPEG)
   (void)opaque_frame;
+  (void)timestamp_us;
+  (void)normalized_timestamp;
   out.diagnostic = "FFmpeg D3D11VA extraction is unavailable in this build";
   return DIGITOR_RESULT_UNSUPPORTED;
 #else
