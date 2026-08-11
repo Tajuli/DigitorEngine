@@ -16,6 +16,7 @@ struct FfmpegD3D11vaExtractionResult {
   bool shareable_texture_reused{};
   bool shareable_copy_created{};
   bool shared_handle_created{};
+  bool acquire_sync_created{};
   bool no_cpu_transfer{};
   std::string diagnostic;
 };

@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -26,8 +27,11 @@ using Microsoft::WRL::ComPtr;
 struct SharedHandleOwner {
   AVFrame* frame{};
   ComPtr<ID3D11Texture2D> texture;
+  ComPtr<ID3D11Fence> acquire_fence;
   HANDLE handle{};
+  HANDLE acquire_fence_handle{};
   ~SharedHandleOwner() {
+    if (acquire_fence_handle) CloseHandle(acquire_fence_handle);
     if (handle) CloseHandle(handle);
     av_frame_free(&frame);
   }
@@ -93,7 +97,8 @@ bool make_shareable_slice_copy(ID3D11Texture2D* source,
     destination.Reset();
     return false;
   }
-  const UINT source_subresource = D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
+  const UINT source_subresource =
+      D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
   context->CopySubresourceRegion(destination.Get(), 0, 0, 0, 0,
                                  source, source_subresource, nullptr);
   return true;
@@ -112,6 +117,53 @@ bool create_nt_handle(ID3D11Texture2D* texture, HANDLE& handle,
       nullptr, &handle);
   if (FAILED(hr) || !handle) {
     diagnostic = "IDXGIResource1::CreateSharedHandle failed";
+    return false;
+  }
+  return true;
+}
+
+bool create_acquire_fence(ID3D11Texture2D* texture,
+                          ComPtr<ID3D11Fence>& fence,
+                          HANDLE& shared_handle,
+                          std::uint64_t& value,
+                          std::string& diagnostic) {
+  ComPtr<ID3D11Device> base_device;
+  texture->GetDevice(&base_device);
+  if (!base_device) {
+    diagnostic = "D3D11VA texture has no owning device for synchronization";
+    return false;
+  }
+  ComPtr<ID3D11Device5> device;
+  if (FAILED(base_device.As(&device)) || !device) {
+    diagnostic = "D3D11 device does not expose shared fence support";
+    return false;
+  }
+  ComPtr<ID3D11DeviceContext> base_context;
+  base_device->GetImmediateContext(&base_context);
+  ComPtr<ID3D11DeviceContext4> context;
+  if (!base_context || FAILED(base_context.As(&context)) || !context) {
+    diagnostic = "D3D11 immediate context does not expose fence signaling";
+    return false;
+  }
+  HRESULT hr = device->CreateFence(0, D3D11_FENCE_FLAG_SHARED,
+                                   IID_PPV_ARGS(&fence));
+  if (FAILED(hr) || !fence) {
+    diagnostic = "ID3D11Device5::CreateFence failed";
+    return false;
+  }
+  hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &shared_handle);
+  if (FAILED(hr) || !shared_handle) {
+    diagnostic = "ID3D11Fence::CreateSharedHandle failed";
+    fence.Reset();
+    return false;
+  }
+  value = 1;
+  hr = context->Signal(fence.Get(), value);
+  if (FAILED(hr)) {
+    CloseHandle(shared_handle);
+    shared_handle = nullptr;
+    fence.Reset();
+    diagnostic = "ID3D11DeviceContext4::Signal failed";
     return false;
   }
   return true;
@@ -197,6 +249,13 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     }
     owner->handle = shared;
     out.shared_handle_created = true;
+
+    std::uint64_t acquire_value = 0;
+    if (!create_acquire_fence(owner->texture.Get(), owner->acquire_fence,
+                              owner->acquire_fence_handle, acquire_value,
+                              out.diagnostic))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    out.acquire_sync_created = true;
     out.no_cpu_transfer = true;
 
     NativeMediaSurfaceDescriptor native{};
@@ -210,6 +269,10 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     native.native_handle = reinterpret_cast<std::uintptr_t>(shared);
     native.native_device = reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
     native.timestamp_us = normalized_timestamp ? timestamp_us : frame->best_effort_timestamp;
+    native.acquire_sync.type = NativeMediaSyncType::d3d11_fence;
+    native.acquire_sync.handle =
+        reinterpret_cast<std::uintptr_t>(owner->acquire_fence_handle);
+    native.acquire_sync.value = acquire_value;
     native.color.primaries = frame->color_primaries;
     native.color.transfer = frame->color_trc;
     native.color.matrix = frame->colorspace;
