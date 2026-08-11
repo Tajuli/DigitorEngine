@@ -1,6 +1,7 @@
 #include "platform/windows/windows_engine_production.hpp"
 
 #include <cstdint>
+#include <exception>
 #include <mutex>
 #include <utility>
 
@@ -36,6 +37,56 @@ bool complete_dependencies(const WindowsEngineProductionDependencies& value) noe
          !value.package_identity.empty() && !value.build_identity.empty();
 }
 
+ProductionDecoderFactory make_engine_vulkan_decoder_factory(
+    NativeMediaImportCallback importer) {
+  if (!importer) return {};
+  return [importer = std::move(importer)](
+             const std::string& media_path,
+             std::string& diagnostic)
+             -> std::unique_ptr<ProductionHardwareDecodeSession> {
+    try {
+      DecoderOptions decoder_options{};
+      decoder_options.hardware = HardwareDecode::dxva;
+      decoder_options.allow_cpu_fallback = false;
+      decoder_options.output_mode = DecodeOutputMode::native_gpu_surface;
+      decoder_options.require_zero_copy = true;
+
+      auto decoder = open_video_decoder(media_path, decoder_options);
+      if (!decoder) {
+        diagnostic = "strict D3D11VA decoder could not be opened";
+        return {};
+      }
+      const auto info = decoder->info();
+      if (!info.hardware_accelerated || info.selected != HardwareDecode::dxva ||
+          !info.native_surface_output ||
+          info.native_handle_type != NativeMediaHandleType::dxgi_shared_handle) {
+        diagnostic =
+            "strict Windows Vulkan decode requires D3D11VA DXGI shared surfaces";
+        return {};
+      }
+
+      ProductionHardwareDecodeOptions production_options{};
+      production_options.renderer_backend = DIGITOR_RENDERER_VULKAN;
+      production_options.render_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+      production_options.require_zero_copy = true;
+      production_options.require_monotonic_timestamps = true;
+      auto session = std::make_unique<ProductionHardwareDecodeSession>(
+          std::move(decoder), importer, production_options);
+      diagnostic.clear();
+      return session;
+    } catch (const std::bad_alloc&) {
+      diagnostic = "out of memory opening strict Windows Vulkan decoder";
+      return {};
+    } catch (const std::exception& error) {
+      diagnostic = error.what();
+      return {};
+    } catch (...) {
+      diagnostic = "unexpected strict Windows Vulkan decoder initialization failure";
+      return {};
+    }
+  };
+}
+
 bool capability_resources_complete(const BackendProductionCapability& backend,
                                    std::string& diagnostic) noexcept {
   if (!backend.valid() || !backend.frame_context_identity) {
@@ -53,8 +104,9 @@ bool capability_resources_complete(const BackendProductionCapability& backend,
   if (backend.backend == DIGITOR_RENDERER_VULKAN) {
     const auto* vk = std::get_if<VulkanProductionResources>(&backend.resources);
     if (!vk || !vk->instance || !vk->physical_device || !vk->device ||
-        !vk->queue) {
-      diagnostic = "Vulkan production capability is missing native device/queue ownership";
+        !vk->queue || !backend.native_media_import) {
+      diagnostic =
+          "Vulkan production capability is missing device/queue or native zero-copy import ownership";
       return false;
     }
     return true;
@@ -81,6 +133,14 @@ WindowsEngineProductionBuildResult assemble_windows_engine_production_build(
     if (!capability_resources_complete(backend, out.diagnostic)) {
       out.result = DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       return out;
+    }
+    if (backend.backend == DIGITOR_RENDERER_VULKAN) {
+      // Decode/import belongs to the selected Vulkan backend generation. Never
+      // accept an app/provider supplied importer here: once Vulkan is selected,
+      // a missing native importer is a hard production failure rather than a
+      // D3D12/CPU fallback opportunity.
+      dependencies.decoder_factory =
+          make_engine_vulkan_decoder_factory(backend.native_media_import);
     }
     if (!complete_dependencies(dependencies)) {
       out.result = DIGITOR_RESULT_NOT_INITIALIZED;
