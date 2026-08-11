@@ -1,4 +1,5 @@
 #include "core/engine.hpp"
+#include "core/engine_production_runtime.hpp"
 
 #include "cpu/cpu_backend.hpp"
 #include "digitor/native_node_mask_backend.hpp"
@@ -32,6 +33,22 @@ NativeNodeGraphResult production_graph_failure(
 
 Engine &Engine::instance() { static Engine engine; return engine; }
 
+DigitorResult Engine::finish_backend_initialization_locked() {
+    if (!backend_) return DIGITOR_RESULT_NOT_INITIALIZED;
+    const auto capability = backend_->production_capability();
+    if (capability.valid() && engine_production_runtime_supported_platform()) {
+        std::string diagnostic;
+        production_runtime_ = install_engine_production_runtime(capability, &diagnostic);
+        if (!production_runtime_) {
+            backend_->shutdown();
+            backend_.reset();
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+        }
+    }
+    initialized_ = true;
+    return DIGITOR_RESULT_OK;
+}
+
 DigitorResult Engine::initialize(const DigitorEngineConfig &config) {
     std::scoped_lock lock(mutex_);
     if (initialized_) return DIGITOR_RESULT_ALREADY_INITIALIZED;
@@ -56,8 +73,7 @@ DigitorResult Engine::initialize(const DigitorEngineConfig &config) {
     backend_ = explicit_cpu ? std::make_unique<CpuBackend>()
                             : create_gpu_backend(config.preferred_backend);
     if (backend_ && backend_->initialize(config.enable_validation != 0)) {
-        initialized_ = true;
-        return DIGITOR_RESULT_OK;
+        return finish_backend_initialization_locked();
     }
     if (backend_) {
         backend_->shutdown();
@@ -72,13 +88,12 @@ DigitorResult Engine::initialize(const DigitorEngineConfig &config) {
         if (!cpu->initialize(config.enable_validation != 0))
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         backend_ = std::move(cpu);
-        initialized_ = true;
-        return DIGITOR_RESULT_OK;
+        return finish_backend_initialization_locked();
     }
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 }
 
-DigitorResult Engine::shutdown(){std::scoped_lock lock(mutex_);if(!initialized_)return DIGITOR_RESULT_NOT_INITIALIZED;if(!contexts_.empty())return DIGITOR_RESULT_RESOURCE_IN_USE;if(backend_){backend_->shutdown();backend_.reset();}initialized_=false;return DIGITOR_RESULT_OK;}
+DigitorResult Engine::shutdown(){std::scoped_lock lock(mutex_);if(!initialized_)return DIGITOR_RESULT_NOT_INITIALIZED;if(!contexts_.empty())return DIGITOR_RESULT_RESOURCE_IN_USE;if(production_runtime_){const auto r=production_runtime_->shutdown();if(r!=DIGITOR_RESULT_OK)return r;production_runtime_.reset();}if(backend_){backend_->shutdown();backend_.reset();}initialized_=false;return DIGITOR_RESULT_OK;}
 bool Engine::is_initialized()const noexcept{std::scoped_lock lock(mutex_);return initialized_;}
 DigitorRendererInfo Engine::renderer_info()const noexcept{std::scoped_lock lock(mutex_);return backend_?backend_->info():DigitorRendererInfo{};}
 DigitorResult Engine::create_context(RenderContext**out){if(!out)return DIGITOR_RESULT_INVALID_ARGUMENT;*out=nullptr;std::scoped_lock lock(mutex_);if(!initialized_||!backend_)return DIGITOR_RESULT_NOT_INITIALIZED;try{*out=new RenderContext(*backend_);contexts_.insert(*out);}catch(const std::bad_alloc&){return DIGITOR_RESULT_OUT_OF_MEMORY;}return DIGITOR_RESULT_OK;}

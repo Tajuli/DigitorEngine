@@ -8,6 +8,7 @@
 #include "digitor/digitor.h"
 #include "gpu/gpu_backend.hpp"
 #include "digitor/native_node_executor.hpp"
+#include "digitor/production_integration_runtime.hpp"
 
 namespace digitor {
 class Engine final {
@@ -36,10 +37,12 @@ public:
   NativeNodeGraphResult execute_native_node_graph(const ProductionNodeGraph&,const ProcessedGpuFramePtr&,std::int64_t);
 private:
   Engine() = default;
+  DigitorResult finish_backend_initialization_locked();
   mutable std::mutex mutex_;
   bool initialized_{false};
   DigitorEngineConfig config_{};
   std::unique_ptr<IRenderBackend> backend_;
+  std::unique_ptr<ProductionIntegrationRuntime> production_runtime_;
   std::unordered_set<RenderContext *> contexts_;
 };
 } // namespace digitor

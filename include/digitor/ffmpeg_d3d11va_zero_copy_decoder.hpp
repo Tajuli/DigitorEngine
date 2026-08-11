@@ -42,7 +42,8 @@ class FfmpegD3D11vaZeroCopyDecoder final {
 public:
   FfmpegD3D11vaZeroCopyDecoder(void* d3d12_device,
                                FfmpegD3D11vaZeroCopyOptions options = {},
-                               LegacyCpuFallbackCallback legacy = {});
+                               LegacyCpuFallbackCallback legacy = {},
+                               const void* frame_context_identity = nullptr);
   ~FfmpegD3D11vaZeroCopyDecoder();
 
   FfmpegD3D11vaZeroCopyDecoder(const FfmpegD3D11vaZeroCopyDecoder&) = delete;

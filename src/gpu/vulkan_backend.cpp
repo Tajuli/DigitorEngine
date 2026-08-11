@@ -995,6 +995,7 @@ public:
     BackendProductionCapability out{};
     out.backend = DIGITOR_RENDERER_VULKAN;
     out.context_identity = backend_context_identity();
+    out.frame_context_identity = this;
     out.resources = VulkanProductionResources{
         reinterpret_cast<void*>(in_), reinterpret_cast<void*>(ph_),
         reinterpret_cast<void*>(d_), reinterpret_cast<void*>(queue_), family_};

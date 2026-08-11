@@ -22,10 +22,13 @@ using BackendProductionResources = std::variant<std::monostate,
 struct BackendProductionCapability {
   DigitorRendererBackend backend{DIGITOR_RENDERER_CPU};
   std::uint64_t context_identity{};
+  // Exact ProcessedGpuFrame context pointer for the initialized backend generation.
+  // Engine fills this from the selected IRenderBackend instance before provider install.
+  const void* frame_context_identity{};
   BackendProductionResources resources;
   [[nodiscard]] bool valid() const noexcept {
     return backend != DIGITOR_RENDERER_CPU && context_identity != 0 &&
-           resources.index() != 0;
+           frame_context_identity != nullptr && resources.index() != 0;
   }
 };
 

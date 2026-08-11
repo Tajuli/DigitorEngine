@@ -421,6 +421,7 @@ public:
     BackendProductionCapability out{};
     out.backend = DIGITOR_RENDERER_METAL;
     out.context_identity = backend_context_identity();
+    out.frame_context_identity = this;
     out.resources = MetalProductionResources{(__bridge void*)device_};
     return out;
   }

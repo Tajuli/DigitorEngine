@@ -610,6 +610,7 @@ public:
     BackendProductionCapability out{};
     out.backend = DIGITOR_RENDERER_D3D12;
     out.context_identity = backend_context_identity();
+    out.frame_context_identity = this;
     out.resources = D3D12ProductionResources{device_.Get(), queue_.Get()};
     return out;
   }

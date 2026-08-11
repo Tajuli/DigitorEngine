@@ -8,9 +8,11 @@ namespace digitor {
 FfmpegD3D11vaZeroCopyDecoder::FfmpegD3D11vaZeroCopyDecoder(
     void* d3d12_device,
     FfmpegD3D11vaZeroCopyOptions options,
-    LegacyCpuFallbackCallback legacy)
+    LegacyCpuFallbackCallback legacy,
+    const void* frame_context_identity)
     : options_(options), legacy_(std::move(legacy)),
-      converter_(std::make_unique<WindowsD3D12YuvConverter>(d3d12_device)),
+      converter_(std::make_unique<WindowsD3D12YuvConverter>(
+          d3d12_device, frame_context_identity)),
       importer_(std::make_unique<WindowsD3D12ZeroCopyImporter>(
           d3d12_device, converter_->callback())) {
   if (options_.fallback ==
