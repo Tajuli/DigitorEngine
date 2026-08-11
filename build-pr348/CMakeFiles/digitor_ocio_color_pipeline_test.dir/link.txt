@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_ocio_color_pipeline_test.dir/link.d CMakeFiles/digitor_ocio_color_pipeline_test.dir/tests/test_ocio_color_pipeline.cpp.o -o digitor_ocio_color_pipeline_test  libdigitor_engine.a

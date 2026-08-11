@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_hsl_qualifier_native_tests.dir/link.d CMakeFiles/digitor_hsl_qualifier_native_tests.dir/tests/test_hsl_qualifier_native.cpp.o -o digitor_hsl_qualifier_native_tests  libdigitor_engine.a

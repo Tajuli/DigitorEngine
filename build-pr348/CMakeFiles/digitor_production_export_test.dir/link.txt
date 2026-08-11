@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_production_export_test.dir/link.d CMakeFiles/digitor_production_export_test.dir/tests/test_production_export.cpp.o -o digitor_production_export_test  libdigitor_engine.a

@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_professional_lut_scopes_test.dir/link.d CMakeFiles/digitor_professional_lut_scopes_test.dir/tests/test_professional_lut_scopes.cpp.o -o digitor_professional_lut_scopes_test  libdigitor_engine.a

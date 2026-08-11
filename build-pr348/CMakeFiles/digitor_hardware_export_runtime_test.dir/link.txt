@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_hardware_export_runtime_test.dir/link.d CMakeFiles/digitor_hardware_export_runtime_test.dir/tests/test_hardware_export_runtime.cpp.o -o digitor_hardware_export_runtime_test  libdigitor_engine.a

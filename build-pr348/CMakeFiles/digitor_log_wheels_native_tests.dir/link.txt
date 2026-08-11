@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_log_wheels_native_tests.dir/link.d CMakeFiles/digitor_log_wheels_native_tests.dir/tests/test_log_wheels_native.cpp.o -o digitor_log_wheels_native_tests  libdigitor_engine.a

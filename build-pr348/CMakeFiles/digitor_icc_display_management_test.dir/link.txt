@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_icc_display_management_test.dir/link.d CMakeFiles/digitor_icc_display_management_test.dir/tests/test_icc_display_management.cpp.o -o digitor_icc_display_management_test  libdigitor_engine.a

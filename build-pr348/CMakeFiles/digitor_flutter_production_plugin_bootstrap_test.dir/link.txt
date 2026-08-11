@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_flutter_production_plugin_bootstrap_test.dir/link.d CMakeFiles/digitor_flutter_production_plugin_bootstrap_test.dir/tests/test_flutter_production_plugin_bootstrap.cpp.o -o digitor_flutter_production_plugin_bootstrap_test  libdigitor_engine.a

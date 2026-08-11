@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_native_preview_presentation_test.dir/link.d CMakeFiles/digitor_native_preview_presentation_test.dir/tests/test_native_preview_presentation.cpp.o -o digitor_native_preview_presentation_test  libdigitor_engine.a
