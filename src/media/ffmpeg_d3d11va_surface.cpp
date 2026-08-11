@@ -58,27 +58,42 @@ DigitorResult hr_result(HRESULT hr) noexcept {
                     : DIGITOR_RESULT_OK;
 }
 
-bool make_shareable_copy(ID3D11Texture2D* source,
-                         ComPtr<ID3D11Texture2D>& destination,
-                         std::string& diagnostic) {
-  D3D11_TEXTURE2D_DESC desc{};
-  source->GetDesc(&desc);
+bool make_shareable_slice_copy(ID3D11Texture2D* source,
+                               std::uint32_t source_slice,
+                               ComPtr<ID3D11Texture2D>& destination,
+                               std::string& diagnostic) {
+  D3D11_TEXTURE2D_DESC source_desc{};
+  source->GetDesc(&source_desc);
+  if (source_slice >= source_desc.ArraySize || source_desc.MipLevels == 0) {
+    diagnostic = "D3D11VA decoder array slice is out of range";
+    return false;
+  }
+
   ComPtr<ID3D11Device> device;
   source->GetDevice(&device);
   if (!device) {
     diagnostic = "D3D11VA texture has no owning device";
     return false;
   }
-  desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-  desc.MiscFlags &= ~D3D11_RESOURCE_MISC_SHARED;
-  desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
-  desc.CPUAccessFlags = 0;
-  desc.Usage = D3D11_USAGE_DEFAULT;
-  const HRESULT hr = device->CreateTexture2D(&desc, nullptr, &destination);
+
+  auto destination_desc = source_desc;
+  // Normalize the decoder array slice to a standalone texture. D3D12 and
+  // Vulkan external-memory consumers then import one deterministic image
+  // instead of depending on decoder-owned texture-array subresource semantics.
+  destination_desc.ArraySize = 1;
+  destination_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  destination_desc.MiscFlags &= ~D3D11_RESOURCE_MISC_SHARED;
+  destination_desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+  destination_desc.CPUAccessFlags = 0;
+  destination_desc.Usage = D3D11_USAGE_DEFAULT;
+
+  const HRESULT hr =
+      device->CreateTexture2D(&destination_desc, nullptr, &destination);
   if (FAILED(hr) || !destination) {
-    diagnostic = "failed to create shareable D3D11 decoder texture";
+    diagnostic = "failed to create normalized shareable D3D11 decoder texture";
     return false;
   }
+
   ComPtr<ID3D11DeviceContext> context;
   device->GetImmediateContext(&context);
   if (!context) {
@@ -86,7 +101,11 @@ bool make_shareable_copy(ID3D11Texture2D* source,
     destination.Reset();
     return false;
   }
-  context->CopyResource(destination.Get(), source);
+
+  const UINT source_subresource =
+      D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
+  context->CopySubresourceRegion(destination.Get(), 0, 0, 0, 0,
+                                 source, source_subresource, nullptr);
   return true;
 }
 
@@ -165,17 +184,26 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
 
     owner->texture = texture;
     HANDLE shared{};
-    if (create_nt_handle(owner->texture.Get(), shared, out.diagnostic)) {
+    std::uint32_t exported_slice = slice;
+
+    // A decoder texture array is not exported directly. External consumers
+    // must not have to infer or preserve FFmpeg's array-slice semantics across
+    // D3D11 -> D3D12/Vulkan sharing. Only an already-standalone slice can be
+    // reused without a GPU copy.
+    if (desc.ArraySize == 1 && slice == 0 &&
+        create_nt_handle(owner->texture.Get(), shared, out.diagnostic)) {
       out.shareable_texture_reused = true;
+      exported_slice = 0;
     } else {
       out.diagnostic.clear();
       ComPtr<ID3D11Texture2D> copy;
-      if (!make_shareable_copy(texture, copy, out.diagnostic))
+      if (!make_shareable_slice_copy(texture, slice, copy, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       owner->texture = std::move(copy);
       if (!create_nt_handle(owner->texture.Get(), shared, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       out.shareable_copy_created = true;
+      exported_slice = 0;
     }
     owner->handle = shared;
     out.shared_handle_created = true;
@@ -188,7 +216,7 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     native.width = static_cast<std::uint32_t>(frame->width);
     native.height = static_cast<std::uint32_t>(frame->height);
     native.plane_count = 2;
-    native.array_slice = slice;
+    native.array_slice = exported_slice;
     native.native_handle = reinterpret_cast<std::uintptr_t>(shared);
     native.native_device = reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
     native.timestamp_us = frame->best_effort_timestamp;
@@ -204,7 +232,7 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     out.surface.format = windows_format(desc.Format);
     out.surface.width = static_cast<std::uint32_t>(frame->width);
     out.surface.height = static_cast<std::uint32_t>(frame->height);
-    out.surface.array_slice = slice;
+    out.surface.array_slice = exported_slice;
     out.surface.shared_handle = reinterpret_cast<std::uintptr_t>(shared);
     out.surface.decoder_device = reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
     out.surface.timestamp_us = frame->best_effort_timestamp;
