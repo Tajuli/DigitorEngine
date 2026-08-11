@@ -61,10 +61,21 @@ bool ProductionIntegrationRuntime::active() const noexcept {
 
 DigitorResult ProductionIntegrationRuntime::shutdown() noexcept {
   if (!state_) return DIGITOR_RESULT_OK;
-  state_->active.store(false, std::memory_order_release);
+
+  // Uninstall is the ownership gate. A registered Flutter production host may
+  // still own sessions that reference this exact renderer generation. If the
+  // bootstrap refuses the uninstall with RESOURCE_IN_USE, keep the generation
+  // active and retain the factory/backend ownership so the same caller can
+  // destroy the session and retry shutdown safely.
   const auto result = uninstall_flutter_production_provider_builder(platform_);
-  if (result == DIGITOR_RESULT_OK) state_.reset();
-  return result;
+  if (result != DIGITOR_RESULT_OK) return result;
+
+  // Once the builder has been removed there can be no new callbacks entering
+  // this generation through the process-wide Flutter bootstrap. Retire the
+  // generation only after that uninstall has committed successfully.
+  state_->active.store(false, std::memory_order_release);
+  state_.reset();
+  return DIGITOR_RESULT_OK;
 }
 
 }  // namespace digitor
