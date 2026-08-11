@@ -68,32 +68,24 @@ bool make_shareable_slice_copy(ID3D11Texture2D* source,
     diagnostic = "D3D11VA decoder array slice is out of range";
     return false;
   }
-
   ComPtr<ID3D11Device> device;
   source->GetDevice(&device);
   if (!device) {
     diagnostic = "D3D11VA texture has no owning device";
     return false;
   }
-
   auto destination_desc = source_desc;
-  // Normalize the decoder array slice to a standalone texture. D3D12 and
-  // Vulkan external-memory consumers then import one deterministic image
-  // instead of depending on decoder-owned texture-array subresource semantics.
   destination_desc.ArraySize = 1;
   destination_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
   destination_desc.MiscFlags &= ~D3D11_RESOURCE_MISC_SHARED;
   destination_desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
   destination_desc.CPUAccessFlags = 0;
   destination_desc.Usage = D3D11_USAGE_DEFAULT;
-
-  const HRESULT hr =
-      device->CreateTexture2D(&destination_desc, nullptr, &destination);
+  const HRESULT hr = device->CreateTexture2D(&destination_desc, nullptr, &destination);
   if (FAILED(hr) || !destination) {
     diagnostic = "failed to create normalized shareable D3D11 decoder texture";
     return false;
   }
-
   ComPtr<ID3D11DeviceContext> context;
   device->GetImmediateContext(&context);
   if (!context) {
@@ -101,9 +93,7 @@ bool make_shareable_slice_copy(ID3D11Texture2D* source,
     destination.Reset();
     return false;
   }
-
-  const UINT source_subresource =
-      D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
+  const UINT source_subresource = D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
   context->CopySubresourceRegion(destination.Get(), 0, 0, 0, 0,
                                  source, source_subresource, nullptr);
   return true;
@@ -140,12 +130,17 @@ WindowsZeroCopyFormat windows_format(DXGI_FORMAT format) noexcept {
 } // namespace
 #endif
 
-DigitorResult extract_ffmpeg_d3d11va_surface(
+namespace {
+DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     void* opaque_frame,
+    std::int64_t timestamp_us,
+    bool normalized_timestamp,
     FfmpegD3D11vaExtractionResult& out) noexcept {
   out = {};
 #if !defined(_WIN32) || !defined(DIGITOR_HAS_FFMPEG)
   (void)opaque_frame;
+  (void)timestamp_us;
+  (void)normalized_timestamp;
   out.diagnostic = "FFmpeg D3D11VA extraction is unavailable in this build";
   return DIGITOR_RESULT_UNSUPPORTED;
 #else
@@ -185,11 +180,6 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     owner->texture = texture;
     HANDLE shared{};
     std::uint32_t exported_slice = slice;
-
-    // A decoder texture array is not exported directly. External consumers
-    // must not have to infer or preserve FFmpeg's array-slice semantics across
-    // D3D11 -> D3D12/Vulkan sharing. Only an already-standalone slice can be
-    // reused without a GPU copy.
     if (desc.ArraySize == 1 && slice == 0 &&
         create_nt_handle(owner->texture.Get(), shared, out.diagnostic)) {
       out.shareable_texture_reused = true;
@@ -219,7 +209,7 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     native.array_slice = exported_slice;
     native.native_handle = reinterpret_cast<std::uintptr_t>(shared);
     native.native_device = reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
-    native.timestamp_us = frame->best_effort_timestamp;
+    native.timestamp_us = normalized_timestamp ? timestamp_us : frame->best_effort_timestamp;
     native.color.primaries = frame->color_primaries;
     native.color.transfer = frame->color_trc;
     native.color.matrix = frame->colorspace;
@@ -235,7 +225,7 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     out.surface.array_slice = exported_slice;
     out.surface.shared_handle = reinterpret_cast<std::uintptr_t>(shared);
     out.surface.decoder_device = reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
-    out.surface.timestamp_us = frame->best_effort_timestamp;
+    out.surface.timestamp_us = native.timestamp_us;
     out.surface.color.matrix = matrix_from_av(frame->colorspace);
     out.surface.color.chroma_siting = chroma_from_av(frame->chroma_location);
     out.surface.color.full_range = frame->color_range == AVCOL_RANGE_JPEG;
@@ -254,6 +244,22 @@ DigitorResult extract_ffmpeg_d3d11va_surface(
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
 #endif
+}
+} // namespace
+
+DigitorResult extract_ffmpeg_d3d11va_surface(
+    void* opaque_frame,
+    FfmpegD3D11vaExtractionResult& out) noexcept {
+  return extract_ffmpeg_d3d11va_surface_impl(
+      opaque_frame, 0, false, out);
+}
+
+DigitorResult extract_ffmpeg_d3d11va_surface(
+    void* opaque_frame,
+    std::int64_t timestamp_us,
+    FfmpegD3D11vaExtractionResult& out) noexcept {
+  return extract_ffmpeg_d3d11va_surface_impl(
+      opaque_frame, timestamp_us, true, out);
 }
 
 } // namespace digitor
