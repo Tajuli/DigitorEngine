@@ -163,6 +163,15 @@ if(DIGITOR_BUILD_TESTS)
     foreach(target digitor_engine_owned_platform_production_test digitor_production_integration_runtime_test digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_production_media_graph_runtime_test digitor_flutter_production_host_adapter_test digitor_flutter_production_plugin_bootstrap_test digitor_production_media_c_api_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_image_io_test digitor_native_still_image_host_test digitor_native_preview_presentation_test digitor_production_hardware_decode_test digitor_native_surface_import_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
+        # These contract executables intentionally use assert() for executable
+        # qualification. Keep those checks and their setup side effects enabled
+        # in Release/RelWithDebInfo builds instead of allowing NDEBUG to erase
+        # lifecycle, zero-copy, and export qualification coverage.
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${target} PRIVATE -UNDEBUG)
+        endif()
     endforeach()
     add_test(NAME digitor_audio_latency_probe COMMAND digitor_audio_latency_probe_test)
     add_test(NAME digitor_audio_sync_compensation COMMAND digitor_audio_sync_compensation_test)

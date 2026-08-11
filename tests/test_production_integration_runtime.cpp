@@ -168,22 +168,56 @@ int main() {
   REQUIRE(std::string(digitor_flutter_production_plugin_last_error()).empty());
 
   const auto generation = runtime->generation();
+
+  // Shutdown is transactional. While the Flutter host still owns this
+  // generation, uninstall must fail without retiring the runtime callback or
+  // losing the builder/registration ownership needed for a clean retry.
   REQUIRE(runtime->shutdown() == DIGITOR_RESULT_RESOURCE_IN_USE);
-  REQUIRE(!runtime->active());
+  REQUIRE(runtime->active());
+  REQUIRE(runtime->generation() == generation);
+  REQUIRE(flutter_production_provider_builder_installed(platform));
+  REQUIRE(digitor_flutter_production_plugin_attached() == 1);
+  REQUIRE(digitor_flutter_production_host_registered() == 1);
+
+  // A second runtime cannot replace the still-owned generation after the failed
+  // shutdown. This guards against cross-generation callback/resource reuse.
+  diagnostic.clear();
+  auto overlapping = ProductionIntegrationRuntime::install(
+      platform,
+      [](const FlutterProductionPluginAttachment&, std::string&)
+          -> std::optional<FlutterProductionProviderBuild> {
+        return complete_build();
+      },
+      &diagnostic);
+  REQUIRE(!overlapping);
+  REQUIRE(!diagnostic.empty());
+  REQUIRE(runtime->active());
+  REQUIRE(runtime->generation() == generation);
+
+  // Release the Flutter owner, then retry the exact same runtime shutdown. Only
+  // the successful retry may retire the generation and remove the builder.
   REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
          DIGITOR_RESULT_OK);
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
+  REQUIRE(digitor_flutter_production_host_registered() == 0);
+  REQUIRE(runtime->active());
   REQUIRE(runtime->shutdown() == DIGITOR_RESULT_OK);
+  REQUIRE(!runtime->active());
+  REQUIRE(runtime->generation() == 0);
   REQUIRE(!flutter_production_provider_builder_installed(platform));
 
-  // A later runtime generation can still install normally when Flutter is not
-  // attached, preserving the existing explicit lifecycle contract.
+  // A later runtime generation can install normally only after the previous
+  // generation has committed shutdown. Its monotonically newer identity proves
+  // that shutdown/re-init cannot silently reuse the retired runtime generation.
   auto second = ProductionIntegrationRuntime::install(
       platform,
       [](const FlutterProductionPluginAttachment&, std::string&)
           -> std::optional<FlutterProductionProviderBuild> {
         return std::nullopt;
       });
-  REQUIRE(second && second->generation() > generation);
+  REQUIRE(second && second->active());
+  REQUIRE(second->generation() > generation);
   REQUIRE(second->shutdown() == DIGITOR_RESULT_OK);
+  REQUIRE(!flutter_production_provider_builder_installed(platform));
   return 0;
 }
