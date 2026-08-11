@@ -52,7 +52,7 @@ int main() {
 
   // Windows DXGI shared decoder surfaces are a valid Vulkan zero-copy source.
   // The actual import still fails closed until the selected renderer supplies
-  // its backend-owned Win32 external-memory callback.
+  // its renderer-owned Win32 external-memory callback.
   assert(native_surface_backend_compatible(surface()->descriptor(),
                                            DIGITOR_RENDERER_VULKAN));
 
