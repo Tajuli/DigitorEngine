@@ -1,4 +1,5 @@
 #include "digitor/media.hpp"
+#include "digitor/ffmpeg_d3d11va_surface.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -221,12 +222,20 @@ protected:
   descriptor.pixel_format=native_pixel_format(software_format);
 
   switch(static_cast<AVPixelFormat>(frame_->format)){
-    case AV_PIX_FMT_D3D11:
-      descriptor.platform=NativeMediaPlatform::windows;
-      descriptor.handle_type=NativeMediaHandleType::d3d11_texture2d;
-      descriptor.native_handle=reinterpret_cast<std::uintptr_t>(frame_->data[0]);
-      descriptor.array_slice=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(frame_->data[1]));
-      break;
+    case AV_PIX_FMT_D3D11: {
+#if defined(_WIN32)
+      FfmpegD3D11vaExtractionResult extracted{};
+      const auto result = extract_ffmpeg_d3d11va_surface(
+          frame_, timestamp(), extracted);
+      if (result != DIGITOR_RESULT_OK || !extracted.surface.lifetime)
+        throw std::runtime_error(extracted.diagnostic.empty()
+            ? "D3D11VA surface could not be normalized to a DXGI shared handle"
+            : extracted.diagnostic);
+      return extracted.surface.lifetime;
+#else
+      return {};
+#endif
+    }
     case AV_PIX_FMT_VIDEOTOOLBOX:
       descriptor.platform=NativeMediaPlatform::apple;
       descriptor.handle_type=NativeMediaHandleType::cv_pixel_buffer;
@@ -285,7 +294,7 @@ protected:
  DecoderInfo decoder_info()const {
   NativeMediaHandleType handle=NativeMediaHandleType::none;
   if(options_.output_mode==DecodeOutputMode::native_gpu_surface||options_.require_zero_copy){
-    if(hw_pixel_format_==AV_PIX_FMT_D3D11)handle=NativeMediaHandleType::d3d11_texture2d;
+    if(hw_pixel_format_==AV_PIX_FMT_D3D11)handle=NativeMediaHandleType::dxgi_shared_handle;
     else if(hw_pixel_format_==AV_PIX_FMT_VIDEOTOOLBOX)handle=NativeMediaHandleType::cv_pixel_buffer;
   }
   return {selected_decode_,hardware_accelerated_,hardware_name(selected_decode_),handle!=NativeMediaHandleType::none,handle};
