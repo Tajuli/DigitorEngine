@@ -1,0 +1,16 @@
+--- a/src/gpu/vulkan_backend.cpp
++++ b/src/gpu/vulkan_backend.cpp
+@@ -1551,10 +1551,10 @@
+     out.resources = VulkanProductionResources{
+         reinterpret_cast<void*>(in_), reinterpret_cast<void*>(ph_),
+         reinterpret_cast<void*>(d_), reinterpret_cast<void*>(queue_), family_};
+     out.native_media_import =
+-        [this](const ZeroCopyImportRequest& request,
+-               ProcessedGpuFramePtr& frame) noexcept {
+-          return import_native_media(request, frame);
++        [self = const_cast<VulkanBackend*>(this)](
++            const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& frame) noexcept {
++          return self->import_native_media(request, frame);
+         };
+     return out;
+   }
