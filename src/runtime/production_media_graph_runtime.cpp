@@ -90,6 +90,12 @@ DigitorResult ProductionMediaGraphRuntime::render_frame(
         "production decoder did not return a ready GPU-resident frame; CPU fallback is forbidden");
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
+  if (!Engine::instance().production_frame_bound_to_current_backend(
+          decoded.gpu_frame)) {
+    set_diagnostic(diagnostic,
+        "decoded GPU frame is not bound to the selected production renderer backend/context; stale or cross-backend frames are forbidden");
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
 
   NativeNodeGraphResult rendered = Engine::instance().execute_native_node_graph(
       *graph_, decoded.gpu_frame, decoded.pts);
@@ -101,6 +107,12 @@ DigitorResult ProductionMediaGraphRuntime::render_frame(
         : std::move(rendered.message));
     return rendered.backend_result == DIGITOR_RESULT_OK
         ? DIGITOR_RESULT_INTERNAL_ERROR : rendered.backend_result;
+  }
+  if (!Engine::instance().production_frame_bound_to_current_backend(
+          rendered.frame)) {
+    set_diagnostic(diagnostic,
+        "rendered GPU frame is not bound to the selected production renderer backend/context; preview/export delivery is forbidden");
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
   output.frame = std::move(rendered.frame);
