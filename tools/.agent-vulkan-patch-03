@@ -1,0 +1,119 @@
+    const float uv_max =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 960.0f : 240.0f;
++    const float uv_mid =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 512.0f : 128.0f;
++    if (descriptor.color.full_range) {
++      constants.range[0] = 0.0f;
++      constants.range[1] = 1.0f;
++      constants.range[2] = uv_mid / max_code;
++      constants.range[3] = 1.0f;
++    } else {
++      constants.range[0] = y_min / max_code;
++      constants.range[1] = max_code / (y_max - y_min);
++      constants.range[2] = uv_mid / max_code;
++      constants.range[3] = max_code / (uv_max - uv_min);
++    }
++    constants.width = descriptor.width;
++    constants.height = descriptor.height;
++    constants.chroma_siting = descriptor.color.chroma_location;
++
++    VkPushConstantRange push_range{};
++    push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
++    push_range.size = sizeof(constants);
++    VkPipelineLayoutCreateInfo layout_info{
++        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++    layout_info.setLayoutCount = 1;
++    layout_info.pSetLayouts = &descriptor_layout;
++    layout_info.pushConstantRangeCount = 1;
++    layout_info.pPushConstantRanges = &push_range;
++    if (tracked_vkCreatePipelineLayout(d_, &layout_info, nullptr,
++                                       &pipeline_layout) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkShaderModuleCreateInfo shader_info{
++        VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
++    shader_info.codeSize = binary.binary.size();
++    shader_info.pCode =
++        reinterpret_cast<const std::uint32_t*>(binary.binary.data());
++    if (tracked_vkCreateShaderModule(d_, &shader_info, nullptr, &shader) !=
++        VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkComputePipelineCreateInfo pipeline_info{
++        VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
++    pipeline_info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
++    pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
++    pipeline_info.stage.module = shader;
++    pipeline_info.stage.pName = "main";
++    pipeline_info.layout = pipeline_layout;
++    if (tracked_vkCreateComputePipelines(d_, VK_NULL_HANDLE, 1, &pipeline_info,
++                                         nullptr, &pipeline) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkDescriptorPoolSize pool_sizes[2]{{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2},
++                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
++    VkDescriptorPoolCreateInfo pool_info{
++        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
++    pool_info.maxSets = 1;
++    pool_info.poolSizeCount = 2;
++    pool_info.pPoolSizes = pool_sizes;
++    if (tracked_vkCreateDescriptorPool(d_, &pool_info, nullptr,
++                                       &descriptor_pool) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkDescriptorSet descriptor_set{};
++    VkDescriptorSetAllocateInfo set_info{
++        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
++    set_info.descriptorPool = descriptor_pool;
++    set_info.descriptorSetCount = 1;
++    set_info.pSetLayouts = &descriptor_layout;
++    if (tracked_vkAllocateDescriptorSets(d_, &set_info, &descriptor_set) !=
++        VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkDescriptorImageInfo image_infos[3]{};
++    image_infos[0].imageView = y_view;
++    image_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
++    image_infos[1].imageView = uv_view;
++    image_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
++    image_infos[2].imageView = owner->output_view;
++    image_infos[2].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
++    VkWriteDescriptorSet writes[3]{};
++    for (std::uint32_t index = 0; index < 3; ++index) {
++      writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
++      writes[index].dstSet = descriptor_set;
++      writes[index].dstBinding = index;
++      writes[index].descriptorCount = 1;
++      writes[index].descriptorType = index < 2 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
++                                               : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
++      writes[index].pImageInfo = &image_infos[index];
++    }
++    vkUpdateDescriptorSets(d_, 3, writes, 0, nullptr);
++
++    VkCommandBufferAllocateInfo command_info{
++        VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++    command_info.commandPool = pool_;
++    command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++    command_info.commandBufferCount = 1;
++    if (tracked_vkAllocateCommandBuffers(d_, &command_info, &command) !=
++        VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++    if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkImageMemoryBarrier source_barrier{
++        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
++    source_barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
++    source_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
++    source_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
++    source_barrier.dstQueueFamilyIndex = family_;
++    source_barrier.srcAccessMask = 0;
++    source_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
++    source_barrier.image = source_image;
++    source_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++    VkImageMemoryBarrier output_barrier{
++        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
++    output_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    output_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
++    output_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    output_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
++    output_barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
++    output_barrier.image = owner->output;
++    output_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0,
