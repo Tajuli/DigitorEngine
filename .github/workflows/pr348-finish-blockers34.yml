@@ -17,7 +17,9 @@ jobs:
         with:
           ref: agent/engine-owned-platform-production
       - name: Apply source completion patch
-        run: python3 tool/pr348_finish.py
+        run: |
+          python3 tool/pr348_finish.py
+          python3 tool/pr348_fix_test_include.py
       - name: Configure Release tests
         run: cmake -S . -B build-pr348 -DDIGITOR_BUILD_TESTS=ON -DDIGITOR_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
       - name: Build Release tests
