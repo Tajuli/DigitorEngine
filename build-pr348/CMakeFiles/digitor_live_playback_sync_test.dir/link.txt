@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_live_playback_sync_test.dir/link.d CMakeFiles/digitor_live_playback_sync_test.dir/tests/test_live_playback_sync.cpp.o -o digitor_live_playback_sync_test  libdigitor_engine.a

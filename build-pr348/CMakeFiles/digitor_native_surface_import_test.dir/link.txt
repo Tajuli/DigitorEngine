@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_native_surface_import_test.dir/link.d CMakeFiles/digitor_native_surface_import_test.dir/tests/test_native_surface_import.cpp.o -o digitor_native_surface_import_test  libdigitor_engine.a

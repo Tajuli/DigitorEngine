@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_professional_audio_engine_test.dir/link.d CMakeFiles/digitor_professional_audio_engine_test.dir/tests/test_professional_audio_engine.cpp.o -o digitor_professional_audio_engine_test  libdigitor_engine.a

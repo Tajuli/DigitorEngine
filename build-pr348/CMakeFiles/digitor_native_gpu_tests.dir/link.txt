@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_native_gpu_tests.dir/link.d CMakeFiles/digitor_native_gpu_tests.dir/tests/test_native_gpu.cpp.o -o digitor_native_gpu_tests  libdigitor_engine.a

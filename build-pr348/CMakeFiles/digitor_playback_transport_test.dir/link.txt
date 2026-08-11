@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_playback_transport_test.dir/link.d CMakeFiles/digitor_playback_transport_test.dir/tests/test_playback_transport.cpp.o -o digitor_playback_transport_test  libdigitor_engine.a

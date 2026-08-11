@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_camera_raw_test.dir/link.d CMakeFiles/digitor_camera_raw_test.dir/tests/test_camera_raw.cpp.o -o digitor_camera_raw_test  libdigitor_engine.a

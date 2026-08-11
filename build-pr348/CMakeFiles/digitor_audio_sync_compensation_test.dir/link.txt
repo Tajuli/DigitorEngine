@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_audio_sync_compensation_test.dir/link.d CMakeFiles/digitor_audio_sync_compensation_test.dir/tests/test_audio_sync_compensation.cpp.o -o digitor_audio_sync_compensation_test  libdigitor_engine.a

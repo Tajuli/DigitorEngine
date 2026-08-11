@@ -23,7 +23,7 @@ struct AndroidEngineProductionDependencies final {
   std::function<DigitorResult(const FlutterProductionPluginAttachment&,
                               const ProcessedGpuFramePtr&, std::uint64_t,
                               std::string&)> flutter_present;
-  EncoderBackend encoder_backend{EncoderBackend::quick_sync};
+  EncoderBackend encoder_backend{EncoderBackend::media_codec};
   std::int32_t fps_num{30};
   std::int32_t fps_den{1};
   std::int64_t video_bitrate{12'000'000};

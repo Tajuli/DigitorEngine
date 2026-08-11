@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_hdr_ecosystem_test.dir/link.d CMakeFiles/digitor_hdr_ecosystem_test.dir/tests/test_hdr_ecosystem.cpp.o -o digitor_hdr_ecosystem_test  libdigitor_engine.a

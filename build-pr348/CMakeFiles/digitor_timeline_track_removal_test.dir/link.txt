@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_timeline_track_removal_test.dir/link.d CMakeFiles/digitor_timeline_track_removal_test.dir/tests/test_timeline_track_removal.cpp.o -o digitor_timeline_track_removal_test  libdigitor_engine.a

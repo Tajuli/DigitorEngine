@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_flutter_production_host_adapter_test.dir/link.d CMakeFiles/digitor_flutter_production_host_adapter_test.dir/tests/test_flutter_production_host_adapter.cpp.o -o digitor_flutter_production_host_adapter_test  libdigitor_engine.a

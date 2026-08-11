@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_broadcast_color_matching_test.dir/link.d CMakeFiles/digitor_broadcast_color_matching_test.dir/tests/test_broadcast_color_matching.cpp.o -o digitor_broadcast_color_matching_test  libdigitor_engine.a

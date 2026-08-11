@@ -538,9 +538,8 @@ final class DigitorEditorWorkspace {
     if (_closed) throw StateError('DigitorEditorWorkspace is closed.');
   }
 
-  Future<void> close() async {
+  Future<void> releaseProductionSession() async {
     if (_closed) return;
-    _closed = true;
     _productionSession?.dispose();
     _productionSession = null;
     final previewTexture = _previewTexture;
@@ -548,6 +547,12 @@ final class DigitorEditorWorkspace {
     if (previewTexture != null) {
       await _platformHost.disposeTexture(previewTexture);
     }
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    await releaseProductionSession();
+    _closed = true;
     _timeline.dispose();
     _mediaPipeline.close();
     _graph.dispose();

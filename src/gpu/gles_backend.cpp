@@ -214,6 +214,7 @@ public:
     BackendProductionCapability out{};
     out.backend = DIGITOR_RENDERER_OPENGL_ES;
     out.context_identity = backend_context_identity();
+    out.frame_context_identity = this;
     out.resources = GlesProductionResources{
         reinterpret_cast<void*>(display_), reinterpret_cast<void*>(context_)};
     return out;

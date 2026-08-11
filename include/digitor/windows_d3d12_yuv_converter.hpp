@@ -11,7 +11,8 @@ namespace digitor {
 // an RGBA16F UAV by the shared per-pixel kernel used by preview and export.
 class WindowsD3D12YuvConverter final {
 public:
-  explicit WindowsD3D12YuvConverter(void* d3d12_device);
+  explicit WindowsD3D12YuvConverter(
+      void* d3d12_device, const void* frame_context_identity = nullptr);
   ~WindowsD3D12YuvConverter();
 
   WindowsD3D12YuvConverter(const WindowsD3D12YuvConverter&) = delete;

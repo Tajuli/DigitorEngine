@@ -62,6 +62,7 @@ Constants constants_for(const WindowsZeroCopySurface&s){
 #endif
 
 struct WindowsD3D12YuvConverter::Impl {
+ const void* frame_context_identity{};
 #ifdef _WIN32
  ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue;
  ComPtr<ID3D12CommandAllocator> allocator; ComPtr<ID3D12GraphicsCommandList> list;
@@ -72,8 +73,10 @@ struct WindowsD3D12YuvConverter::Impl {
 #endif
 };
 
-WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(void* raw):impl_(std::make_shared<Impl>()){
+WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
+    void* raw, const void* frame_context_identity):impl_(std::make_shared<Impl>()){
  if(!raw)throw std::invalid_argument("D3D12 device is required");
+ impl_->frame_context_identity = frame_context_identity ? frame_context_identity : raw;
 #ifdef _WIN32
  impl_->device=static_cast<ID3D12Device*>(raw);
  D3D12_COMMAND_QUEUE_DESC q{};q.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
@@ -140,7 +143,7 @@ DigitorResult WindowsD3D12YuvConverter::convert(void* raw,const WindowsZeroCopyS
   auto owner=std::make_shared<FrameOwner>();owner->input=input;owner->output=output;owner->decoder_lifetime=s.lifetime;
   GpuFrameMetadata m{};m.width=s.width;m.height=s.height;m.format=DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;m.timestamp=s.timestamp_us;
   m.color_metadata="linear-rgba16f:"+std::to_string(static_cast<unsigned>(s.color.matrix))+":"+std::to_string(s.color.full_range?1:0)+":"+std::to_string(s.color.primaries)+":"+std::to_string(s.color.transfer);
-  out=std::make_shared<ProcessedGpuFrame>(impl_->device.Get(),DIGITOR_RENDERER_D3D12,std::move(m),id,owner,std::make_shared<std::atomic_bool>(true),false);
+  out=std::make_shared<ProcessedGpuFrame>(impl_->frame_context_identity,DIGITOR_RENDERER_D3D12,std::move(m),id,owner,std::make_shared<std::atomic_bool>(true),false);
   return DIGITOR_RESULT_OK;
  }catch(const std::bad_alloc&){return DIGITOR_RESULT_OUT_OF_MEMORY;}catch(...){out.reset();return DIGITOR_RESULT_INTERNAL_ERROR;}
 #endif

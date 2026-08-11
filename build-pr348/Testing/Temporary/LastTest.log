@@ -1,0 +1,702 @@
+Start testing: Aug 11 05:21 UTC
+----------------------------------------------------------
+1/45 Testing: digitor_tests
+1/45 Test: digitor_tests
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_tests"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_tests" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+SOURCE_POLICY preview=proxy export=original decode_scaled=pass compressed_preview=pass export_proxy_rejection=pass graph_parity=pass quality_modes=pass adaptive_quality=pass dropped_frames=pass fullres_sampling=pass request_sequencing=pass decoder_sampling=pass export_provenance=pass gpu_provenance_crosscheck=pass export_contract=pass gpu_encoder_submission=pass export_fence=pass windows_encoder_interop=pass android_mediacodec_surface=pass resource_retirement=pass export_backpressure=pass encoder_session_generation=pass export_worker=pass encoder_timeout=pass orderly_drain=pass frame_hash_qualification=pass
+PREVIEW_CONSUMER interface=pass submissions=1 processed_readbacks=0 retired_rejection=pass native_runtime=not-run
+PIPELINE_CACHE interface=pass lookups=6 misses=5 hits=1 creations=4 evictions=1 invalidations=1 creation_failures=1 native_adoption=pending
+All DigitorEngine GPU device layer tests passed.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_tests" end time: Aug 11 05:21 UTC
+"digitor_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/45 Testing: digitor_native_gpu_tests
+2/45 Test: digitor_native_gpu_tests
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_native_gpu_tests"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_native_gpu_tests" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+QUALIFICATION SKIP reason=no native GPU backend for this host
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_native_gpu_tests" end time: Aug 11 05:21 UTC
+"digitor_native_gpu_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/45 Testing: digitor_log_wheels_native_tests
+3/45 Test: digitor_log_wheels_native_tests
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_log_wheels_native_tests"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_log_wheels_native_tests" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+LOG_WHEELS_QUALIFICATION_SKIP reason=no-native-GPU-backend-for-this-host
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_log_wheels_native_tests" end time: Aug 11 05:21 UTC
+"digitor_log_wheels_native_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/45 Testing: digitor_hsl_qualifier_native_tests
+4/45 Test: digitor_hsl_qualifier_native_tests
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_hsl_qualifier_native_tests"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_hsl_qualifier_native_tests" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+HSL_QUALIFIER_QUALIFICATION_SKIP reason=no-native-GPU-backend-for-this-host
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_hsl_qualifier_native_tests" end time: Aug 11 05:21 UTC
+"digitor_hsl_qualifier_native_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/45 Testing: digitor_audio_latency_probe
+5/45 Test: digitor_audio_latency_probe
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_audio_latency_probe_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_audio_latency_probe" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_audio_latency_probe" end time: Aug 11 05:21 UTC
+"digitor_audio_latency_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/45 Testing: digitor_audio_sync_compensation
+6/45 Test: digitor_audio_sync_compensation
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_audio_sync_compensation_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_audio_sync_compensation" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_audio_sync_compensation" end time: Aug 11 05:21 UTC
+"digitor_audio_sync_compensation" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/45 Testing: digitor_professional_audio_engine
+7/45 Test: digitor_professional_audio_engine
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_professional_audio_engine_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_professional_audio_engine" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_professional_audio_engine" end time: Aug 11 05:21 UTC
+"digitor_professional_audio_engine" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/45 Testing: digitor_live_playback_sync
+8/45 Test: digitor_live_playback_sync
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_live_playback_sync_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_live_playback_sync" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_live_playback_sync" end time: Aug 11 05:21 UTC
+"digitor_live_playback_sync" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/45 Testing: digitor_playback_transport
+9/45 Test: digitor_playback_transport
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_playback_transport_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_playback_transport" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_playback_transport" end time: Aug 11 05:21 UTC
+"digitor_playback_transport" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/45 Testing: digitor_production_playback_engine
+10/45 Test: digitor_production_playback_engine
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_playback_engine_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_playback_engine" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_playback_engine" end time: Aug 11 05:21 UTC
+"digitor_production_playback_engine" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/45 Testing: digitor_unified_real_media_runtime
+11/45 Test: digitor_unified_real_media_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_unified_real_media_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_unified_real_media_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_unified_real_media_runtime" end time: Aug 11 05:21 UTC
+"digitor_unified_real_media_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/45 Testing: digitor_production_media_graph_runtime
+12/45 Test: digitor_production_media_graph_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_media_graph_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_media_graph_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_media_graph_runtime" end time: Aug 11 05:21 UTC
+"digitor_production_media_graph_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/45 Testing: digitor_flutter_production_host_adapter
+13/45 Test: digitor_flutter_production_host_adapter
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_flutter_production_host_adapter_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_flutter_production_host_adapter" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_flutter_production_host_adapter" end time: Aug 11 05:21 UTC
+"digitor_flutter_production_host_adapter" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/45 Testing: digitor_flutter_production_plugin_bootstrap
+14/45 Test: digitor_flutter_production_plugin_bootstrap
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_flutter_production_plugin_bootstrap_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_flutter_production_plugin_bootstrap" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_flutter_production_plugin_bootstrap" end time: Aug 11 05:21 UTC
+"digitor_flutter_production_plugin_bootstrap" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/45 Testing: digitor_production_integration_runtime
+15/45 Test: digitor_production_integration_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_integration_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_integration_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_integration_runtime" end time: Aug 11 05:21 UTC
+"digitor_production_integration_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/45 Testing: digitor_engine_owned_platform_production
+16/45 Test: digitor_engine_owned_platform_production
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_engine_owned_platform_production_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_engine_owned_platform_production" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_engine_owned_platform_production" end time: Aug 11 05:21 UTC
+"digitor_engine_owned_platform_production" time elapsed: 00:00:00
+----------------------------------------------------------
+
+17/45 Testing: digitor_production_media_c_api
+17/45 Test: digitor_production_media_c_api
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_media_c_api_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_media_c_api" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_media_c_api" end time: Aug 11 05:21 UTC
+"digitor_production_media_c_api" time elapsed: 00:00:00
+----------------------------------------------------------
+
+18/45 Testing: digitor_multitrack_timeline
+18/45 Test: digitor_multitrack_timeline
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_multitrack_timeline_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_multitrack_timeline" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_multitrack_timeline" end time: Aug 11 05:21 UTC
+"digitor_multitrack_timeline" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/45 Testing: digitor_professional_timeline_suite
+19/45 Test: digitor_professional_timeline_suite
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_professional_timeline_suite_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_professional_timeline_suite" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_professional_timeline_suite" end time: Aug 11 05:21 UTC
+"digitor_professional_timeline_suite" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/45 Testing: digitor_timeline_editing_suite
+20/45 Test: digitor_timeline_editing_suite
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_editing_suite_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_editing_suite" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+timeline editing suite qualification passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_editing_suite" end time: Aug 11 05:21 UTC
+"digitor_timeline_editing_suite" time elapsed: 00:00:00
+----------------------------------------------------------
+
+21/45 Testing: digitor_timeline_completion
+21/45 Test: digitor_timeline_completion
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_completion_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_completion" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_completion" end time: Aug 11 05:21 UTC
+"digitor_timeline_completion" time elapsed: 00:00:00
+----------------------------------------------------------
+
+22/45 Testing: digitor_timeline_track_removal
+22/45 Test: digitor_timeline_track_removal
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_track_removal_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_track_removal" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+timeline track removal qualification passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_track_removal" end time: Aug 11 05:21 UTC
+"digitor_timeline_track_removal" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/45 Testing: digitor_timeline_track_enablement
+23/45 Test: digitor_timeline_track_enablement
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_track_enablement_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_track_enablement" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_track_enablement" end time: Aug 11 05:21 UTC
+"digitor_timeline_track_enablement" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/45 Testing: digitor_production_export
+24/45 Test: digitor_production_export
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_export_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_export" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_export" end time: Aug 11 05:21 UTC
+"digitor_production_export" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/45 Testing: digitor_ffmpeg_export_runtime
+25/45 Test: digitor_ffmpeg_export_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_ffmpeg_export_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_ffmpeg_export_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_ffmpeg_export_runtime" end time: Aug 11 05:21 UTC
+"digitor_ffmpeg_export_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+26/45 Testing: digitor_hardware_export_runtime
+26/45 Test: digitor_hardware_export_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_hardware_export_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_hardware_export_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_hardware_export_runtime" end time: Aug 11 05:21 UTC
+"digitor_hardware_export_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+27/45 Testing: digitor_production_hardware_encode
+27/45 Test: digitor_production_hardware_encode
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_hardware_encode_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_hardware_encode" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_hardware_encode" end time: Aug 11 05:21 UTC
+"digitor_production_hardware_encode" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/45 Testing: digitor_export_job_c_api
+28/45 Test: digitor_export_job_c_api
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_export_job_c_api_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_export_job_c_api" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_export_job_c_api" end time: Aug 11 05:21 UTC
+"digitor_export_job_c_api" time elapsed: 00:00:00
+----------------------------------------------------------
+
+29/45 Testing: digitor_resumable_segment_export
+29/45 Test: digitor_resumable_segment_export
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_resumable_segment_export_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_resumable_segment_export" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_resumable_segment_export" end time: Aug 11 05:21 UTC
+"digitor_resumable_segment_export" time elapsed: 00:00:00
+----------------------------------------------------------
+
+30/45 Testing: digitor_timeline_render_execution
+30/45 Test: digitor_timeline_render_execution
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_render_execution_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_render_execution" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_render_execution" end time: Aug 11 05:21 UTC
+"digitor_timeline_render_execution" time elapsed: 00:00:00
+----------------------------------------------------------
+
+31/45 Testing: digitor_timeline_render_runtime
+31/45 Test: digitor_timeline_render_runtime
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_render_runtime_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_render_runtime" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_render_runtime" end time: Aug 11 05:21 UTC
+"digitor_timeline_render_runtime" time elapsed: 00:00:00
+----------------------------------------------------------
+
+32/45 Testing: digitor_timeline_media_adapter
+32/45 Test: digitor_timeline_media_adapter
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_timeline_media_adapter_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_timeline_media_adapter" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_timeline_media_adapter" end time: Aug 11 05:21 UTC
+"digitor_timeline_media_adapter" time elapsed: 00:00:00
+----------------------------------------------------------
+
+33/45 Testing: digitor_image_io
+33/45 Test: digitor_image_io
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_image_io_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_image_io" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_image_io" end time: Aug 11 05:21 UTC
+"digitor_image_io" time elapsed: 00:00:00
+----------------------------------------------------------
+
+34/45 Testing: digitor_native_still_image_host
+34/45 Test: digitor_native_still_image_host
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_native_still_image_host_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_native_still_image_host" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_native_still_image_host" end time: Aug 11 05:21 UTC
+"digitor_native_still_image_host" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/45 Testing: digitor_native_preview_presentation
+35/45 Test: digitor_native_preview_presentation
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_native_preview_presentation_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_native_preview_presentation" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_native_preview_presentation" end time: Aug 11 05:21 UTC
+"digitor_native_preview_presentation" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/45 Testing: digitor_production_hardware_decode
+36/45 Test: digitor_production_hardware_decode
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_production_hardware_decode_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_production_hardware_decode" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_production_hardware_decode" end time: Aug 11 05:21 UTC
+"digitor_production_hardware_decode" time elapsed: 00:00:00
+----------------------------------------------------------
+
+37/45 Testing: digitor_native_surface_import
+37/45 Test: digitor_native_surface_import
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_native_surface_import_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_native_surface_import" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_native_surface_import" end time: Aug 11 05:21 UTC
+"digitor_native_surface_import" time elapsed: 00:00:00
+----------------------------------------------------------
+
+38/45 Testing: digitor_professional_import
+38/45 Test: digitor_professional_import
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_professional_import_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_professional_import" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_professional_import" end time: Aug 11 05:21 UTC
+"digitor_professional_import" time elapsed: 00:00:00
+----------------------------------------------------------
+
+39/45 Testing: digitor_professional_color_management
+39/45 Test: digitor_professional_color_management
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_professional_color_management_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_professional_color_management" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+professional color management, HDR and scopes qualification passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_professional_color_management" end time: Aug 11 05:21 UTC
+"digitor_professional_color_management" time elapsed: 00:00:00
+----------------------------------------------------------
+
+40/45 Testing: digitor_ocio_color_pipeline
+40/45 Test: digitor_ocio_color_pipeline
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_ocio_color_pipeline_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_ocio_color_pipeline" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+OCIO 2.x and advanced color pipeline qualification passed
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_ocio_color_pipeline" end time: Aug 11 05:21 UTC
+"digitor_ocio_color_pipeline" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/45 Testing: digitor_icc_display_management
+41/45 Test: digitor_icc_display_management
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_icc_display_management_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_icc_display_management" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_icc_display_management" end time: Aug 11 05:21 UTC
+"digitor_icc_display_management" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/45 Testing: digitor_camera_raw
+42/45 Test: digitor_camera_raw
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_camera_raw_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_camera_raw" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_camera_raw" end time: Aug 11 05:21 UTC
+"digitor_camera_raw" time elapsed: 00:00:00
+----------------------------------------------------------
+
+43/45 Testing: digitor_hdr_ecosystem
+43/45 Test: digitor_hdr_ecosystem
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_hdr_ecosystem_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_hdr_ecosystem" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_hdr_ecosystem" end time: Aug 11 05:21 UTC
+"digitor_hdr_ecosystem" time elapsed: 00:00:00
+----------------------------------------------------------
+
+44/45 Testing: digitor_professional_lut_scopes
+44/45 Test: digitor_professional_lut_scopes
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_professional_lut_scopes_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_professional_lut_scopes" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_professional_lut_scopes" end time: Aug 11 05:21 UTC
+"digitor_professional_lut_scopes" time elapsed: 00:00:00
+----------------------------------------------------------
+
+45/45 Testing: digitor_broadcast_color_matching
+45/45 Test: digitor_broadcast_color_matching
+Command: "/home/runner/work/DigitorEngine/DigitorEngine/build-pr348/digitor_broadcast_color_matching_test"
+Directory: /home/runner/work/DigitorEngine/DigitorEngine/build-pr348
+"digitor_broadcast_color_matching" start time: Aug 11 05:21 UTC
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"digitor_broadcast_color_matching" end time: Aug 11 05:21 UTC
+"digitor_broadcast_color_matching" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 11 05:21 UTC
+
+hardware =   0.00 sec*proc
+
+hsl-qualifier =   0.00 sec*proc
+
+log-wheels =   0.00 sec*proc
+
+native-gpu =   0.00 sec*proc
+
+v4.9.0 =   0.00 sec*proc
+
+v5.0.0 =   0.00 sec*proc
+

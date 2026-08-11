@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_professional_color_management_test.dir/link.d CMakeFiles/digitor_professional_color_management_test.dir/tests/test_professional_color_management.cpp.o -o digitor_professional_color_management_test  libdigitor_engine.a

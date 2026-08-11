@@ -346,8 +346,9 @@ final class DigitorEditorController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     try {
-      await _workspace.close();
+      await _workspace.releaseProductionSession();
       await _productionBootstrap.detach();
+      await _workspace.close();
     } finally {
       super.dispose();
     }
@@ -358,8 +359,9 @@ final class DigitorEditorController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     unawaited(() async {
-      await _workspace.close();
+      await _workspace.releaseProductionSession();
       await _productionBootstrap.detach();
+      await _workspace.close();
     }());
     super.dispose();
   }

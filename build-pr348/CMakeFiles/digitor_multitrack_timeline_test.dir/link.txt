@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/digitor_multitrack_timeline_test.dir/link.d CMakeFiles/digitor_multitrack_timeline_test.dir/tests/test_multitrack_timeline.cpp.o -o digitor_multitrack_timeline_test  libdigitor_engine.a
