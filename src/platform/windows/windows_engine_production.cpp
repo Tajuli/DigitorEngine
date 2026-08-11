@@ -244,3 +244,10 @@ install_windows_engine_production_runtime(
 }
 
 }  // namespace digitor
+
+// Keep the concrete Windows provider in the same platform production translation
+// unit so every DigitorEngine build surface (including Flutter Native Assets)
+// links the implementation whenever the Windows assembly path is reachable.
+#if defined(_WIN32)
+#include "windows_native_provider.cpp"
+#endif
