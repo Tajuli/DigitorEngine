@@ -21,3 +21,9 @@ DigitorResult install_apple_engine_production_dependencies_factory(AppleEnginePr
 DigitorResult clear_apple_engine_production_dependencies_factory() noexcept{auto&s=st();std::scoped_lock l(s.m);s.f={};return DIGITOR_RESULT_OK;}
 std::unique_ptr<ProductionIntegrationRuntime> install_apple_engine_production_runtime(DigitorFlutterProductionPluginPlatform p,const BackendProductionCapability&b,std::string*d) noexcept{std::string q;if(!cap_ok(b,q)){if(d)*d=q;return{};}return ProductionIntegrationRuntime::install(p,[p,b](const FlutterProductionPluginAttachment&a,std::string&l)->std::optional<FlutterProductionProviderBuild>{AppleEngineProductionDependenciesFactory f;{auto&s=st();std::scoped_lock g(s.m);f=s.f;}if(!f){l="engine-owned Apple production dependencies are not installed";return std::nullopt;}auto x=f(b,a,l);if(!x)return std::nullopt;auto z=assemble_apple_engine_production_build(p,b,a,std::move(*x));if(!z){l=z.diagnostic;return std::nullopt;}l.clear();return std::move(z.build);},d);}
 } // namespace digitor
+
+// Compile the concrete Apple provider with the engine-owned production assembly
+// on Apple targets so the Metal/macOS/iOS path is link-complete in all hosts.
+#if defined(__APPLE__)
+#include "apple_native_provider.cpp"
+#endif
