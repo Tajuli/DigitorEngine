@@ -94,8 +94,37 @@ target_sources(digitor_engine PRIVATE
     src/gpu/broadcast_color_matching.cpp
 )
 
-if(APPLE)
-    target_sources(digitor_engine PRIVATE src/media/apple_native_zero_copy.mm)
+# Production hardware decode/import implementations must be part of the same
+# shared/static engine artifact consumed by Flutter. Qualification-only targets
+# are not sufficient for runtime provider assembly.
+if(WIN32)
+    target_sources(digitor_engine PRIVATE
+        src/gpu/windows_d3d12_yuv_converter.cpp
+        src/media/ffmpeg_d3d11va_surface.cpp)
+    target_link_libraries(digitor_engine PRIVATE d3d11 dxgi)
+    target_compile_definitions(digitor_engine PRIVATE DIGITOR_WINDOWS_D3D12_ZERO_COPY=1)
+elseif(ANDROID)
+    target_sources(digitor_engine PRIVATE
+        src/media/android_mediacodec_decoder.cpp
+        src/media/android_zero_copy_pipeline.cpp
+        src/media/android_zero_copy_qualification.cpp
+        src/media/android_native_zero_copy.cpp
+        src/media/android_zero_copy_concrete_bindings.cpp)
+    find_library(DIGITOR_ANDROID_MEDIANDK_LIBRARY mediandk REQUIRED)
+    find_library(DIGITOR_ANDROID_VULKAN_LIBRARY vulkan REQUIRED)
+    target_link_libraries(digitor_engine PRIVATE
+        ${DIGITOR_ANDROID_MEDIANDK_LIBRARY}
+        ${DIGITOR_ANDROID_VULKAN_LIBRARY})
+elseif(APPLE)
+    target_sources(digitor_engine PRIVATE
+        src/media/apple_native_zero_copy.mm
+        src/media/apple_zero_copy_pipeline.mm
+        src/media/apple_metal_zero_copy_runtime.mm)
+    set_source_files_properties(
+        src/media/apple_native_zero_copy.mm
+        src/media/apple_zero_copy_pipeline.mm
+        src/media/apple_metal_zero_copy_runtime.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 if(WIN32)
@@ -106,6 +135,7 @@ elseif(APPLE)
     find_library(DIGITOR_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
     find_library(DIGITOR_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
     find_library(DIGITOR_VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
+    find_library(DIGITOR_IOSURFACE_FRAMEWORK IOSurface REQUIRED)
     target_link_libraries(digitor_engine
         PRIVATE
             ${DIGITOR_COREAUDIO_FRAMEWORK}
@@ -114,6 +144,7 @@ elseif(APPLE)
             ${DIGITOR_COREMEDIA_FRAMEWORK}
             ${DIGITOR_COREVIDEO_FRAMEWORK}
             ${DIGITOR_VIDEOTOOLBOX_FRAMEWORK}
+            ${DIGITOR_IOSURFACE_FRAMEWORK}
     )
 endif()
 
