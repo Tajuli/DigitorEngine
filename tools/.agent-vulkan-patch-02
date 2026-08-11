@@ -1,0 +1,144 @@
+ormat;
++      info.subresourceRange = {aspect, 0, 1, 0, 1};
++      return create_image_view(&info, &view) == VK_SUCCESS;
++    };
++    if (!make_plane_view(VK_IMAGE_ASPECT_PLANE_0_BIT, y_format, y_view) ||
++        !make_plane_view(VK_IMAGE_ASPECT_PLANE_1_BIT, uv_format, uv_view))
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkSemaphoreCreateInfo semaphore_create{
++        VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
++    if (vkCreateSemaphore(d_, &semaphore_create, nullptr, &acquire_semaphore) !=
++        VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    VkImportSemaphoreWin32HandleInfoKHR import_sync{
++        VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
++    import_sync.semaphore = acquire_semaphore;
++    import_sync.handleType =
++        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
++    import_sync.handle =
++        reinterpret_cast<HANDLE>(descriptor.acquire_sync.handle);
++    if (import_semaphore(d_, &import_sync) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    auto owner = std::shared_ptr<VkPreviewOwner>(
++        new (std::nothrow) VkPreviewOwner{});
++    if (!owner) return DIGITOR_RESULT_OUT_OF_MEMORY;
++    owner->device = d_;
++    owner->device_live = device_live_;
++    owner->upstream = surface;
++    owner->output_layout = VK_IMAGE_LAYOUT_UNDEFINED;
++    if (create_node_image(descriptor.width, descriptor.height,
++                          VK_FORMAT_R16G16B16A16_SFLOAT, owner->output,
++                          owner->output_memory, owner->output_view) !=
++        DIGITOR_RESULT_OK)
++      return DIGITOR_RESULT_OUT_OF_MEMORY;
++
++    static constexpr const char* yuv_shader = R"hlsl(
++[[vk::binding(0,0)]] Texture2D<float> YPlane;
++[[vk::binding(1,0)]] Texture2D<float2> UVPlane;
++[[vk::binding(2,0)]] RWTexture2D<float4> Output;
++[[vk::push_constant]] cbuffer Params {
++  float4 Row0;
++  float4 Row1;
++  float4 Row2;
++  float4 Range;
++  uint Width;
++  uint Height;
++  uint ChromaSiting;
++  uint Padding;
++};
++float2 LoadUV(float2 lumaCenter) {
++  float2 sampleOffset = ChromaSiting == 2 ? float2(1.0, 1.0) :
++                        ChromaSiting == 3 ? float2(0.5, 0.5) :
++                                           float2(0.5, 1.0);
++  float2 c = (lumaCenter - sampleOffset) * 0.5;
++  int2 base = int2(floor(c));
++  float2 f = frac(c);
++  int2 maxp = int2(max(1u, Width / 2u) - 1u,
++                   max(1u, Height / 2u) - 1u);
++  int2 p00 = clamp(base, int2(0,0), maxp);
++  int2 p10 = clamp(base + int2(1,0), int2(0,0), maxp);
++  int2 p01 = clamp(base + int2(0,1), int2(0,0), maxp);
++  int2 p11 = clamp(base + int2(1,1), int2(0,0), maxp);
++  float2 a = lerp(UVPlane.Load(int3(p00,0)), UVPlane.Load(int3(p10,0)), f.x);
++  float2 b = lerp(UVPlane.Load(int3(p01,0)), UVPlane.Load(int3(p11,0)), f.x);
++  return lerp(a, b, f.y);
++}
++[numthreads(8,8,1)]
++void main(uint3 id : SV_DispatchThreadID) {
++  if (id.x >= Width || id.y >= Height) return;
++  float y = (YPlane.Load(int3(id.xy,0)) - Range.x) * Range.y;
++  float2 uv = (LoadUV(float2(id.xy) + 0.5) - Range.z) * Range.w;
++  float3 v = float3(y, uv.x, uv.y);
++  Output[id.xy] = float4(dot(Row0.xyz, v), dot(Row1.xyz, v),
++                         dot(Row2.xyz, v), 1.0);
++}
++)hlsl";
++    ShaderCompileRequest shader_request{
++        .source = yuv_shader,
++        .entry_point = "main",
++        .source_name = "windows_dxgi_yuv_import.hlsl",
++        .target_profile = "cs_6_0",
++        .stage = ShaderStage::compute,
++        .backend = ShaderBackend::vulkan,
++        .macros = {},
++        .include_roots = {},
++        .specialization_constants = {},
++        .optimization = ShaderOptimization::performance,
++        .debug_info = false};
++    const auto binary = vulkan_shader(shader_request);
++    if (!binary || binary.binary.empty())
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkDescriptorSetLayoutBinding bindings[3]{
++        {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
++         nullptr},
++        {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
++         nullptr},
++        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
++         nullptr}};
++    VkDescriptorSetLayoutCreateInfo descriptor_info{
++        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
++    descriptor_info.bindingCount = 3;
++    descriptor_info.pBindings = bindings;
++    if (tracked_vkCreateDescriptorSetLayout(d_, &descriptor_info, nullptr,
++                                            &descriptor_layout) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    struct YuvConstants {
++      float row0[4];
++      float row1[4];
++      float row2[4];
++      float range[4];
++      std::uint32_t width;
++      std::uint32_t height;
++      std::uint32_t chroma_siting;
++      std::uint32_t padding;
++    } constants{};
++    static_assert(sizeof(YuvConstants) == 80);
++    auto set_rows = [&](float r_cr, float g_cb, float g_cr, float b_cb) {
++      constants.row0[0] = 1.0f;
++      constants.row0[2] = r_cr;
++      constants.row1[0] = 1.0f;
++      constants.row1[1] = g_cb;
++      constants.row1[2] = g_cr;
++      constants.row2[0] = 1.0f;
++      constants.row2[1] = b_cb;
++    };
++    if (descriptor.color.matrix == 9)
++      set_rows(1.4746f, -0.164553f, -0.571353f, 1.8814f);
++    else if (descriptor.color.matrix == 1)
++      set_rows(1.5748f, -0.187324f, -0.468124f, 1.8556f);
++    else
++      set_rows(1.402f, -0.344136f, -0.714136f, 1.772f);
++    const float max_code =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 1023.0f
++                                                                 : 255.0f;
++    const float y_min =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 64.0f : 16.0f;
++    const float y_max =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 940.0f : 235.0f;
++    const float uv_min =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 64.0f : 16.0f;
++
