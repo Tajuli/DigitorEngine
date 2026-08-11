@@ -259,6 +259,63 @@ DigitorResult clear_flutter_production_host_inputs_factory(
   return DIGITOR_RESULT_OK;
 }
 
+DigitorResult retry_flutter_production_host_registration(
+    DigitorFlutterProductionPluginPlatform platform,
+    std::string* diagnostic) noexcept {
+  if (!valid_platform(platform)) {
+    if (diagnostic) *diagnostic = "invalid Flutter production platform";
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+  try {
+    auto& s = state();
+    std::scoped_lock lock(s.mutex);
+
+    // Nothing is waiting for this platform. Installing dependencies before the
+    // Flutter plugin attaches is a valid startup order and needs no action.
+    if (!s.pending_attachment || s.pending_attachment->platform != platform) {
+      if (diagnostic) diagnostic->clear();
+      return DIGITOR_RESULT_OK;
+    }
+
+    if (s.registration) {
+      if (s.platform == platform &&
+          s.registrar == s.pending_attachment->flutter_texture_registrar) {
+        s.pending_attachment.reset();
+        s.last_diagnostic.clear();
+        if (diagnostic) diagnostic->clear();
+        return DIGITOR_RESULT_OK;
+      }
+      const std::string message =
+          "a different Flutter production host is already registered";
+      s.last_diagnostic = message;
+      if (diagnostic) *diagnostic = message;
+      return DIGITOR_RESULT_RESOURCE_IN_USE;
+    }
+
+    auto& factory = s.factories[static_cast<std::size_t>(platform)];
+    if (!factory) {
+      const std::string message =
+          "production provider factory is not installed for the Flutter platform";
+      s.last_diagnostic = message;
+      if (diagnostic) *diagnostic = message;
+      return DIGITOR_RESULT_NOT_INITIALIZED;
+    }
+
+    const auto pending = *s.pending_attachment;
+    return register_from_factory_locked(
+        s, pending.platform, pending.flutter_texture_registrar,
+        pending.implementation_identity, diagnostic);
+  } catch (const std::bad_alloc&) {
+    if (diagnostic) *diagnostic =
+        "out of memory while retrying Flutter production host registration";
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  } catch (...) {
+    if (diagnostic) *diagnostic =
+        "failed to retry Flutter production host registration";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
+}
+
 DigitorResult install_flutter_production_provider_builder(
     DigitorFlutterProductionPluginPlatform platform,
     FlutterProductionProviderBuildFactory factory,

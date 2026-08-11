@@ -54,6 +54,32 @@ std::unique_ptr<ProductionHardwareDecodeSession> decoder_session() {
         return DIGITOR_RESULT_OK;
       }, options);
 }
+
+FlutterProductionHostAdapterInputs complete_host_inputs() {
+  FlutterProductionHostAdapterInputs v{};
+  v.decoder_factory = [](const std::string&, std::string&) {
+    return decoder_session();
+  };
+  v.frame_resolver = [](std::int64_t t) {
+    return static_cast<FrameNumber>(t / 33333);
+  };
+  v.preview_session = std::make_shared<NativePreviewPresentationSession>(
+      std::make_shared<TextureHost>());
+  v.texture_descriptor_builder = [](
+      const ProcessedGpuFramePtr&, std::uint64_t,
+      DigitorNativeGpuTextureDescriptor&, std::string&) {
+    return DIGITOR_RESULT_OK;
+  };
+  v.preview_target_binder = [](
+      std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t,
+      std::string&) { return DIGITOR_RESULT_OK; };
+  v.preview_capabilities.native_gpu_preview_available = 1;
+  v.preview_capabilities.true_shared_resource_zero_copy = 1;
+  v.preview_capabilities.backend = DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12;
+  v.preview_capabilities.handle_type =
+      DIGITOR_NATIVE_TEXTURE_HANDLE_D3D12_RESOURCE;
+  return v;
+}
 }  // namespace
 
 int main() {
@@ -158,6 +184,39 @@ int main() {
   REQUIRE(digitor_flutter_production_host_registered() == 0);
   REQUIRE(clear_flutter_production_host_inputs_factory(
              DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS) == DIGITOR_RESULT_OK);
+
+  // Engine/runtime startup can precede the Flutter plugin while the concrete
+  // platform dependency producer becomes ready later. In that ordering the
+  // host-input factory remains installed after attach fails. A dependency
+  // installer must be able to retry the retained attachment without Dart
+  // issuing a second attach call.
+  bool concrete_dependencies_ready = false;
+  REQUIRE(install_flutter_production_host_inputs_factory(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS,
+      [&](const FlutterProductionPluginAttachment&, std::string& local)
+          -> std::optional<FlutterProductionHostAdapterInputs> {
+        if (!concrete_dependencies_ready) {
+          local = "concrete platform dependencies are not ready yet";
+          return std::nullopt;
+        }
+        local.clear();
+        return complete_host_inputs();
+      }) == DIGITOR_RESULT_OK);
+  REQUIRE(digitor_flutter_production_plugin_attach(&attachment) ==
+         DIGITOR_RESULT_BACKEND_UNAVAILABLE);
+  REQUIRE(digitor_flutter_production_plugin_attached() == 0);
+  concrete_dependencies_ready = true;
+  diagnostic.clear();
+  REQUIRE(retry_flutter_production_host_registration(
+              DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS, &diagnostic) ==
+          DIGITOR_RESULT_OK);
+  REQUIRE(diagnostic.empty());
+  REQUIRE(digitor_flutter_production_plugin_attached() == 1);
+  REQUIRE(digitor_flutter_production_host_registered() == 1);
+  REQUIRE(digitor_flutter_production_plugin_detach(&registrar_token) ==
+          DIGITOR_RESULT_OK);
+  REQUIRE(clear_flutter_production_host_inputs_factory(
+              DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS) == DIGITOR_RESULT_OK);
 
   // Detaching a pending (not yet registered) Flutter attachment cancels the
   // auto-registration claim cleanly.

@@ -180,16 +180,38 @@ DigitorResult install_windows_engine_production_dependencies_factory(
   }
   try {
     auto& state = dependency_factory_state();
-    std::scoped_lock lock(state.mutex);
-    if (state.factory) {
-      if (diagnostic) *diagnostic = "Windows production dependency factory already installed";
-      return DIGITOR_RESULT_RESOURCE_IN_USE;
+    {
+      std::scoped_lock lock(state.mutex);
+      if (state.factory) {
+        if (diagnostic) *diagnostic =
+            "Windows production dependency factory already installed";
+        return DIGITOR_RESULT_RESOURCE_IN_USE;
+      }
+      state.factory = std::move(factory);
     }
-    state.factory = std::move(factory);
+
+    // The Flutter plugin may already be attached and waiting for these exact
+    // concrete dependencies. Re-run provider assembly now instead of requiring
+    // a second Dart/plugin attach call. Do not hold the dependency mutex while
+    // retrying: provider assembly reads this same factory.
+    std::string retry_diagnostic;
+    const auto retry = retry_flutter_production_host_registration(
+        DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS, &retry_diagnostic);
+    if (retry != DIGITOR_RESULT_OK) {
+      std::scoped_lock lock(state.mutex);
+      state.factory = {};
+      if (diagnostic) {
+        *diagnostic = retry_diagnostic.empty()
+                          ? "Windows dependencies could not register the pending Flutter production host"
+                          : std::move(retry_diagnostic);
+      }
+      return retry;
+    }
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
   } catch (...) {
-    if (diagnostic) *diagnostic = "failed to install Windows production dependency factory";
+    if (diagnostic) *diagnostic =
+        "failed to install Windows production dependency factory";
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
 }
