@@ -3,6 +3,7 @@
 #include "core/numeric_utils.hpp"
 #include "core/string_utils.hpp"
 #include "digitor/shader.hpp"
+#include "digitor/native_media.hpp"
 #include "gpu/gpu_backend.hpp"
 #include "gpu/native_pipeline_cache.hpp"
 #include "gpu/native_primary_wheels.hpp"
@@ -26,10 +27,23 @@
 #include "color_pipeline_buffer.hpp"
 #endif
 #include <atomic>
+#include <array>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
+#if defined(_WIN32)
+#ifndef VK_USE_PLATFORM_WIN32_KHR
+#define VK_USE_PLATFORM_WIN32_KHR
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <vulkan/vulkan.h>
 namespace digitor {
 namespace {
@@ -53,6 +67,41 @@ struct VulkanLiveResources {
 } vk_live;
 std::mutex vk_descriptor_mutex;
 std::unordered_map<VkDescriptorPool, std::uint32_t> vk_descriptor_counts;
+
+#if defined(_WIN32)
+bool has_instance_extensions(std::span<const char* const> required) {
+  std::uint32_t count = 0;
+  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) !=
+      VK_SUCCESS)
+    return false;
+  std::vector<VkExtensionProperties> available(count);
+  if (vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data()) !=
+      VK_SUCCESS)
+    return false;
+  return std::all_of(required.begin(), required.end(), [&](const char* name) {
+    return std::any_of(available.begin(), available.end(), [&](const auto& item) {
+      return std::strcmp(item.extensionName, name) == 0;
+    });
+  });
+}
+
+bool has_device_extensions(VkPhysicalDevice physical,
+                           std::span<const char* const> required) {
+  std::uint32_t count = 0;
+  if (vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr) !=
+      VK_SUCCESS)
+    return false;
+  std::vector<VkExtensionProperties> available(count);
+  if (vkEnumerateDeviceExtensionProperties(physical, nullptr, &count,
+                                            available.data()) != VK_SUCCESS)
+    return false;
+  return std::all_of(required.begin(), required.end(), [&](const char* name) {
+    return std::any_of(available.begin(), available.end(), [&](const auto& item) {
+      return std::strcmp(item.extensionName, name) == 0;
+    });
+  });
+}
+#endif
 
 #ifdef DIGITOR_EMBEDDED_VULKAN_SPIRV
 ShaderCompileResult embedded_vulkan_shader(const ShaderCompileRequest &request) {
@@ -990,6 +1039,508 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
                                 : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
+  DigitorResult import_native_media(const ZeroCopyImportRequest& request,
+                                    ProcessedGpuFramePtr& output) noexcept {
+    output.reset();
+#if !defined(_WIN32)
+    (void)request;
+    return DIGITOR_RESULT_UNSUPPORTED;
+#else
+    const auto surface = request.surface;
+    if (!surface || request.renderer_backend != DIGITOR_RENDERER_VULKAN ||
+        request.output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+        request.working_color_space != "linear-rgba")
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    const auto& descriptor = surface->descriptor();
+    if (descriptor.platform != NativeMediaPlatform::windows ||
+        descriptor.handle_type != NativeMediaHandleType::dxgi_shared_handle ||
+        (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
+         descriptor.pixel_format != NativeMediaPixelFormat::p010) ||
+        !descriptor.width || !descriptor.height || (descriptor.width & 1u) ||
+        (descriptor.height & 1u) || descriptor.array_slice != 0 ||
+        !descriptor.native_handle ||
+        descriptor.acquire_sync.type != NativeMediaSyncType::d3d11_fence ||
+        !descriptor.acquire_sync.handle || !descriptor.acquire_sync.value)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+    const auto get_image_properties =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceImageFormatProperties2KHR>(
+            vkGetInstanceProcAddr(in_,
+                                  "vkGetPhysicalDeviceImageFormatProperties2KHR"));
+    const auto get_memory_properties =
+        reinterpret_cast<PFN_vkGetMemoryWin32HandlePropertiesKHR>(
+            vkGetDeviceProcAddr(d_, "vkGetMemoryWin32HandlePropertiesKHR"));
+    const auto import_semaphore =
+        reinterpret_cast<PFN_vkImportSemaphoreWin32HandleKHR>(
+            vkGetDeviceProcAddr(d_, "vkImportSemaphoreWin32HandleKHR"));
+    const auto get_semaphore_properties =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR>(
+            vkGetInstanceProcAddr(
+                in_, "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR"));
+    if (!get_image_properties || !get_memory_properties || !import_semaphore ||
+        !get_semaphore_properties)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    const VkFormat source_format =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010
+            ? VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16
+            : VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+    VkPhysicalDeviceExternalImageFormatInfo external_format{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO};
+    external_format.handleType =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    VkPhysicalDeviceImageFormatInfo2 format_info{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2};
+    format_info.pNext = &external_format;
+    format_info.format = source_format;
+    format_info.type = VK_IMAGE_TYPE_2D;
+    format_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    format_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    format_info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    VkExternalImageFormatProperties external_properties{
+        VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
+    VkImageFormatProperties2 image_properties{
+        VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
+    image_properties.pNext = &external_properties;
+    if (get_image_properties(ph_, &format_info, &image_properties) != VK_SUCCESS ||
+        !(external_properties.externalMemoryProperties.externalMemoryFeatures &
+          VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) ||
+        !(external_properties.externalMemoryProperties.externalMemoryFeatures &
+          VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkPhysicalDeviceExternalSemaphoreInfo semaphore_info{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO};
+    semaphore_info.handleType =
+        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
+    VkExternalSemaphoreProperties semaphore_properties{
+        VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES};
+    get_semaphore_properties(ph_, &semaphore_info, &semaphore_properties);
+    if (!(semaphore_properties.externalSemaphoreFeatures &
+          VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkImage source_image{};
+    VkDeviceMemory source_memory{};
+    VkImageView y_view{};
+    VkImageView uv_view{};
+    VkSemaphore acquire_semaphore{};
+    VkDescriptorSetLayout descriptor_layout{};
+    VkPipelineLayout pipeline_layout{};
+    VkShaderModule shader{};
+    VkPipeline pipeline{};
+    VkDescriptorPool descriptor_pool{};
+    VkCommandBuffer command{};
+    auto cleanup = [&]() noexcept {
+      if (command) tracked_vkFreeCommandBuffers(d_, pool_, 1, &command);
+      if (descriptor_pool)
+        tracked_vkDestroyDescriptorPool(d_, descriptor_pool, nullptr);
+      if (pipeline) tracked_vkDestroyPipeline(d_, pipeline, nullptr);
+      if (shader) tracked_vkDestroyShaderModule(d_, shader, nullptr);
+      if (pipeline_layout)
+        tracked_vkDestroyPipelineLayout(d_, pipeline_layout, nullptr);
+      if (descriptor_layout)
+        tracked_vkDestroyDescriptorSetLayout(d_, descriptor_layout, nullptr);
+      if (acquire_semaphore) vkDestroySemaphore(d_, acquire_semaphore, nullptr);
+      if (y_view) tracked_vkDestroyImageView(d_, y_view, nullptr);
+      if (uv_view) tracked_vkDestroyImageView(d_, uv_view, nullptr);
+      if (source_image) tracked_vkDestroyImage(d_, source_image, nullptr);
+      if (source_memory) tracked_vkFreeMemory(d_, source_memory, nullptr);
+    };
+    struct CleanupGuard {
+      decltype(cleanup)& fn;
+      ~CleanupGuard() { fn(); }
+    } cleanup_guard{cleanup};
+
+    VkExternalMemoryImageCreateInfo external_image{
+        VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
+    external_image.handleTypes =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    VkImageCreateInfo source_create{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    source_create.pNext = &external_image;
+    source_create.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    source_create.imageType = VK_IMAGE_TYPE_2D;
+    source_create.format = source_format;
+    source_create.extent = {descriptor.width, descriptor.height, 1};
+    source_create.mipLevels = 1;
+    source_create.arrayLayers = 1;
+    source_create.samples = VK_SAMPLE_COUNT_1_BIT;
+    source_create.tiling = VK_IMAGE_TILING_OPTIMAL;
+    source_create.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    source_create.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    source_create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (tracked_vkCreateImage(d_, &source_create, nullptr, &source_image) !=
+        VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkMemoryRequirements source_requirements{};
+    vkGetImageMemoryRequirements(d_, source_image, &source_requirements);
+    VkMemoryWin32HandlePropertiesKHR handle_properties{
+        VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR};
+    const auto memory_handle =
+        reinterpret_cast<HANDLE>(descriptor.native_handle);
+    if (get_memory_properties(d_,
+                              VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT,
+                              memory_handle, &handle_properties) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    const auto memory_bits =
+        source_requirements.memoryTypeBits & handle_properties.memoryTypeBits;
+    auto memory_type = mem(memory_bits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memory_type == UINT32_MAX) memory_type = mem(memory_bits, 0);
+    if (memory_type == UINT32_MAX) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkMemoryDedicatedAllocateInfoKHR dedicated{
+        VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO_KHR};
+    dedicated.image = source_image;
+    VkImportMemoryWin32HandleInfoKHR import_memory{
+        VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR};
+    import_memory.pNext = &dedicated;
+    import_memory.handleType =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
+    import_memory.handle = memory_handle;
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.pNext = &import_memory;
+    allocation.allocationSize = source_requirements.size;
+    allocation.memoryTypeIndex = memory_type;
+    if (tracked_vkAllocateMemory(d_, &allocation, nullptr, &source_memory) !=
+            VK_SUCCESS ||
+        vkBindImageMemory(d_, source_image, source_memory, 0) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    const VkFormat y_format =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010
+            ? VK_FORMAT_R16_UNORM
+            : VK_FORMAT_R8_UNORM;
+    const VkFormat uv_format =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010
+            ? VK_FORMAT_R16G16_UNORM
+            : VK_FORMAT_R8G8_UNORM;
+    auto make_plane_view = [&](VkImageAspectFlags aspect, VkFormat format,
+                               VkImageView& view) {
+      VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+      info.image = source_image;
+      info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      info.format = format;
+      info.subresourceRange = {aspect, 0, 1, 0, 1};
+      return create_image_view(&info, &view) == VK_SUCCESS;
+    };
+    if (!make_plane_view(VK_IMAGE_ASPECT_PLANE_0_BIT, y_format, y_view) ||
+        !make_plane_view(VK_IMAGE_ASPECT_PLANE_1_BIT, uv_format, uv_view))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkSemaphoreCreateInfo semaphore_create{
+        VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    if (vkCreateSemaphore(d_, &semaphore_create, nullptr, &acquire_semaphore) !=
+        VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkImportSemaphoreWin32HandleInfoKHR import_sync{
+        VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR};
+    import_sync.semaphore = acquire_semaphore;
+    import_sync.handleType =
+        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
+    import_sync.handle =
+        reinterpret_cast<HANDLE>(descriptor.acquire_sync.handle);
+    if (import_semaphore(d_, &import_sync) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    auto owner = std::shared_ptr<VkPreviewOwner>(
+        new (std::nothrow) VkPreviewOwner{});
+    if (!owner) return DIGITOR_RESULT_OUT_OF_MEMORY;
+    owner->device = d_;
+    owner->device_live = device_live_;
+    owner->upstream = surface;
+    owner->output_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (create_node_image(descriptor.width, descriptor.height,
+                          VK_FORMAT_R16G16B16A16_SFLOAT, owner->output,
+                          owner->output_memory, owner->output_view) !=
+        DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_OUT_OF_MEMORY;
+
+    static constexpr const char* yuv_shader = R"hlsl(
+[[vk::binding(0,0)]] Texture2D<float> YPlane;
+[[vk::binding(1,0)]] Texture2D<float2> UVPlane;
+[[vk::binding(2,0)]] RWTexture2D<float4> Output;
+[[vk::push_constant]] cbuffer Params {
+  float4 Row0;
+  float4 Row1;
+  float4 Row2;
+  float4 Range;
+  uint Width;
+  uint Height;
+  uint ChromaSiting;
+  uint Padding;
+};
+float2 LoadUV(float2 lumaCenter) {
+  float2 sampleOffset = ChromaSiting == 2 ? float2(1.0, 1.0) :
+                        ChromaSiting == 3 ? float2(0.5, 0.5) :
+                                           float2(0.5, 1.0);
+  float2 c = (lumaCenter - sampleOffset) * 0.5;
+  int2 base = int2(floor(c));
+  float2 f = frac(c);
+  int2 maxp = int2(max(1u, Width / 2u) - 1u,
+                   max(1u, Height / 2u) - 1u);
+  int2 p00 = clamp(base, int2(0,0), maxp);
+  int2 p10 = clamp(base + int2(1,0), int2(0,0), maxp);
+  int2 p01 = clamp(base + int2(0,1), int2(0,0), maxp);
+  int2 p11 = clamp(base + int2(1,1), int2(0,0), maxp);
+  float2 a = lerp(UVPlane.Load(int3(p00,0)), UVPlane.Load(int3(p10,0)), f.x);
+  float2 b = lerp(UVPlane.Load(int3(p01,0)), UVPlane.Load(int3(p11,0)), f.x);
+  return lerp(a, b, f.y);
+}
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  if (id.x >= Width || id.y >= Height) return;
+  float y = (YPlane.Load(int3(id.xy,0)) - Range.x) * Range.y;
+  float2 uv = (LoadUV(float2(id.xy) + 0.5) - Range.z) * Range.w;
+  float3 v = float3(y, uv.x, uv.y);
+  Output[id.xy] = float4(dot(Row0.xyz, v), dot(Row1.xyz, v),
+                         dot(Row2.xyz, v), 1.0);
+}
+)hlsl";
+    ShaderCompileRequest shader_request{
+        .source = yuv_shader,
+        .entry_point = "main",
+        .source_name = "windows_dxgi_yuv_import.hlsl",
+        .target_profile = "cs_6_0",
+        .stage = ShaderStage::compute,
+        .backend = ShaderBackend::vulkan,
+        .macros = {},
+        .include_roots = {},
+        .specialization_constants = {},
+        .optimization = ShaderOptimization::performance,
+        .debug_info = false};
+    const auto binary = vulkan_shader(shader_request);
+    if (!binary || binary.binary.empty())
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkDescriptorSetLayoutBinding bindings[3]{
+        {0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
+         nullptr},
+        {1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
+         nullptr},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT,
+         nullptr}};
+    VkDescriptorSetLayoutCreateInfo descriptor_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    descriptor_info.bindingCount = 3;
+    descriptor_info.pBindings = bindings;
+    if (tracked_vkCreateDescriptorSetLayout(d_, &descriptor_info, nullptr,
+                                            &descriptor_layout) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    struct YuvConstants {
+      float row0[4];
+      float row1[4];
+      float row2[4];
+      float range[4];
+      std::uint32_t width;
+      std::uint32_t height;
+      std::uint32_t chroma_siting;
+      std::uint32_t padding;
+    } constants{};
+    static_assert(sizeof(YuvConstants) == 80);
+    auto set_rows = [&](float r_cr, float g_cb, float g_cr, float b_cb) {
+      constants.row0[0] = 1.0f;
+      constants.row0[2] = r_cr;
+      constants.row1[0] = 1.0f;
+      constants.row1[1] = g_cb;
+      constants.row1[2] = g_cr;
+      constants.row2[0] = 1.0f;
+      constants.row2[1] = b_cb;
+    };
+    if (descriptor.color.matrix == 9)
+      set_rows(1.4746f, -0.164553f, -0.571353f, 1.8814f);
+    else if (descriptor.color.matrix == 1)
+      set_rows(1.5748f, -0.187324f, -0.468124f, 1.8556f);
+    else
+      set_rows(1.402f, -0.344136f, -0.714136f, 1.772f);
+    const float max_code =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 1023.0f
+                                                                 : 255.0f;
+    const float y_min =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 64.0f : 16.0f;
+    const float y_max =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 940.0f : 235.0f;
+    const float uv_min =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 64.0f : 16.0f;
+    const float uv_max =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 960.0f : 240.0f;
+    const float uv_mid =
+        descriptor.pixel_format == NativeMediaPixelFormat::p010 ? 512.0f : 128.0f;
+    if (descriptor.color.full_range) {
+      constants.range[0] = 0.0f;
+      constants.range[1] = 1.0f;
+      constants.range[2] = uv_mid / max_code;
+      constants.range[3] = 1.0f;
+    } else {
+      constants.range[0] = y_min / max_code;
+      constants.range[1] = max_code / (y_max - y_min);
+      constants.range[2] = uv_mid / max_code;
+      constants.range[3] = max_code / (uv_max - uv_min);
+    }
+    constants.width = descriptor.width;
+    constants.height = descriptor.height;
+    constants.chroma_siting = descriptor.color.chroma_location;
+
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    push_range.size = sizeof(constants);
+    VkPipelineLayoutCreateInfo layout_info{
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &descriptor_layout;
+    layout_info.pushConstantRangeCount = 1;
+    layout_info.pPushConstantRanges = &push_range;
+    if (tracked_vkCreatePipelineLayout(d_, &layout_info, nullptr,
+                                       &pipeline_layout) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkShaderModuleCreateInfo shader_info{
+        VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    shader_info.codeSize = binary.binary.size();
+    shader_info.pCode =
+        reinterpret_cast<const std::uint32_t*>(binary.binary.data());
+    if (tracked_vkCreateShaderModule(d_, &shader_info, nullptr, &shader) !=
+        VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkComputePipelineCreateInfo pipeline_info{
+        VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipeline_info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipeline_info.stage.module = shader;
+    pipeline_info.stage.pName = "main";
+    pipeline_info.layout = pipeline_layout;
+    if (tracked_vkCreateComputePipelines(d_, VK_NULL_HANDLE, 1, &pipeline_info,
+                                         nullptr, &pipeline) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkDescriptorPoolSize pool_sizes[2]{{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2},
+                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
+    VkDescriptorPoolCreateInfo pool_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.maxSets = 1;
+    pool_info.poolSizeCount = 2;
+    pool_info.pPoolSizes = pool_sizes;
+    if (tracked_vkCreateDescriptorPool(d_, &pool_info, nullptr,
+                                       &descriptor_pool) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkDescriptorSet descriptor_set{};
+    VkDescriptorSetAllocateInfo set_info{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    set_info.descriptorPool = descriptor_pool;
+    set_info.descriptorSetCount = 1;
+    set_info.pSetLayouts = &descriptor_layout;
+    if (tracked_vkAllocateDescriptorSets(d_, &set_info, &descriptor_set) !=
+        VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkDescriptorImageInfo image_infos[3]{};
+    image_infos[0].imageView = y_view;
+    image_infos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_infos[1].imageView = uv_view;
+    image_infos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_infos[2].imageView = owner->output_view;
+    image_infos[2].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet writes[3]{};
+    for (std::uint32_t index = 0; index < 3; ++index) {
+      writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[index].dstSet = descriptor_set;
+      writes[index].dstBinding = index;
+      writes[index].descriptorCount = 1;
+      writes[index].descriptorType = index < 2 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+                                               : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+      writes[index].pImageInfo = &image_infos[index];
+    }
+    vkUpdateDescriptorSets(d_, 3, writes, 0, nullptr);
+
+    VkCommandBufferAllocateInfo command_info{
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    command_info.commandPool = pool_;
+    command_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_info.commandBufferCount = 1;
+    if (tracked_vkAllocateCommandBuffers(d_, &command_info, &command) !=
+        VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    VkImageMemoryBarrier source_barrier{
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    source_barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    source_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    source_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+    source_barrier.dstQueueFamilyIndex = family_;
+    source_barrier.srcAccessMask = 0;
+    source_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    source_barrier.image = source_image;
+    source_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageMemoryBarrier output_barrier{
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    output_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    output_barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    output_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    output_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    output_barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    output_barrier.image = owner->output;
+    output_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkImageMemoryBarrier initial_barriers[2]{source_barrier, output_barrier};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 2, initial_barriers);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+    vkCmdPushConstants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                       sizeof(constants), &constants);
+    vkCmdDispatch(command, (descriptor.width + 7u) / 8u,
+                  (descriptor.height + 7u) / 8u, 1);
+    VkImageMemoryBarrier final_barrier{
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    final_barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    final_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    final_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    final_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    final_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    final_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    final_barrier.image = owner->output;
+    final_barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &final_barrier);
+    owner->output_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    if (vkEndCommandBuffer(command) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    const std::uint64_t wait_value = descriptor.acquire_sync.value;
+    VkD3D12FenceSubmitInfoKHR fence_submit{
+        VK_STRUCTURE_TYPE_D3D12_FENCE_SUBMIT_INFO_KHR};
+    fence_submit.waitSemaphoreValuesCount = 1;
+    fence_submit.pWaitSemaphoreValues = &wait_value;
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.pNext = &fence_submit;
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores = &acquire_semaphore;
+    submit.pWaitDstStageMask = &wait_stage;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    if (vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
+        vkQueueWaitIdle(queue_) != VK_SUCCESS)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    static std::atomic_uint64_t identities{900000};
+    output = std::make_shared<ProcessedGpuFrame>(
+        this, DIGITOR_RENDERER_VULKAN,
+        GpuFrameMetadata{descriptor.width, descriptor.height,
+                         DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,
+                         GpuFrameAlpha::straight, descriptor.timestamp_us,
+                         request.working_color_space},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), false);
+    bind_frame_context_lifetime(output);
+    return DIGITOR_RESULT_OK;
+#endif
+  }
+
 public:
   BackendProductionCapability production_capability() const noexcept override {
     BackendProductionCapability out{};
@@ -999,6 +1550,11 @@ public:
     out.resources = VulkanProductionResources{
         reinterpret_cast<void*>(in_), reinterpret_cast<void*>(ph_),
         reinterpret_cast<void*>(d_), reinterpret_cast<void*>(queue_), family_};
+    out.native_media_import =
+        [this](const ZeroCopyImportRequest& request,
+               ProcessedGpuFramePtr& frame) noexcept {
+          return import_native_media(request, frame);
+        };
     return out;
   }
   [[nodiscard]] NativeNodeMaskCapabilities
@@ -4652,6 +5208,16 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
   a.apiVersion = VK_API_VERSION_1_0;
   VkInstanceCreateInfo c{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
   c.pApplicationInfo = &a;
+#if defined(_WIN32)
+  const std::array<const char*, 3> required_instance_extensions{
+      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME};
+  if (!has_instance_extensions(required_instance_extensions)) return nullptr;
+  c.enabledExtensionCount =
+      static_cast<std::uint32_t>(required_instance_extensions.size());
+  c.ppEnabledExtensionNames = required_instance_extensions.data();
+#endif
   const char *validation = "VK_LAYER_KHRONOS_validation";
   if (gpu_validation_requested()) {
     uint32_t count = 0;
@@ -4690,6 +5256,41 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
     vkDestroyInstance(in, nullptr);
     return nullptr;
   }
+#if defined(_WIN32)
+  const std::array<const char*, 9> required_device_extensions{
+      VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
+      VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+      VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
+      VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
+      VK_KHR_MAINTENANCE1_EXTENSION_NAME,
+      VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME};
+  if (!has_device_extensions(p[0], required_device_extensions)) {
+    vkDestroyInstance(in, nullptr);
+    return nullptr;
+  }
+  auto get_features2 =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2KHR>(
+          vkGetInstanceProcAddr(in, "vkGetPhysicalDeviceFeatures2KHR"));
+  if (!get_features2) {
+    vkDestroyInstance(in, nullptr);
+    return nullptr;
+  }
+  VkPhysicalDeviceSamplerYcbcrConversionFeaturesKHR ycbcr{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES_KHR};
+  VkPhysicalDeviceFeatures2KHR features2{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR};
+  features2.pNext = &ycbcr;
+  get_features2(p[0], &features2);
+  if (!ycbcr.samplerYcbcrConversion) {
+    vkDestroyInstance(in, nullptr);
+    return nullptr;
+  }
+  ycbcr.pNext = nullptr;
+  ycbcr.samplerYcbcrConversion = VK_TRUE;
+#endif
   float priority = 1;
   VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
   qc.queueFamilyIndex = qi;
@@ -4698,6 +5299,12 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
   VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
   dc.queueCreateInfoCount = 1;
   dc.pQueueCreateInfos = &qc;
+#if defined(_WIN32)
+  dc.pNext = &ycbcr;
+  dc.enabledExtensionCount =
+      static_cast<std::uint32_t>(required_device_extensions.size());
+  dc.ppEnabledExtensionNames = required_device_extensions.data();
+#endif
   VkDevice d;
   if (vkCreateDevice(p[0], &dc, nullptr, &d) != VK_SUCCESS) {
     vkDestroyInstance(in, nullptr);
