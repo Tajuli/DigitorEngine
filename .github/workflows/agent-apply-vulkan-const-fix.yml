@@ -1,0 +1,31 @@
+name: Apply Vulkan importer const fix
+
+on:
+  push:
+    branches:
+      - agent/windows-vulkan-zero-copy-import
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/windows-vulkan-zero-copy-import
+          fetch-depth: 0
+      - name: Apply const-correctness fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check tools/.agent-vulkan-const-fix.patch
+          git apply tools/.agent-vulkan-const-fix.patch
+          git rm tools/.agent-vulkan-const-fix.patch .github/workflows/agent-apply-vulkan-const-fix.yml
+          git add src/gpu/vulkan_backend.cpp
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Fix Vulkan importer callback const capture"
+          git push origin HEAD:agent/windows-vulkan-zero-copy-import
