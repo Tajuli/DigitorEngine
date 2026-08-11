@@ -1,6 +1,7 @@
 #pragma once
 
 #include "digitor/digitor.h"
+#include "digitor/native_media.hpp"
 
 #include <cstdint>
 #include <variant>
@@ -26,6 +27,10 @@ struct BackendProductionCapability {
   // Engine fills this from the selected IRenderBackend instance before provider install.
   const void* frame_context_identity{};
   BackendProductionResources resources;
+  // Renderer-owned native media import. This callback is created by the exact
+  // selected backend generation so imported frames carry real backend context
+  // identity/lifetime instead of a platform-fabricated GPU token.
+  NativeMediaImportCallback native_media_import{};
   [[nodiscard]] bool valid() const noexcept {
     return backend != DIGITOR_RENDERER_CPU && context_identity != 0 &&
            frame_context_identity != nullptr && resources.index() != 0;

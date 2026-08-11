@@ -92,7 +92,8 @@ using NativeMediaImportCallback=std::function<DigitorResult(const ZeroCopyImport
       (s.handle_type==NativeMediaHandleType::d3d11_texture2d||s.handle_type==NativeMediaHandleType::d3d12_resource||s.handle_type==NativeMediaHandleType::dxgi_shared_handle);
     case DIGITOR_RENDERER_METAL:return s.platform==NativeMediaPlatform::apple&&
       (s.handle_type==NativeMediaHandleType::cv_pixel_buffer||s.handle_type==NativeMediaHandleType::io_surface||s.handle_type==NativeMediaHandleType::metal_texture);
-    case DIGITOR_RENDERER_VULKAN:return s.handle_type==NativeMediaHandleType::vulkan_image||s.handle_type==NativeMediaHandleType::vulkan_external_memory||s.handle_type==NativeMediaHandleType::ahardware_buffer;
+    case DIGITOR_RENDERER_VULKAN:return s.handle_type==NativeMediaHandleType::vulkan_image||s.handle_type==NativeMediaHandleType::vulkan_external_memory||s.handle_type==NativeMediaHandleType::ahardware_buffer||
+      (s.platform==NativeMediaPlatform::windows&&s.handle_type==NativeMediaHandleType::dxgi_shared_handle);
     case DIGITOR_RENDERER_OPENGL_ES:return s.platform==NativeMediaPlatform::android&&
       (s.handle_type==NativeMediaHandleType::ahardware_buffer||s.handle_type==NativeMediaHandleType::android_surface_texture);
     default:return false;

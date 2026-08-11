@@ -62,6 +62,33 @@ int main() {
   assert(!flutter_production_provider_builder_installed(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
 
+  // Windows Vulkan production is only valid when the selected renderer owns
+  // the native DXGI import callback. A nominal Vulkan device/queue without
+  // import ownership must fail closed instead of falling back to D3D12/CPU.
+  BackendProductionCapability windows_vulkan{};
+  windows_vulkan.backend = DIGITOR_RENDERER_VULKAN;
+  windows_vulkan.context_identity = 103;
+  windows_vulkan.frame_context_identity = &context;
+  windows_vulkan.resources =
+      VulkanProductionResources{&instance, &physical, &device, &queue, 0};
+  diagnostic.clear();
+  auto missing_vulkan_import =
+      install_windows_engine_production_runtime(windows_vulkan, &diagnostic);
+  assert(!missing_vulkan_import);
+  assert(!diagnostic.empty());
+
+  windows_vulkan.native_media_import =
+      [](const ZeroCopyImportRequest&, ProcessedGpuFramePtr& frame) {
+        frame.reset();
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      };
+  diagnostic.clear();
+  auto windows_vulkan_runtime =
+      install_windows_engine_production_runtime(windows_vulkan, &diagnostic);
+  assert(windows_vulkan_runtime && windows_vulkan_runtime->active());
+  assert(diagnostic.empty());
+  assert(windows_vulkan_runtime->shutdown() == DIGITOR_RESULT_OK);
+
   BackendProductionCapability android{};
   android.backend = DIGITOR_RENDERER_VULKAN;
   android.context_identity = 202;
