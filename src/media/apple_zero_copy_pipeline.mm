@@ -8,7 +8,6 @@
 #if defined(__APPLE__)
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
-#import <IOSurface/IOSurface.h>
 #endif
 
 namespace digitor {
@@ -59,6 +58,9 @@ static DigitorResult process_frame(ImplT& i, std::int64_t timestamp_us,
   ++i.telemetry.pixel_buffers;
 #if defined(__APPLE__)
   auto pb = static_cast<CVPixelBufferRef>(decoded.pixel_buffer);
+  // CoreVideo exposes IOSurface backing through CVPixelBufferGetIOSurface on
+  // both macOS and iOS. Avoid importing the IOSurface umbrella header here so
+  // simulator SDKs can compile the shared production source as well.
   if (i.config.require_iosurface && !CVPixelBufferGetIOSurface(pb)) {
     ++i.telemetry.failures; i.telemetry.quarantined = true;
     i.telemetry.diagnostic = "CVPixelBuffer is not IOSurface-backed";
