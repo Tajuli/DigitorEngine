@@ -1,0 +1,21 @@
++    return nullptr;
++  }
++  ycbcr.pNext = nullptr;
++  ycbcr.samplerYcbcrConversion = VK_TRUE;
++#endif
+   float priority = 1;
+   VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+   qc.queueFamilyIndex = qi;
+@@ -4698,6 +5299,12 @@
+   VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+   dc.queueCreateInfoCount = 1;
+   dc.pQueueCreateInfos = &qc;
++#if defined(_WIN32)
++  dc.pNext = &ycbcr;
++  dc.enabledExtensionCount =
++      static_cast<std::uint32_t>(required_device_extensions.size());
++  dc.ppEnabledExtensionNames = required_device_extensions.data();
++#endif
+   VkDevice d;
+   if (vkCreateDevice(p[0], &dc, nullptr, &d) != VK_SUCCESS) {
+     vkDestroyInstance(in, nullptr);
