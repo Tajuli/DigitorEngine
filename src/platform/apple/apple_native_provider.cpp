@@ -70,7 +70,7 @@ AppleNativeProviderResult create_apple_native_provider(
   }
   if (!bindings.flutter.flutter_texture_registrar ||
       bindings.flutter.implementation_identity.empty() ||
-      !bindings.flutter.attached || !bindings.flutter.present) {
+      !bindings.flutter.attached) {
     out.result = DIGITOR_RESULT_NOT_INITIALIZED;
     out.diagnostic = "real Flutter Apple texture bridge is required";
     return out;
@@ -115,7 +115,8 @@ AppleNativeProviderResult create_apple_native_provider(
     inputs.flutter.device_identity = bindings.device_identity;
     inputs.flutter.device_name = bindings.capabilities.device_identity;
     inputs.flutter.attached = bindings.flutter.attached;
-    inputs.flutter.register_or_present = bindings.flutter.present;
+    inputs.flutter.delivery_mode =
+        FlutterPreviewDeliveryMode::deferred_to_flutter_texture;
     inputs.encoder.apple = bindings.encoder;
     return create_production_platform_assembly(std::move(inputs));
   };
