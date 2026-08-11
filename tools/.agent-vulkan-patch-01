@@ -1,0 +1,120 @@
+Next = &external_properties;
++    if (get_image_properties(ph_, &format_info, &image_properties) != VK_SUCCESS ||
++        !(external_properties.externalMemoryProperties.externalMemoryFeatures &
++          VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) ||
++        !(external_properties.externalMemoryProperties.externalMemoryFeatures &
++          VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT))
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkPhysicalDeviceExternalSemaphoreInfo semaphore_info{
++        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO};
++    semaphore_info.handleType =
++        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_D3D12_FENCE_BIT;
++    VkExternalSemaphoreProperties semaphore_properties{
++        VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES};
++    get_semaphore_properties(ph_, &semaphore_info, &semaphore_properties);
++    if (!(semaphore_properties.externalSemaphoreFeatures &
++          VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT))
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkImage source_image{};
++    VkDeviceMemory source_memory{};
++    VkImageView y_view{};
++    VkImageView uv_view{};
++    VkSemaphore acquire_semaphore{};
++    VkDescriptorSetLayout descriptor_layout{};
++    VkPipelineLayout pipeline_layout{};
++    VkShaderModule shader{};
++    VkPipeline pipeline{};
++    VkDescriptorPool descriptor_pool{};
++    VkCommandBuffer command{};
++    auto cleanup = [&]() noexcept {
++      if (command) tracked_vkFreeCommandBuffers(d_, pool_, 1, &command);
++      if (descriptor_pool)
++        tracked_vkDestroyDescriptorPool(d_, descriptor_pool, nullptr);
++      if (pipeline) tracked_vkDestroyPipeline(d_, pipeline, nullptr);
++      if (shader) tracked_vkDestroyShaderModule(d_, shader, nullptr);
++      if (pipeline_layout)
++        tracked_vkDestroyPipelineLayout(d_, pipeline_layout, nullptr);
++      if (descriptor_layout)
++        tracked_vkDestroyDescriptorSetLayout(d_, descriptor_layout, nullptr);
++      if (acquire_semaphore) vkDestroySemaphore(d_, acquire_semaphore, nullptr);
++      if (y_view) tracked_vkDestroyImageView(d_, y_view, nullptr);
++      if (uv_view) tracked_vkDestroyImageView(d_, uv_view, nullptr);
++      if (source_image) tracked_vkDestroyImage(d_, source_image, nullptr);
++      if (source_memory) tracked_vkFreeMemory(d_, source_memory, nullptr);
++    };
++    struct CleanupGuard {
++      decltype(cleanup)& fn;
++      ~CleanupGuard() { fn(); }
++    } cleanup_guard{cleanup};
++
++    VkExternalMemoryImageCreateInfo external_image{
++        VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
++    external_image.handleTypes =
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
++    VkImageCreateInfo source_create{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
++    source_create.pNext = &external_image;
++    source_create.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
++    source_create.imageType = VK_IMAGE_TYPE_2D;
++    source_create.format = source_format;
++    source_create.extent = {descriptor.width, descriptor.height, 1};
++    source_create.mipLevels = 1;
++    source_create.arrayLayers = 1;
++    source_create.samples = VK_SAMPLE_COUNT_1_BIT;
++    source_create.tiling = VK_IMAGE_TILING_OPTIMAL;
++    source_create.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
++    source_create.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
++    source_create.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
++    if (tracked_vkCreateImage(d_, &source_create, nullptr, &source_image) !=
++        VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkMemoryRequirements source_requirements{};
++    vkGetImageMemoryRequirements(d_, source_image, &source_requirements);
++    VkMemoryWin32HandlePropertiesKHR handle_properties{
++        VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR};
++    const auto memory_handle =
++        reinterpret_cast<HANDLE>(descriptor.native_handle);
++    if (get_memory_properties(d_,
++                              VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT,
++                              memory_handle, &handle_properties) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++    const auto memory_bits =
++        source_requirements.memoryTypeBits & handle_properties.memoryTypeBits;
++    auto memory_type = mem(memory_bits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++    if (memory_type == UINT32_MAX) memory_type = mem(memory_bits, 0);
++    if (memory_type == UINT32_MAX) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    VkMemoryDedicatedAllocateInfoKHR dedicated{
++        VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO_KHR};
++    dedicated.image = source_image;
++    VkImportMemoryWin32HandleInfoKHR import_memory{
++        VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR};
++    import_memory.pNext = &dedicated;
++    import_memory.handleType =
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
++    import_memory.handle = memory_handle;
++    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++    allocation.pNext = &import_memory;
++    allocation.allocationSize = source_requirements.size;
++    allocation.memoryTypeIndex = memory_type;
++    if (tracked_vkAllocateMemory(d_, &allocation, nullptr, &source_memory) !=
++            VK_SUCCESS ||
++        vkBindImageMemory(d_, source_image, source_memory, 0) != VK_SUCCESS)
++      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
++
++    const VkFormat y_format =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010
++            ? VK_FORMAT_R16_UNORM
++            : VK_FORMAT_R8_UNORM;
++    const VkFormat uv_format =
++        descriptor.pixel_format == NativeMediaPixelFormat::p010
++            ? VK_FORMAT_R16G16_UNORM
++            : VK_FORMAT_R8G8_UNORM;
++    auto make_plane_view = [&](VkImageAspectFlags aspect, VkFormat format,
++                               VkImageView& view) {
++      VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
++      info.image = source_image;
++      info.viewType = VK_IMAGE_VIEW_TYPE_2D;
++      info.format = f
