@@ -23,13 +23,13 @@ jobs:
           fetch-depth: 0
       - name: Patch GLES native-node compatibility
         run: python3 tools/agent_patch_gles_rgba16f_node_compat.py
-      - name: Commit production and qualification updates
+      - name: Commit production and qualification source updates
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/gpu/gles_backend.cpp src/gpu/native_node_shader_contracts.cpp tests/test_node_system.cpp .github/workflows/android-gles-effect-provider.yml
+          git add src/gpu/gles_backend.cpp src/gpu/native_node_shader_contracts.cpp tests/test_node_system.cpp
           git diff --cached --check
           git commit -m "Make GLES native nodes accept RGBA16F inputs"
           git push origin HEAD:agent/gles-rgba16f-node-compat
 
-# Connector-triggered rerun after transformer regex hardening.
+# Workflow path-trigger edits are committed separately through the GitHub connector.
