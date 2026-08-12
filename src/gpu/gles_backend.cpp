@@ -260,7 +260,6 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
 
   bool make_context_current() noexcept {
     return display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
-           surface_ != EGL_NO_SURFACE &&
            eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE;
   }
 
