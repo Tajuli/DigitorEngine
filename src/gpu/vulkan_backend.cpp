@@ -1113,7 +1113,22 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
     const auto import_semaphore_fd =
         reinterpret_cast<PFN_vkImportSemaphoreFdKHR>(
             vkGetDeviceProcAddr(d_, "vkImportSemaphoreFdKHR"));
-    if (!get_ahb_properties || !import_semaphore_fd)
+    auto create_sampler_ycbcr_conversion =
+        reinterpret_cast<PFN_vkCreateSamplerYcbcrConversionKHR>(
+            vkGetDeviceProcAddr(d_, "vkCreateSamplerYcbcrConversion"));
+    if (!create_sampler_ycbcr_conversion)
+      create_sampler_ycbcr_conversion =
+          reinterpret_cast<PFN_vkCreateSamplerYcbcrConversionKHR>(
+              vkGetDeviceProcAddr(d_, "vkCreateSamplerYcbcrConversionKHR"));
+    auto destroy_sampler_ycbcr_conversion =
+        reinterpret_cast<PFN_vkDestroySamplerYcbcrConversionKHR>(
+            vkGetDeviceProcAddr(d_, "vkDestroySamplerYcbcrConversion"));
+    if (!destroy_sampler_ycbcr_conversion)
+      destroy_sampler_ycbcr_conversion =
+          reinterpret_cast<PFN_vkDestroySamplerYcbcrConversionKHR>(
+              vkGetDeviceProcAddr(d_, "vkDestroySamplerYcbcrConversionKHR"));
+    if (!get_ahb_properties || !import_semaphore_fd ||
+        !create_sampler_ycbcr_conversion || !destroy_sampler_ycbcr_conversion)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     VkAndroidHardwareBufferFormatPropertiesANDROID format_properties{
@@ -1156,7 +1171,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
       if (input_sampler) vkDestroySampler(d_, input_sampler, nullptr);
       if (input_view) tracked_vkDestroyImageView(d_, input_view, nullptr);
       if (conversion)
-        vkDestroySamplerYcbcrConversion(d_, conversion, nullptr);
+        destroy_sampler_ycbcr_conversion(d_, conversion, nullptr);
       if (input_image) tracked_vkDestroyImage(d_, input_image, nullptr);
       if (input_memory) tracked_vkFreeMemory(d_, input_memory, nullptr);
     };
@@ -1226,7 +1241,7 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
             : VK_FILTER_NEAREST;
     if (format_properties.format == VK_FORMAT_UNDEFINED)
       conversion_create.pNext = &external_format;
-    if (vkCreateSamplerYcbcrConversion(
+    if (create_sampler_ycbcr_conversion(
             d_, &conversion_create, nullptr, &conversion) != VK_SUCCESS)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
@@ -5762,12 +5777,23 @@ std::unique_ptr<IRenderBackend> create_vulkan_backend() {
     vkDestroyInstance(in, nullptr);
     return nullptr;
   }
-  VkPhysicalDeviceSamplerYcbcrConversionFeatures android_ycbcr{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
-  VkPhysicalDeviceFeatures2 android_features{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+  auto get_android_features2 =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2KHR>(
+          vkGetInstanceProcAddr(in, "vkGetPhysicalDeviceFeatures2"));
+  if (!get_android_features2)
+    get_android_features2 =
+        reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2KHR>(
+            vkGetInstanceProcAddr(in, "vkGetPhysicalDeviceFeatures2KHR"));
+  if (!get_android_features2) {
+    vkDestroyInstance(in, nullptr);
+    return nullptr;
+  }
+  VkPhysicalDeviceSamplerYcbcrConversionFeaturesKHR android_ycbcr{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES_KHR};
+  VkPhysicalDeviceFeatures2KHR android_features{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR};
   android_features.pNext = &android_ycbcr;
-  vkGetPhysicalDeviceFeatures2(p[0], &android_features);
+  get_android_features2(p[0], &android_features);
   if (!android_ycbcr.samplerYcbcrConversion) {
     vkDestroyInstance(in, nullptr);
     return nullptr;
