@@ -153,6 +153,41 @@ final class DigitorEditorWorkspace {
     return snapshot;
   }
 
+  /// Opens editor media through the platform-registered production provider.
+  ///
+  /// The Flutter editor already requires a registered native production host,
+  /// so it must not pre-open the auxiliary FFmpeg media facade before that
+  /// provider gets a chance to create its platform decoder. The legacy
+  /// [openMedia] API remains available for callers that explicitly need its
+  /// FFmpeg-backed [DigitorProductionMediaSnapshot].
+  void openRegisteredMedia(String path) {
+    _ensureOpen();
+    if (path.isEmpty) {
+      throw ArgumentError.value(path, 'path', 'must not be empty');
+    }
+    if (!DigitorRegisteredProductionSession.hostRegistered) {
+      throw StateError(
+        'The native Flutter production host is not registered for this platform.',
+      );
+    }
+
+    _productionSession?.dispose();
+    _productionSession = null;
+    _mediaPipeline.clear();
+    _media = null;
+    _productionSession = DigitorRegisteredProductionSession.open(
+      mediaPath: path,
+      nodeGraph: _graph,
+    );
+    _timelineRevision += 1;
+    _timeline.publish(
+      revision: _timelineRevision,
+      durationUs: 0,
+      videoTrackCount: 1,
+      audioTrackCount: 1,
+    );
+  }
+
   DigitorPreviewCapabilities productionPreviewCapabilities() {
     _ensureProductionReady();
     return _productionSession!.previewCapabilities;
@@ -357,7 +392,6 @@ final class DigitorEditorWorkspace {
     _ensureOpen();
     return _timeline.telemetry();
   }
-
   void play() {
     _ensureOpen();
     _timeline.play();
@@ -478,7 +512,6 @@ final class DigitorEditorWorkspace {
     _ensureSelected();
     _graph.addPrimaryWheels(value);
   }
-
   void addLogWheels(DigitorLogWheels value) {
     _ensureSelected();
     _graph.addLogWheels(value);
