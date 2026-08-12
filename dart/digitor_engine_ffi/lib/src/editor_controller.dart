@@ -141,7 +141,7 @@ final class DigitorEditorController extends ChangeNotifier {
       throw StateError(_productionBootstrap.diagnostic);
     }
     await _guard(() async {
-      _workspace.openMedia(path);
+      _workspace.openRegisteredMedia(path);
       _syncState(mediaPath: path, clearTexture: true);
     });
   }
