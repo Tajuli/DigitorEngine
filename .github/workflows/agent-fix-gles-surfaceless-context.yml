@@ -28,3 +28,4 @@ jobs:
           git diff --cached --check
           git commit -m "Support surfaceless selected EGL contexts"
           git push origin HEAD:agent/android-gles-ahardwarebuffer-import
+# one-shot trigger
