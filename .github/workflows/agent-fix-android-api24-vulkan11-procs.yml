@@ -1,0 +1,41 @@
+name: Agent Fix Android API24 Vulkan11 Procs
+
+on:
+  push:
+    branches:
+      - agent/android-vulkan-ahardwarebuffer-import
+    paths:
+      - tools/agent_fix_android_api24_vulkan11_procs.py
+      - .github/workflows/agent-fix-android-api24-vulkan11-procs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/android-vulkan-ahardwarebuffer-import
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Patch Vulkan loader calls
+        run: python tools/agent_fix_android_api24_vulkan11_procs.py
+      - name: Validate diff
+        shell: bash
+        run: git diff --check
+      - name: Commit source fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/gpu/vulkan_backend.cpp
+          if git diff --cached --quiet; then
+            echo "No source changes required."
+            exit 0
+          fi
+          git commit -m "Fix Android API24 Vulkan loader symbols"
+          git push origin HEAD:agent/android-vulkan-ahardwarebuffer-import
