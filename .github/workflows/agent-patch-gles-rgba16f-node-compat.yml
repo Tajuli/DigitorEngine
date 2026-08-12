@@ -31,3 +31,5 @@ jobs:
           git diff --cached --check
           git commit -m "Make GLES native nodes accept RGBA16F inputs"
           git push origin HEAD:agent/gles-rgba16f-node-compat
+
+# Connector-triggered rerun after transformer regex hardening.
