@@ -392,6 +392,7 @@ final class DigitorEditorWorkspace {
     _ensureOpen();
     return _timeline.telemetry();
   }
+
   void play() {
     _ensureOpen();
     _timeline.play();
@@ -512,6 +513,7 @@ final class DigitorEditorWorkspace {
     _ensureSelected();
     _graph.addPrimaryWheels(value);
   }
+
   void addLogWheels(DigitorLogWheels value) {
     _ensureSelected();
     _graph.addLogWheels(value);
