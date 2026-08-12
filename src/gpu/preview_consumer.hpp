@@ -15,8 +15,12 @@ struct PreviewConsumerMetadata {
   const void* context_identity{};
   std::uint32_t width{};
   std::uint32_t height{};
+  // Destination backing format. Source frames remain exact-format by default.
   DigitorPixelFormat format{DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};
   GpuPrecisionMode precision{GpuPrecisionMode::Float32};
+  // Opt-in for GPU consumers that own a floating-point RGBA destination and
+  // explicitly support hardware conversion between RGBA16F and RGBA32F.
+  bool allow_float_rgba_precision_transition{};
 };
 
 // The destination and its liveness token are owned by the registered consumer,

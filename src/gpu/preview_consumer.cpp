@@ -20,8 +20,15 @@ DigitorResult PreviewConsumerDestination::submit(const ProcessedGpuFramePtr& fra
   if (!frame || !ownership_token_ || !native_destination_ || !live_ || !submit_ ||
       !live_->load(std::memory_order_acquire)) return DIGITOR_RESULT_NOT_INITIALIZED;
   const auto& source = frame->metadata();
+  const auto is_float_rgba = [](DigitorPixelFormat format) noexcept {
+    return format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+           format == DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+  };
+  const bool compatible_format = source.format == metadata_.format ||
+      (metadata_.allow_float_rgba_precision_transition &&
+       is_float_rgba(source.format) && is_float_rgba(metadata_.format));
   if (frame->backend() != metadata_.backend || source.width != metadata_.width ||
-      source.height != metadata_.height || source.format != metadata_.format ||
+      source.height != metadata_.height || !compatible_format ||
       metadata_.precision != GpuPrecisionMode::Float32 || !metadata_.context_identity)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto acquire = frame->acquire(metadata_.context_identity, metadata_.backend);

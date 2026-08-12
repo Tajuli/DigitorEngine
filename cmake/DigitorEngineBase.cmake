@@ -335,6 +335,21 @@ if (DIGITOR_BUILD_TESTS)
         target_compile_options(digitor_native_gpu_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME digitor_native_gpu_tests COMMAND digitor_native_gpu_tests)
+    add_executable(digitor_preview_consumer_format_transition_test
+        tests/test_preview_consumer_format_transition.cpp)
+    set_target_properties(digitor_preview_consumer_format_transition_test PROPERTIES
+        CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    target_link_libraries(digitor_preview_consumer_format_transition_test PRIVATE Digitor::Engine)
+    target_include_directories(digitor_preview_consumer_format_transition_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    if (MSVC)
+        target_compile_options(digitor_preview_consumer_format_transition_test PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(digitor_preview_consumer_format_transition_test PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME digitor_preview_consumer_format_transition
+        COMMAND digitor_preview_consumer_format_transition_test)
+
     set_tests_properties(digitor_native_gpu_tests PROPERTIES
         ENVIRONMENT "DIGITOR_GPU_VALIDATION=1"
         LABELS "native-gpu;hardware"
