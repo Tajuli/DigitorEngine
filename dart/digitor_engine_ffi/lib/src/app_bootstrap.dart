@@ -22,11 +22,29 @@ final class DigitorFlutterProductionBootstrap {
 
   final String platform;
   final bool textureHostReady;
+
+  /// Registration state observed when [resolve] completed.
+  ///
+  /// Native production dependencies may finish installing after the Flutter
+  /// attachment is retained. The native bootstrap retries that pending
+  /// attachment when the dependency factory becomes available, so callers must
+  /// not treat this snapshot as the permanent process-wide registration state.
   final bool productionHostRegistered;
   final String diagnostic;
   final int? registrarToken;
 
-  bool get ready => textureHostReady && productionHostRegistered;
+  /// Whether Flutter texture presentation and the native production host are
+  /// ready now.
+  ///
+  /// [productionHostRegistered] is the resolve-time snapshot. The live native
+  /// probe is intentionally included so a controller created while a concrete
+  /// platform dependency factory is still starting can become ready after the
+  /// native late-registration retry succeeds, without recreating the controller
+  /// or calling the plugin attach ABI a second time.
+  bool get ready =>
+      textureHostReady &&
+      (productionHostRegistered ||
+          DigitorRegisteredProductionSession.hostRegistered);
 
   static int _platformCode(String platform) => switch (platform) {
     'windows' => 1,
