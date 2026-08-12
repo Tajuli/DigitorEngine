@@ -167,23 +167,23 @@ class DigitorSdk {
   Pointer<_DigitorSdkSession>? _session;
   bool _disposed = false;
 
-  int versionProbe() {
-    final version = _bindings.getVersion().toDartString();
-    return int.tryParse(version.split('.').first) ?? 0;
-  }
+  Future<int> versionProbe() => Future.sync(() {
+        final version = _bindings.getVersion().toDartString();
+        return int.tryParse(version.split('.').first) ?? 0;
+      });
 
   String version() => _bindings.getVersion().toDartString();
 
   bool productionHostReady() => _bindings.productionHostRegistered() != 0;
 
-  Future<void> seek(int frame) {
-    if (frame < 0) throw ArgumentError.value(frame, 'frame');
-    final session = _ensureSession();
-    return _runAsync(
-      'seek',
-      (callback) => _bindings.seek(session, frame, callback, nullptr),
-    );
-  }
+  Future<void> seek(int frame) => Future.sync(() {
+        if (frame < 0) throw ArgumentError.value(frame, 'frame');
+        final session = _ensureSession();
+        return _runAsync(
+          'seek',
+          (callback) => _bindings.seek(session, frame, callback, nullptr),
+        );
+      });
 
   Future<void> setColor({
     double exposure = 0,
@@ -206,17 +206,17 @@ class DigitorSdk {
     }
   }
 
-  Future<void> preview(int frame, int width, int height) {
-    if (frame < 0 || width <= 0 || height <= 0) {
-      throw ArgumentError('invalid preview dimensions or frame');
-    }
-    final session = _ensureSession();
-    return _runAsync(
-      'preview',
-      (callback) =>
-          _bindings.preview(session, frame, width, height, callback, nullptr),
-    );
-  }
+  Future<void> preview(int frame, int width, int height) => Future.sync(() {
+        if (frame < 0 || width <= 0 || height <= 0) {
+          throw ArgumentError('invalid preview dimensions or frame');
+        }
+        final session = _ensureSession();
+        return _runAsync(
+          'preview',
+          (callback) =>
+              _bindings.preview(session, frame, width, height, callback, nullptr),
+        );
+      });
 
   Future<void> export(
     String path, {
@@ -226,35 +226,35 @@ class DigitorSdk {
     int lastFrame = 0,
     int width = 1920,
     int height = 1080,
-  }) {
-    if (path.isEmpty) throw ArgumentError.value(path, 'path');
-    if (firstFrame < 0 || lastFrame < firstFrame || width <= 0 || height <= 0) {
-      throw ArgumentError('invalid export range or dimensions');
-    }
-    final session = _ensureSession();
-    final nativePath = path.toNativeUtf8();
-    return _runAsync(
-      'export',
-      (callback) {
-        final result = _bindings.export(
-          session,
-          nativePath,
-          format,
-          codec,
-          firstFrame,
-          lastFrame,
-          width,
-          height,
-          nullptr,
-          callback,
-          nullptr,
+  }) =>
+      Future.sync(() {
+        if (path.isEmpty) throw ArgumentError.value(path, 'path');
+        if (firstFrame < 0 ||
+            lastFrame < firstFrame ||
+            width <= 0 ||
+            height <= 0) {
+          throw ArgumentError('invalid export range or dimensions');
+        }
+        final session = _ensureSession();
+        final nativePath = path.toNativeUtf8();
+        return _runAsync(
+          'export',
+          (callback) => _bindings.export(
+            session,
+            nativePath,
+            format,
+            codec,
+            firstFrame,
+            lastFrame,
+            width,
+            height,
+            nullptr,
+            callback,
+            nullptr,
+          ),
+          onComplete: () => calloc.free(nativePath),
         );
-        if (result != 0) calloc.free(nativePath);
-        return result;
-      },
-      onComplete: () => calloc.free(nativePath),
-    );
-  }
+      });
 
   void cancel() {
     final session = _session;
