@@ -5,6 +5,9 @@ on:
     paths:
       - 'include/digitor/android_gles_effect_provider.hpp'
       - 'src/platform/android/android_gles_effect_provider.cpp'
+      - 'src/gpu/gles_backend.cpp'
+      - 'src/gpu/native_node_shader_contracts.cpp'
+      - 'tests/test_node_system.cpp'
       - 'cmake/AndroidGlesEffectProvider.cmake'
       - 'tests/android_gles_effect_provider/**'
       - '.github/workflows/android-gles-effect-provider.yml'

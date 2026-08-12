@@ -133,6 +133,14 @@ void test_node_system() {
                               NativeNodeKernel::masked_composite}) {
       const auto contract = native_node_pipeline_contract(backend, kernel);
       assert(validate_native_node_pipeline_contract(contract));
+      bool has_sampled_input=false;
+      for(std::uint32_t i=0;i<contract.binding_count;++i)
+        has_sampled_input=has_sampled_input||contract.bindings[i].kind==NativeNodeBindingKind::sampled_or_storage_input;
+      if(backend==DIGITOR_RENDERER_OPENGL_ES&&has_sampled_input){
+        assert(contract.source.find("sampler2D")!=std::string_view::npos);
+        assert(contract.source.find("texelFetch")!=std::string_view::npos);
+        assert(contract.source.find("uniform readonly highp image2D")==std::string_view::npos);
+      }
       NativeNodeDispatchResources resources;
       resources.kernel = kernel;
       resources.constants.resize(contract.constant_bytes);
