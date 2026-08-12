@@ -9,9 +9,21 @@ void main() {
 
     expect(controller, contains('_workspace.openRegisteredMedia(path);'));
     expect(controller, isNot(contains('_workspace.openMedia(path);')));
-    expect(workspace, contains('void openRegisteredMedia(String path)'));
+
+    final methodStart = workspace.indexOf(
+      'void openRegisteredMedia(String path)',
+    );
+    expect(methodStart, greaterThanOrEqualTo(0));
+    final nextMember = workspace.indexOf(
+      'DigitorPreviewCapabilities productionPreviewCapabilities()',
+      methodStart,
+    );
+    expect(nextMember, greaterThan(methodStart));
+
+    final registeredOpen = workspace.substring(methodStart, nextMember);
+    expect(registeredOpen, isNot(contains('_mediaPipeline.open(')));
     expect(
-      workspace,
+      registeredOpen,
       contains('_productionSession = DigitorRegisteredProductionSession.open('),
     );
   });
