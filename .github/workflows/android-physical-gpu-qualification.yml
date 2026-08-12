@@ -6,6 +6,7 @@ on:
       - 'include/digitor/android_gpu_qualification.hpp'
       - 'src/gpu/android_gpu_qualification.cpp'
       - 'src/gpu/vulkan_backend.cpp'
+      - 'src/gpu/gles_backend.cpp'
       - 'src/gpu/shaders/android_ahardwarebuffer_yuv_to_rgba16f.comp'
       - 'cmake/DigitorEngineBase.cmake'
       - 'tests/android_gpu_qualification/**'
