@@ -18,6 +18,17 @@ public:
   DigitorResult shutdown();
   [[nodiscard]] bool is_initialized() const noexcept;
   [[nodiscard]] DigitorRendererInfo renderer_info() const noexcept;
+  [[nodiscard]] bool production_frame_bound_to_current_backend(
+      const ProcessedGpuFramePtr& frame) const noexcept {
+    std::scoped_lock lock(mutex_);
+    if (!initialized_ || !backend_ || !frame || !frame->ready() ||
+        !frame->context_live()) {
+      return false;
+    }
+    const auto capability = backend_->production_capability();
+    return capability.valid() && frame->backend() == capability.backend &&
+           frame->has_context_identity(capability.frame_context_identity);
+  }
   DigitorResult create_context(RenderContext **out_context);
   DigitorResult destroy_context(RenderContext *context);
   DigitorResult render_preview_rgba8(uint32_t,uint32_t,std::span<const uint8_t>,std::vector<uint8_t>&);
