@@ -38,6 +38,7 @@ Future<void> main(List<String> arguments) async {
     final ffmpegSdk = await _resolveFfmpegSdk(
       code,
       input.userDefines.path('ffmpeg_root'),
+      input.packageRoot,
     );
     final ffmpegRoot = ffmpegSdk?.root;
     if (ffmpegRoot != null) {
@@ -132,6 +133,7 @@ Future<void> main(List<String> arguments) async {
 Future<_FfmpegSdk?> _resolveFfmpegSdk(
   CodeConfig code,
   Uri? configuredRoot,
+  Uri packageRoot,
 ) async {
   if (configuredRoot != null) {
     final directory = Directory.fromUri(configuredRoot);
@@ -158,13 +160,13 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
   }
 
   if (code.targetArchitecture.name == 'x64') {
-    final provisioner = File(
-      '${Directory.current.path}${Platform.pathSeparator}tool'
-      '${Platform.pathSeparator}provision_ffmpeg_windows.ps1',
+    final provisioner = File.fromUri(
+      packageRoot.resolve('tool/provision_ffmpeg_windows.ps1'),
     );
     if (!await provisioner.exists()) {
       throw StateError(
-        'Windows FFmpeg provisioner is missing: ${provisioner.path}',
+        'Windows FFmpeg provisioner is missing from the DigitorEngine package: '
+        '${provisioner.path}',
       );
     }
     await _run('powershell.exe', <String>[
@@ -173,7 +175,7 @@ Future<_FfmpegSdk?> _resolveFfmpegSdk(
       'Bypass',
       '-File',
       provisioner.path,
-    ], workingDirectory: Directory.current.uri);
+    ], workingDirectory: packageRoot);
   }
 
   final triplet = switch (code.targetArchitecture.name) {
