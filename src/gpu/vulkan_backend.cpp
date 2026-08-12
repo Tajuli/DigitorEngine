@@ -974,13 +974,14 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
         tracked_vkDestroyDescriptorPool(d_, descriptor_pool, nullptr);
       destroy_vulkan_native_node_pipeline(pipeline_context, pipeline);
     };
-    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                   static_cast<std::uint32_t>(textures.size())};
+    VkDescriptorPoolSize pool_sizes[2]{
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, contract.binding_count},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, contract.binding_count}};
     VkDescriptorPoolCreateInfo pool_info{
         VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool_info.maxSets = 1;
-    pool_info.poolSizeCount = 1;
-    pool_info.pPoolSizes = &pool_size;
+    pool_info.poolSizeCount = 2;
+    pool_info.pPoolSizes = pool_sizes;
     if (create_descriptor_pool(&pool_info, &descriptor_pool) != VK_SUCCESS) {
       cleanup();
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
@@ -2823,7 +2824,8 @@ public:
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out = std::make_shared<ProcessedGpuFrame>(
         this, DIGITOR_RENDERER_VULKAN,
-        GpuFrameMetadata{s.width, s.height, s.format, GpuFrameAlpha::straight,
+        GpuFrameMetadata{s.width, s.height, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight,
                          timestamp, s.color_metadata_identity},
         ids++, std::static_pointer_cast<void>(owner),
         std::make_shared<std::atomic_bool>(true), true);
@@ -3465,7 +3467,8 @@ public:
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out = std::make_shared<ProcessedGpuFrame>(
         this, DIGITOR_RENDERER_VULKAN,
-        GpuFrameMetadata{s.width, s.height, s.format, GpuFrameAlpha::straight,
+        GpuFrameMetadata{s.width, s.height, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight,
                          timestamp, s.color_metadata_identity},
         ids++, std::static_pointer_cast<void>(owner),
         std::make_shared<std::atomic_bool>(true), true);
@@ -4006,7 +4009,8 @@ public:
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out = std::make_shared<ProcessedGpuFrame>(
         this, DIGITOR_RENDERER_VULKAN,
-        GpuFrameMetadata{s.width, s.height, s.format, GpuFrameAlpha::straight,
+        GpuFrameMetadata{s.width, s.height, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                         GpuFrameAlpha::straight,
                          timestamp, s.color_metadata_identity},
         ids++, std::static_pointer_cast<void>(owner),
         std::make_shared<std::atomic_bool>(true), true);
