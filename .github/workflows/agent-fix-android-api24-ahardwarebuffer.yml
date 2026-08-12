@@ -11,14 +11,14 @@ permissions:
 jobs:
   apply:
     if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/android-vulkan-ahardwarebuffer-import
           fetch-depth: 0
       - name: Apply API24-safe Android AHardwareBuffer resolver
-        run: python3 tools/agent_fix_android_api24_ahardwarebuffer.py
+        run: python tools/agent_fix_android_api24_ahardwarebuffer.py
       - name: Validate and publish source fix
         run: |
           git diff --check
