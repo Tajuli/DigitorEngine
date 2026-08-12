@@ -52,11 +52,24 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 #endif
 #include <android/hardware_buffer.h>
+#include <dlfcn.h>
 #include <unistd.h>
 #endif
 #include <vulkan/vulkan.h>
 namespace digitor {
 namespace {
+#if defined(__ANDROID__)
+using AHardwareBufferDescribeFn =
+    void (*)(const AHardwareBuffer*, AHardwareBuffer_Desc*);
+
+AHardwareBufferDescribeFn resolve_ahardwarebuffer_describe() noexcept {
+  static const auto describe =
+      reinterpret_cast<AHardwareBufferDescribeFn>(
+          dlsym(RTLD_DEFAULT, "AHardwareBuffer_describe"));
+  return describe;
+}
+#endif
+
 struct VulkanLiveResources {
   std::atomic<std::int64_t> images{}, memory{}, views{}, buffers{},
       descriptor_pools{}, descriptor_sets{}, command_buffers{}, pipelines{},
@@ -1082,8 +1095,11 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
       return DIGITOR_RESULT_INVALID_ARGUMENT;
 
     auto* ahb = reinterpret_cast<AHardwareBuffer*>(descriptor.native_handle);
+    const auto describe_ahardwarebuffer = resolve_ahardwarebuffer_describe();
+    if (!describe_ahardwarebuffer)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     AHardwareBuffer_Desc ahb_descriptor{};
-    AHardwareBuffer_describe(ahb, &ahb_descriptor);
+    describe_ahardwarebuffer(ahb, &ahb_descriptor);
     if (ahb_descriptor.width != descriptor.width ||
         ahb_descriptor.height != descriptor.height ||
         ahb_descriptor.layers != 1 ||
