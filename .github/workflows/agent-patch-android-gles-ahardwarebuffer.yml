@@ -6,6 +6,7 @@ on:
       - agent/android-gles-ahardwarebuffer-import
     paths:
       - tools/agent_patch_android_gles_ahardwarebuffer.py
+      - .github/workflows/agent-patch-android-gles-ahardwarebuffer.yml
   workflow_dispatch:
 
 permissions:
