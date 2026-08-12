@@ -6,6 +6,7 @@ on:
       - agent/gles-rgba16f-node-compat
     paths:
       - tools/agent_patch_gles_rgba16f_node_compat.py
+      - .github/workflows/agent-patch-gles-rgba16f-node-compat.yml
   workflow_dispatch:
 
 permissions:
