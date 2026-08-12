@@ -1,3 +1,4 @@
+# Temporary one-shot source transformer for PR #360.
 from pathlib import Path
 
 path = Path("src/gpu/vulkan_backend.cpp")
@@ -94,7 +95,6 @@ for old, new, label in replacements:
         raise SystemExit(f"{label}: expected exactly one match, found {count}")
     text = text.replace(old, new, 1)
 
-# Guard against accidentally retaining the three API-24 link-breaking direct calls.
 for forbidden in (
     "vkGetPhysicalDeviceFeatures2(p[0], &android_features)",
     "vkCreateSamplerYcbcrConversion(\n            d_, &conversion_create",
