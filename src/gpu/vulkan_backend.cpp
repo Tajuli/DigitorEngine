@@ -1992,6 +1992,9 @@ void main(uint3 id : SV_DispatchThreadID) {
         std::make_shared<std::atomic_bool>(true), false);
     bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
+#else
+    (void)request;
+    return DIGITOR_RESULT_UNSUPPORTED;
 #endif
   }
 
