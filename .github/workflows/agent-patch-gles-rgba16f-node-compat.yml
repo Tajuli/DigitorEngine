@@ -1,0 +1,32 @@
+name: Agent patch GLES RGBA16F node compatibility
+
+on:
+  push:
+    branches:
+      - agent/gles-rgba16f-node-compat
+    paths:
+      - tools/agent_patch_gles_rgba16f_node_compat.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/gles-rgba16f-node-compat
+          fetch-depth: 0
+      - name: Patch GLES native-node compatibility
+        run: python3 tools/agent_patch_gles_rgba16f_node_compat.py
+      - name: Commit production and qualification updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/gpu/gles_backend.cpp src/gpu/native_node_shader_contracts.cpp tests/test_node_system.cpp .github/workflows/android-gles-effect-provider.yml
+          git diff --cached --check
+          git commit -m "Make GLES native nodes accept RGBA16F inputs"
+          git push origin HEAD:agent/gles-rgba16f-node-compat
