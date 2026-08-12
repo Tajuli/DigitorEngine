@@ -6,7 +6,12 @@
 #include "digitor/native_node_mask_backend.hpp"
 #include "digitor/native_node_shader_contracts.hpp"
 #include <GLES3/gl31.h>
+#include <GLES2/gl2ext.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <android/hardware_buffer.h>
+#include <dlfcn.h>
+#include <unistd.h>
 #include <cstring>
 #include <atomic>
 #include <new>
@@ -36,6 +41,64 @@ struct GlConsumerOwner { GLuint texture{},framebuffer{};EGLContext context{};
  GlConsumerOwner(){++gl_live.consumers;}
  ~GlConsumerOwner(){delete_framebuffer(framebuffer,context);delete_texture(texture,context);--gl_live.consumers;}
 };
+
+using AHardwareBufferDescribeFn =
+    void (*)(const AHardwareBuffer*, AHardwareBuffer_Desc*);
+using EglGetNativeClientBufferAndroidFn =
+    EGLClientBuffer (*)(const AHardwareBuffer*);
+using EglCreateImageKhrFn = EGLImageKHR (*)(
+    EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint*);
+using EglDestroyImageKhrFn = EGLBoolean (*)(EGLDisplay, EGLImageKHR);
+using GlEglImageTargetTexture2DOesFn = void (*)(GLenum, GLeglImageOES);
+using EglCreateSyncKhrFn =
+    EGLSyncKHR (*)(EGLDisplay, EGLenum, const EGLint*);
+using EglWaitSyncKhrFn = EGLBoolean (*)(EGLDisplay, EGLSyncKHR, EGLint);
+using EglDestroySyncKhrFn = EGLBoolean (*)(EGLDisplay, EGLSyncKHR);
+
+template <class T>
+T resolve_egl_proc(const char* name) noexcept {
+  return reinterpret_cast<T>(eglGetProcAddress(name));
+}
+
+AHardwareBufferDescribeFn resolve_ahardwarebuffer_describe() noexcept {
+  static const auto fn = reinterpret_cast<AHardwareBufferDescribeFn>(
+      dlsym(RTLD_DEFAULT, "AHardwareBuffer_describe"));
+  return fn;
+}
+
+bool has_egl_extension(EGLDisplay display, const char* required) noexcept {
+  if (display == EGL_NO_DISPLAY || required == nullptr || *required == '\0')
+    return false;
+  const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+  if (!extensions) return false;
+  const auto length = std::strlen(required);
+  const char* cursor = extensions;
+  while ((cursor = std::strstr(cursor, required)) != nullptr) {
+    const bool left = cursor == extensions || cursor[-1] == ' ';
+    const bool right = cursor[length] == '\0' || cursor[length] == ' ';
+    if (left && right) return true;
+    cursor += length;
+  }
+  return false;
+}
+
+struct GlImportedSurfaceOwner {
+  GLuint texture{};
+  EGLImageKHR image{EGL_NO_IMAGE_KHR};
+  EGLDisplay display{EGL_NO_DISPLAY};
+  EGLContext context{EGL_NO_CONTEXT};
+  EglDestroyImageKhrFn destroy_image{};
+  NativeMediaSurfacePtr surface;
+  ~GlImportedSurfaceOwner() {
+    delete_texture(texture, context);
+    if (image != EGL_NO_IMAGE_KHR && display != EGL_NO_DISPLAY &&
+        destroy_image != nullptr && eglGetCurrentContext() == context) {
+      (void)destroy_image(display, image);
+      image = EGL_NO_IMAGE_KHR;
+    }
+  }
+};
+
 bool has_gl_extension(const char* required) noexcept {
   GLint count = 0;
   glGetIntegerv(GL_NUM_EXTENSIONS, &count);
@@ -139,6 +202,53 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   std::shared_ptr<GlPipelineOwner> color_program(int operation,const char*vs,const char*fs)noexcept{
     auto context=eglGetCurrentContext();std::string identity=operation==1?"rgb-curves:gles3:nearest-clamp":operation==2?"log-wheels:gles3:nearest-clamp":operation==3?"hsl-qualifier:gles3:nearest-clamp":"primary-wheels:gles3:nearest-clamp";if(gpu_failure_point()!=GpuFailurePoint::None)identity += ":injected-create:"+std::string(gpu_failure_point_name(gpu_failure_point()));NativePipelineCacheKey key{DIGITOR_RENDERER_OPENGL_ES,reinterpret_cast<std::uintptr_t>(context),identity,1,GpuPrecisionMode::Float32,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT};return std::static_pointer_cast<GlPipelineOwner>(pipeline_cache_.get_or_create(key,[&]()->NativePipelineCache::Object{GLuint v=compile_gl(GL_VERTEX_SHADER,vs),f=compile_gl(GL_FRAGMENT_SHADER,fs);if(!v||!f){if(v)glDeleteShader(v);if(f)glDeleteShader(f);return {};}auto owner=std::make_shared<GlPipelineOwner>();owner->context=context;if(inject_at(GpuFailurePoint::ProgramCreation,"glCreateProgram")!=DIGITOR_RESULT_OK){glDeleteShader(v);--gl_live.shaders;glDeleteShader(f);--gl_live.shaders;return {};}owner->program=glCreateProgram();if(!owner->program)return {};++gl_live.programs;glAttachShader(owner->program,v);glAttachShader(owner->program,f);if(inject_at(GpuFailurePoint::ProgramLink,"glLinkProgram")!=DIGITOR_RESULT_OK){glDeleteShader(v);--gl_live.shaders;glDeleteShader(f);--gl_live.shaders;return {};}glLinkProgram(owner->program);glDeleteShader(v);--gl_live.shaders;glDeleteShader(f);--gl_live.shaders;GLint linked{};glGetProgramiv(owner->program,GL_LINK_STATUS,&linked);if(!linked)return {};return std::static_pointer_cast<void>(owner); }));
   }
+  std::shared_ptr<GlPipelineOwner> android_import_program() noexcept {
+    const auto context = eglGetCurrentContext();
+    if (context == EGL_NO_CONTEXT) return {};
+    const char* vs =
+        "#version 300 es\nprecision highp float;out vec2 uv;"
+        "void main(){vec2 q=vec2((gl_VertexID<<1)&2,gl_VertexID&2);"
+        "uv=q;gl_Position=vec4(q*2.-1.,0,1);}";
+    const char* fs =
+        "#version 300 es\n"
+        "#extension GL_OES_EGL_image_external_essl3 : require\n"
+        "precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"
+        "out vec4 color;void main(){color=texture(decoded_frame,uv);}";
+    NativePipelineCacheKey key{
+        DIGITOR_RENDERER_OPENGL_ES,
+        reinterpret_cast<std::uintptr_t>(context),
+        "android-ahardwarebuffer:external-oes-to-rgba16f", 1,
+        GpuPrecisionMode::Float32, DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
+    return std::static_pointer_cast<GlPipelineOwner>(pipeline_cache_.get_or_create(
+        key, [&]() -> NativePipelineCache::Object {
+          GLuint v = compile_gl(GL_VERTEX_SHADER, vs);
+          GLuint f = compile_gl(GL_FRAGMENT_SHADER, fs);
+          if (!v || !f) {
+            if (v) { glDeleteShader(v); --gl_live.shaders; }
+            if (f) { glDeleteShader(f); --gl_live.shaders; }
+            return {};
+          }
+          auto owner = std::make_shared<GlPipelineOwner>();
+          owner->context = context;
+          owner->program = glCreateProgram();
+          if (!owner->program) {
+            glDeleteShader(v); --gl_live.shaders;
+            glDeleteShader(f); --gl_live.shaders;
+            return {};
+          }
+          ++gl_live.programs;
+          glAttachShader(owner->program, v);
+          glAttachShader(owner->program, f);
+          glLinkProgram(owner->program);
+          glDeleteShader(v); --gl_live.shaders;
+          glDeleteShader(f); --gl_live.shaders;
+          GLint linked = 0;
+          glGetProgramiv(owner->program, GL_LINK_STATUS, &linked);
+          if (!linked) return {};
+          return std::static_pointer_cast<void>(owner);
+        }));
+  }
+
   DigitorRendererInfo i_{};
   bool fp32_renderable_{};
   GLuint fullscreen_vao_{};
@@ -146,10 +256,10 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   EGLContext context_{EGL_NO_CONTEXT};
   EGLSurface surface_{EGL_NO_SURFACE};
   bool owns_egl_context_{};
+  bool native_media_import_ready_{};
 
   bool make_context_current() noexcept {
     return display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
-           surface_ != EGL_NO_SURFACE &&
            eglMakeCurrent(display_, surface_, surface_, context_) == EGL_TRUE;
   }
 
@@ -209,6 +319,149 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
     return glGetError()==GL_NO_ERROR?DIGITOR_RESULT_OK:DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
+  DigitorResult import_android_ahardwarebuffer(
+      const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) noexcept {
+    output.reset();
+    const auto surface = request.surface;
+    if (!surface || request.renderer_backend != DIGITOR_RENDERER_OPENGL_ES ||
+        request.output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+        request.working_color_space != "linear-rgba")
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (!native_media_import_ready_ || !make_context_current() ||
+        eglGetCurrentContext() != context_)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    const auto& descriptor = surface->descriptor();
+    if (descriptor.platform != NativeMediaPlatform::android ||
+        descriptor.handle_type != NativeMediaHandleType::ahardware_buffer ||
+        (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
+         descriptor.pixel_format != NativeMediaPixelFormat::p010) ||
+        !descriptor.width || !descriptor.height || (descriptor.width & 1u) ||
+        (descriptor.height & 1u) || descriptor.plane_count != 2 ||
+        !descriptor.native_handle)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if (descriptor.acquire_sync.type != NativeMediaSyncType::none &&
+        descriptor.acquire_sync.type != NativeMediaSyncType::sync_fd)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+    const auto describe = resolve_ahardwarebuffer_describe();
+    const auto get_client_buffer = resolve_egl_proc<EglGetNativeClientBufferAndroidFn>(
+        "eglGetNativeClientBufferANDROID");
+    const auto create_image =
+        resolve_egl_proc<EglCreateImageKhrFn>("eglCreateImageKHR");
+    const auto destroy_image =
+        resolve_egl_proc<EglDestroyImageKhrFn>("eglDestroyImageKHR");
+    const auto image_target = resolve_egl_proc<GlEglImageTargetTexture2DOesFn>(
+        "glEGLImageTargetTexture2DOES");
+    const auto create_sync =
+        resolve_egl_proc<EglCreateSyncKhrFn>("eglCreateSyncKHR");
+    const auto wait_sync =
+        resolve_egl_proc<EglWaitSyncKhrFn>("eglWaitSyncKHR");
+    const auto destroy_sync =
+        resolve_egl_proc<EglDestroySyncKhrFn>("eglDestroySyncKHR");
+    if (!describe || !get_client_buffer || !create_image || !destroy_image ||
+        !image_target || !create_sync || !wait_sync || !destroy_sync)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    auto* ahb = reinterpret_cast<AHardwareBuffer*>(descriptor.native_handle);
+    AHardwareBuffer_Desc ahb_desc{};
+    describe(ahb, &ahb_desc);
+    if (ahb_desc.width != descriptor.width || ahb_desc.height != descriptor.height ||
+        ahb_desc.layers != 1 ||
+        (ahb_desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE) == 0)
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+    const EGLClientBuffer client_buffer = get_client_buffer(ahb);
+    if (!client_buffer) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    const EGLint image_attributes[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
+    const EGLImageKHR image = create_image(
+        display_, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, client_buffer,
+        image_attributes);
+    if (image == EGL_NO_IMAGE_KHR) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    auto imported = std::make_shared<GlImportedSurfaceOwner>();
+    imported->image = image;
+    imported->display = display_;
+    imported->context = context_;
+    imported->destroy_image = destroy_image;
+    imported->surface = surface;
+
+    drain_errors();
+    glGenTextures(1, &imported->texture);
+    if (!imported->texture) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    ++gl_live.textures;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, imported->texture);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    image_target(GL_TEXTURE_EXTERNAL_OES,
+                 reinterpret_cast<GLeglImageOES>(imported->image));
+    if (glGetError() != GL_NO_ERROR) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    if (descriptor.acquire_sync.type == NativeMediaSyncType::sync_fd) {
+      const int source_fd = static_cast<int>(descriptor.acquire_sync.handle);
+      const int imported_fd = ::dup(source_fd);
+      if (imported_fd < 0) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      const EGLint sync_attributes[] = {
+          EGL_SYNC_NATIVE_FENCE_FD_ANDROID, imported_fd, EGL_NONE};
+      const EGLSyncKHR sync = create_sync(
+          display_, EGL_SYNC_NATIVE_FENCE_ANDROID, sync_attributes);
+      if (sync == EGL_NO_SYNC_KHR) {
+        ::close(imported_fd);
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+      const EGLBoolean waited = wait_sync(display_, sync, 0);
+      (void)destroy_sync(display_, sync);
+      if (waited != EGL_TRUE) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    auto pipeline = android_import_program();
+    if (!pipeline) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    auto owner = std::make_shared<GlPreviewOwner>();
+    owner->context = context_;
+    owner->program = pipeline->program;
+    owner->pipeline = pipeline;
+    owner->upstream = imported;
+    if (!make_texture(owner->output, GpuFailurePoint::OutputResourceCreation,
+                      GpuFailurePoint::OutputResourceStorage, GL_RGBA16F,
+                      static_cast<GLsizei>(descriptor.width),
+                      static_cast<GLsizei>(descriptor.height),
+                      "Android AHardwareBuffer RGBA16F output") ||
+        !make_framebuffer(owner->framebuffer, owner->output, GL_FRAMEBUFFER,
+                          "Android AHardwareBuffer RGBA16F framebuffer"))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    prepare_offscreen_draw_state();
+    glBindFramebuffer(GL_FRAMEBUFFER, owner->framebuffer);
+    glViewport(0, 0, static_cast<GLsizei>(descriptor.width),
+               static_cast<GLsizei>(descriptor.height));
+    glUseProgram(pipeline->program);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, imported->texture);
+    const GLint source_location =
+        glGetUniformLocation(pipeline->program, "decoded_frame");
+    if (source_location < 0) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    glUniform1i(source_location, 0);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glFlush();
+    if (glGetError() != GL_NO_ERROR) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    static std::atomic_uint64_t identities{1'300'000};
+    output = std::make_shared<ProcessedGpuFrame>(
+        this, DIGITOR_RENDERER_OPENGL_ES,
+        GpuFrameMetadata{descriptor.width, descriptor.height,
+                         DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,
+                         GpuFrameAlpha::straight, descriptor.timestamp_us,
+                         request.working_color_space},
+        identities++, std::static_pointer_cast<void>(owner),
+        std::make_shared<std::atomic_bool>(true), false);
+    bind_frame_context_lifetime(output);
+    return output && output->ready() ? DIGITOR_RESULT_OK
+                                     : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
 public:
   BackendProductionCapability production_capability() const noexcept override {
     BackendProductionCapability out{};
@@ -217,6 +470,15 @@ public:
     out.frame_context_identity = this;
     out.resources = GlesProductionResources{
         reinterpret_cast<void*>(display_), reinterpret_cast<void*>(context_)};
+    if (native_media_import_ready_ && display_ != EGL_NO_DISPLAY &&
+        context_ != EGL_NO_CONTEXT) {
+      out.native_media_import =
+          [self = const_cast<GlBackend*>(this)](
+              const ZeroCopyImportRequest& request,
+              ProcessedGpuFramePtr& frame) noexcept {
+            return self->import_android_ahardwarebuffer(request, frame);
+          };
+    }
     return out;
   }
   [[nodiscard]] NativeNodeMaskCapabilities native_node_mask_capabilities() const noexcept override { return {true,true,true,true}; }
@@ -300,6 +562,23 @@ public:
     }
     glGenVertexArrays(1, &fullscreen_vao_);
     if (fullscreen_vao_ != 0) glBindVertexArray(fullscreen_vao_);
+    native_media_import_ready_ =
+        fp32_renderable_ && resolve_ahardwarebuffer_describe() != nullptr &&
+        has_gl_extension("GL_OES_EGL_image_external_essl3") &&
+        has_egl_extension(display_, "EGL_KHR_image_base") &&
+        has_egl_extension(display_, "EGL_ANDROID_image_native_buffer") &&
+        has_egl_extension(display_, "EGL_ANDROID_get_native_client_buffer") &&
+        has_egl_extension(display_, "EGL_ANDROID_native_fence_sync") &&
+        has_egl_extension(display_, "EGL_KHR_wait_sync") &&
+        resolve_egl_proc<EglGetNativeClientBufferAndroidFn>(
+            "eglGetNativeClientBufferANDROID") != nullptr &&
+        resolve_egl_proc<EglCreateImageKhrFn>("eglCreateImageKHR") != nullptr &&
+        resolve_egl_proc<EglDestroyImageKhrFn>("eglDestroyImageKHR") != nullptr &&
+        resolve_egl_proc<GlEglImageTargetTexture2DOesFn>(
+            "glEGLImageTargetTexture2DOES") != nullptr &&
+        resolve_egl_proc<EglCreateSyncKhrFn>("eglCreateSyncKHR") != nullptr &&
+        resolve_egl_proc<EglWaitSyncKhrFn>("eglWaitSyncKHR") != nullptr &&
+        resolve_egl_proc<EglDestroySyncKhrFn>("eglDestroySyncKHR") != nullptr;
     i_.supports_fp32 = fp32_renderable_ ? 1 : 0;
     const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     if (renderer != nullptr)
@@ -324,6 +603,7 @@ public:
       if (context != EGL_NO_CONTEXT) (void)eglDestroyContext(display, context);
       (void)eglTerminate(display);
     }
+    native_media_import_ready_ = false;
     display_ = EGL_NO_DISPLAY;
     context_ = EGL_NO_CONTEXT;
     surface_ = EGL_NO_SURFACE;
