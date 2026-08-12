@@ -1,0 +1,34 @@
+name: Agent Android Vulkan Import Patch
+
+on:
+  push:
+    branches:
+      - agent/android-vulkan-ahardwarebuffer-import
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/android-vulkan-ahardwarebuffer-import
+          fetch-depth: 0
+      - name: Apply surgical source transformation
+        run: python3 tools/agent_apply_android_vulkan_import.py
+      - name: Remove temporary transformation files
+        run: |
+          rm tools/agent_apply_android_vulkan_import.py
+          rm .github/workflows/agent-apply-android-vulkan-import.yml
+      - name: Validate and publish patch
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Complete Android Vulkan AHardwareBuffer import"
+          git push origin HEAD:agent/android-vulkan-ahardwarebuffer-import
