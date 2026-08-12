@@ -156,6 +156,26 @@ if(ANDROID)
     set(_DIGITOR_SPIRV_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/spirv")
     file(MAKE_DIRECTORY "${_DIGITOR_SPIRV_DIR}")
 
+    function(digitor_add_embedded_glsl_spirv NAME SOURCE SYMBOL)
+        set(SPV "${_DIGITOR_SPIRV_DIR}/${NAME}.spv")
+        set(HEADER "${_DIGITOR_SPIRV_DIR}/${NAME}.hpp")
+        add_custom_command(
+            OUTPUT "${SPV}"
+            COMMAND "${DIGITOR_ANDROID_GLSLC}"
+                    -fshader-stage=compute --target-env=vulkan1.1 -O
+                    "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}" -o "${SPV}"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}"
+            VERBATIM)
+        add_custom_command(
+            OUTPUT "${HEADER}"
+            COMMAND "${CMAKE_COMMAND}"
+                    -DINPUT=${SPV} -DOUTPUT=${HEADER} -DSYMBOL=${SYMBOL}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake"
+            DEPENDS "${SPV}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_spirv.cmake"
+            VERBATIM)
+        set(DIGITOR_EMBEDDED_SPIRV_HEADERS ${DIGITOR_EMBEDDED_SPIRV_HEADERS} "${HEADER}" PARENT_SCOPE)
+    endfunction()
+
     function(digitor_add_embedded_spirv NAME SOURCE SYMBOL)
         set(OPTIONS ${ARGN})
         set(SPV "${_DIGITOR_SPIRV_DIR}/${NAME}.spv")
@@ -187,6 +207,7 @@ if(ANDROID)
     digitor_add_embedded_spirv(color_pipeline_buffer src/gpu/shaders/color_pipeline.hlsl digitor_color_pipeline_buffer_spirv)
     digitor_add_embedded_spirv(node_mixer src/gpu/shaders/node_mixer.hlsl digitor_node_mixer_spirv)
     digitor_add_embedded_spirv(node_masked_composite src/gpu/shaders/node_masked_composite.hlsl digitor_node_masked_composite_spirv)
+    digitor_add_embedded_glsl_spirv(android_ahardwarebuffer_yuv_to_rgba16f src/gpu/shaders/android_ahardwarebuffer_yuv_to_rgba16f.comp digitor_android_ahardwarebuffer_yuv_to_rgba16f_spirv)
 
     add_custom_target(digitor_android_spirv DEPENDS ${DIGITOR_EMBEDDED_SPIRV_HEADERS})
     add_dependencies(digitor_engine digitor_android_spirv)
