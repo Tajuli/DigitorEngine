@@ -11,7 +11,7 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 def replace_raw_const(text: str, name: str, next_name: str, body: str) -> str:
     pattern = re.compile(
-        rf'constexpr std::string_view {re.escape(name)} = R"\(.*?\)";\n(?=constexpr std::string_view {re.escape(next_name)})',
+        rf'constexpr std::string_view {re.escape(name)} = R"\(.*?\)";\n\s*(?=constexpr std::string_view {re.escape(next_name)})',
         re.S,
     )
     replacement = f'constexpr std::string_view {name} = R"({body})";\n'
