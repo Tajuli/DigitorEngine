@@ -89,15 +89,37 @@ int main() {
   assert(diagnostic.empty());
   assert(windows_vulkan_runtime->shutdown() == DIGITOR_RESULT_OK);
 
+  // Android production decode is owned by the exact selected renderer. A
+  // Vulkan device/queue without an AHardwareBuffer import callback must not
+  // install a nominal Flutter production builder.
   BackendProductionCapability android{};
   android.backend = DIGITOR_RENDERER_VULKAN;
   android.context_identity = 202;
   android.frame_context_identity = &context;
   android.resources =
       VulkanProductionResources{&instance, &physical, &device, &queue, 0};
+  diagnostic.clear();
+  auto missing_android_import =
+      install_android_engine_production_runtime(android, &diagnostic);
+  assert(!missing_android_import);
+  assert(!diagnostic.empty());
+  assert(!flutter_production_provider_builder_installed(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID));
+
+  android.native_media_import =
+      [](const ZeroCopyImportRequest&, ProcessedGpuFramePtr& frame) {
+        frame.reset();
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      };
+  diagnostic.clear();
   auto ar = install_android_engine_production_runtime(android, &diagnostic);
   assert(ar && ar->active());
+  assert(diagnostic.empty());
+  assert(flutter_production_provider_builder_installed(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID));
   assert(ar->shutdown() == DIGITOR_RESULT_OK);
+  assert(!flutter_production_provider_builder_installed(
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID));
 
   BackendProductionCapability apple{};
   apple.backend = DIGITOR_RENDERER_METAL;
