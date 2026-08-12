@@ -1,0 +1,30 @@
+name: Agent fix GLES surfaceless context
+
+on:
+  push:
+    branches:
+      - agent/android-gles-ahardwarebuffer-import
+    paths:
+      - tools/agent_fix_gles_surfaceless_context.py
+      - .github/workflows/agent-fix-gles-surfaceless-context.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/android-gles-ahardwarebuffer-import
+          fetch-depth: 0
+      - run: python3 tools/agent_fix_gles_surfaceless_context.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/gpu/gles_backend.cpp
+          git diff --cached --check
+          git commit -m "Support surfaceless selected EGL contexts"
+          git push origin HEAD:agent/android-gles-ahardwarebuffer-import
