@@ -24,7 +24,9 @@ struct GpuSourceResource final {
   ProcessedGpuFramePtr frame;
   [[nodiscard]] bool usable_by(DigitorRendererBackend b,std::uint64_t c)const noexcept{
     const bool ready_now=frame?frame->ready():(ownership_token&&ready_token&&ready_token->load(std::memory_order_acquire));
-    if(!ready_now||readiness!=GpuReadiness::Ready||backend!=b||context_identity!=c||!width||!height||format!=DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT||precision!=GpuPrecisionMode::Float32||color_metadata_identity.empty())return false;
+    const bool float_rgba = format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+                            format == DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+    if(!ready_now||readiness!=GpuReadiness::Ready||backend!=b||context_identity!=c||!width||!height||!float_rgba||precision!=GpuPrecisionMode::Float32||color_metadata_identity.empty())return false;
     if(frame){const auto&m=frame->metadata();return frame->backend()==backend&&m.width==width&&m.height==height&&m.format==format&&m.color_metadata==color_metadata_identity;}
     return true;
   }

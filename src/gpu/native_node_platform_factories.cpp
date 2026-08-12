@@ -62,7 +62,10 @@ bool create_vulkan_native_node_pipeline(
     vk_binding.binding = binding.binding;
     vk_binding.descriptorCount = 1;
     vk_binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    vk_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    vk_binding.descriptorType =
+        binding.kind == NativeNodeBindingKind::storage_output
+            ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+            : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
   }
   VkDescriptorSetLayoutCreateInfo dli{
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -294,6 +297,12 @@ bool record_vulkan_native_node_dispatch(
     diagnostic = "vkAllocateDescriptorSets failed";
     return false;
   }
+  const auto contract = native_node_pipeline_contract(
+      DIGITOR_RENDERER_VULKAN, resources.kernel);
+  if (!validate_native_node_pipeline_contract(contract)) {
+    diagnostic = "invalid Vulkan node kernel contract";
+    return false;
+  }
   VkDescriptorImageInfo image_infos[4]{};
   VkWriteDescriptorSet writes[4]{};
   if (resources.textures.size() > 4) {
@@ -302,6 +311,16 @@ bool record_vulkan_native_node_dispatch(
   }
   for (std::size_t i = 0; i < resources.textures.size(); ++i) {
     const auto& texture = resources.textures[i];
+    const auto binding = std::find_if(
+        contract.bindings, contract.bindings + contract.binding_count,
+        [&](const NativeNodeBinding& item) {
+          return item.binding == texture.slot &&
+                 item.kind != NativeNodeBindingKind::constants;
+        });
+    if (binding == contract.bindings + contract.binding_count) {
+      diagnostic = "unknown Vulkan native-node descriptor binding";
+      return false;
+    }
     image_infos[i].imageView =
         decode_vulkan_handle<VkImageView>(texture.native_texture);
     image_infos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -309,7 +328,10 @@ bool record_vulkan_native_node_dispatch(
     writes[i].dstSet = descriptor_set;
     writes[i].dstBinding = texture.slot;
     writes[i].descriptorCount = 1;
-    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[i].descriptorType =
+        binding->kind == NativeNodeBindingKind::storage_output
+            ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+            : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     writes[i].pImageInfo = &image_infos[i];
   }
   vkUpdateDescriptorSets(
