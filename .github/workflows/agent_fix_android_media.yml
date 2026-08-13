@@ -1,0 +1,33 @@
+name: Apply Android Native Media Fix
+
+on:
+  push:
+    branches:
+      - agent/fix-android-native-media-open
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'Fix Android media open without FFmpeg'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-android-native-media-open
+          fetch-depth: 0
+      - name: Apply source patch
+        run: |
+          git apply --check tool/agent_fix_android_media.patch
+          git apply tool/agent_fix_android_media.patch
+          git diff --check
+      - name: Remove one-time patch helper
+        run: git rm tool/agent_fix_android_media.patch .github/workflows/agent_fix_android_media.yml
+      - name: Commit source fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/media/media.cpp src/ffi/production_media_c_api.cpp
+          git commit -m "Fix Android media open without FFmpeg"
+          git push origin HEAD:agent/fix-android-native-media-open
