@@ -73,7 +73,11 @@ DigitorResult digitor_timeline_session_publish(
         }
         session->status.revision = publication->revision;
         session->status.duration_us = publication->duration_us;
-        if (session->status.position_us > publication->duration_us)
+        // Zero is the SDK's explicit "duration not known yet" value. Do not
+        // collapse an already valid playhead back to zero while metadata or a
+        // registered platform session is still resolving the media duration.
+        if (publication->duration_us > 0 &&
+            session->status.position_us > publication->duration_us)
             session->status.position_us = publication->duration_us;
         ++session->telemetry.publications;
         return DIGITOR_RESULT_OK;
@@ -121,7 +125,13 @@ DigitorResult digitor_timeline_session_seek(
     if (!session || position_us < 0) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
         std::lock_guard<std::mutex> lock(session->mutex);
-        if (position_us > session->status.duration_us) return DIGITOR_RESULT_INVALID_ARGUMENT;
+        // A positive duration is authoritative and remains a hard bound. Zero
+        // means the duration is not known yet (the state used by editor media
+        // open before the production provider publishes full metadata), so
+        // seeking/frame stepping must remain valid during that interval.
+        if (session->status.duration_us > 0 &&
+            position_us > session->status.duration_us)
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
         session->status.position_us = position_us;
         ++session->status.seek_epoch;
         ++session->telemetry.seek_commands;
