@@ -99,10 +99,38 @@ target_sources(digitor_engine PRIVATE
 # shared/static engine artifact consumed by Flutter. Qualification-only targets
 # are not sufficient for runtime provider assembly.
 if(WIN32)
+    # Keep the complete Windows production media implementation in the Engine
+    # native asset.  These objects are not qualification-only: the registered
+    # Flutter production host depends on the D3D11VA decoder/import path, the
+    # D3D12 conversion/presentation path, and the Media Foundation hardware
+    # encoder being present in the exact Engine binary that owns the renderer.
     target_sources(digitor_engine PRIVATE
         src/gpu/windows_d3d12_yuv_converter.cpp
-        src/media/ffmpeg_d3d11va_surface.cpp)
-    target_link_libraries(digitor_engine PRIVATE d3d11 dxgi)
+        src/gpu/windows_d3d12_qualified_converter.cpp
+        src/media/ffmpeg_d3d11va_surface.cpp
+        src/media/ffmpeg_d3d11va_zero_copy_decoder.cpp
+        src/media/windows_d3d12_p010_converter.cpp
+        src/media/windows_d3d12_p010_dispatch.cpp
+        src/media/windows_zero_copy.cpp
+        src/media/windows_zero_copy_complete_validation.cpp
+        src/media/windows_zero_copy_concrete_bindings.cpp
+        src/media/windows_zero_copy_frame_broker.cpp
+        src/media/windows_zero_copy_media_host.cpp
+        src/media/windows_zero_copy_native_consumers.cpp
+        src/media/windows_zero_copy_production.cpp
+        src/media/windows_zero_copy_production_gate.cpp
+        src/media/windows_zero_copy_qualification.cpp
+        src/media/windows_zero_copy_reference_decoder.cpp
+        src/media/windows_zero_copy_rollout.cpp
+        src/media/windows_zero_copy_runtime.cpp
+        src/media/windows_zero_copy_validation_io.cpp)
+    target_link_libraries(digitor_engine PRIVATE
+        d3d11
+        dxgi
+        mf
+        mfplat
+        mfreadwrite
+        mfuuid)
     target_compile_definitions(digitor_engine PRIVATE DIGITOR_WINDOWS_D3D12_ZERO_COPY=1)
 elseif(ANDROID)
     target_sources(digitor_engine PRIVATE
@@ -193,6 +221,10 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_hdr_ecosystem_test tests/test_hdr_ecosystem.cpp)
     add_executable(digitor_professional_lut_scopes_test tests/test_professional_lut_scopes.cpp)
     add_executable(digitor_broadcast_color_matching_test tests/test_broadcast_color_matching.cpp)
+    if(WIN32)
+        add_executable(digitor_windows_production_media_host_link_test
+            tests/test_windows_production_media_host_link.cpp)
+    endif()
     foreach(target digitor_engine_owned_platform_production_test digitor_production_integration_runtime_test digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_production_media_graph_runtime_test digitor_flutter_production_host_adapter_test digitor_flutter_production_plugin_bootstrap_test digitor_flutter_production_c_api_test digitor_production_media_c_api_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_image_io_test digitor_native_still_image_host_test digitor_native_preview_presentation_test digitor_production_hardware_decode_test digitor_native_surface_import_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
@@ -206,6 +238,16 @@ if(DIGITOR_BUILD_TESTS)
             target_compile_options(${target} PRIVATE -UNDEBUG)
         endif()
     endforeach()
+    if(WIN32)
+        set_target_properties(digitor_windows_production_media_host_link_test
+            PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+        target_link_libraries(digitor_windows_production_media_host_link_test PRIVATE Digitor::Engine)
+        if(MSVC)
+            target_compile_options(digitor_windows_production_media_host_link_test PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(digitor_windows_production_media_host_link_test PRIVATE -UNDEBUG)
+        endif()
+    endif()
     add_test(NAME digitor_audio_latency_probe COMMAND digitor_audio_latency_probe_test)
     add_test(NAME digitor_audio_sync_compensation COMMAND digitor_audio_sync_compensation_test)
     add_test(NAME digitor_professional_audio_engine COMMAND digitor_professional_audio_engine_test)
@@ -248,6 +290,10 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_hdr_ecosystem COMMAND digitor_hdr_ecosystem_test)
     add_test(NAME digitor_professional_lut_scopes COMMAND digitor_professional_lut_scopes_test)
     add_test(NAME digitor_broadcast_color_matching COMMAND digitor_broadcast_color_matching_test)
+    if(WIN32)
+        add_test(NAME digitor_windows_production_media_host_link
+            COMMAND digitor_windows_production_media_host_link_test)
+    endif()
 endif()
 
 if(DIGITOR_BUILD_TESTS AND FFmpeg_FOUND)
