@@ -57,6 +57,11 @@ class NativePreviewTextureHost {
   [[nodiscard]] virtual bool attached() const noexcept = 0;
   [[nodiscard]] virtual DigitorRendererBackend backend() const noexcept = 0;
   [[nodiscard]] virtual const void* device_identity() const noexcept = 0;
+  // Descriptor-driven hosts may apply the display transform after the scene-
+  // linear graph result has been accepted by the presentation queue.
+  [[nodiscard]] virtual bool deferred_display_transform() const noexcept {
+    return false;
+  }
   virtual DigitorResult present(const ProcessedGpuFramePtr& frame,
                                 std::uint64_t generation) noexcept = 0;
 };

@@ -152,10 +152,12 @@ validate_flutter_production_provider_build(
               "production provider platform does not match Flutter attachment"};
     }
 
-    const auto provider_validation =
-        validate_native_platform_provider(build.provider);
-    if (!provider_validation) {
-      return {provider_validation.result, provider_validation.diagnostic};
+    if (!build.preview_session) {
+      const auto provider_validation =
+          validate_native_platform_provider(build.provider);
+      if (!provider_validation) {
+        return {provider_validation.result, provider_validation.diagnostic};
+      }
     }
 
     if (!build.decoder_factory) {
@@ -232,9 +234,6 @@ DigitorResult install_flutter_production_host_inputs_factory(
           s, pending.platform, pending.flutter_texture_registrar,
           pending.implementation_identity, diagnostic);
       if (result != DIGITOR_RESULT_OK) {
-        // A factory is only considered installed when it can satisfy an
-        // already-waiting Flutter attachment. This prevents app bootstrap from
-        // observing a nominal builder that cannot construct the production host.
         s.factories[index] = {};
         return result;
       }
@@ -269,14 +268,10 @@ DigitorResult retry_flutter_production_host_registration(
   try {
     auto& s = state();
     std::scoped_lock lock(s.mutex);
-
-    // Nothing is waiting for this platform. Installing dependencies before the
-    // Flutter plugin attaches is a valid startup order and needs no action.
     if (!s.pending_attachment || s.pending_attachment->platform != platform) {
       if (diagnostic) diagnostic->clear();
       return DIGITOR_RESULT_OK;
     }
-
     if (s.registration) {
       if (s.platform == platform &&
           s.registrar == s.pending_attachment->flutter_texture_registrar) {
@@ -291,7 +286,6 @@ DigitorResult retry_flutter_production_host_registration(
       if (diagnostic) *diagnostic = message;
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
-
     auto& factory = s.factories[static_cast<std::size_t>(platform)];
     if (!factory) {
       const std::string message =
@@ -300,7 +294,6 @@ DigitorResult retry_flutter_production_host_registration(
       if (diagnostic) *diagnostic = message;
       return DIGITOR_RESULT_NOT_INITIALIZED;
     }
-
     const auto pending = *s.pending_attachment;
     return register_from_factory_locked(
         s, pending.platform, pending.flutter_texture_registrar,
@@ -345,27 +338,39 @@ DigitorResult install_flutter_production_provider_builder(
             return std::nullopt;
           }
 
-          auto assembly = build->provider.create(std::move(build->platform_inputs));
-          if (!assembly) {
-            local = assembly.diagnostic.empty()
-                        ? "production platform assembly failed"
-                        : std::move(assembly.diagnostic);
-            return std::nullopt;
-          }
-          if (assembly.platform != expected || !assembly.preview_session ||
-              !assembly.timeline_binding || !assembly.timeline_binding->valid() ||
-              !assembly.encoder_factory) {
-            local =
-                "production platform assembly is missing preview, timeline, or lazy encoder state";
-            return std::nullopt;
+          std::shared_ptr<NativePreviewPresentationSession> preview_session;
+          ProductionEncoderFactory encoder_factory = std::move(build->encoder_factory);
+          HardwareEncoderCallbacks encoder_callbacks;
+
+          if (build->preview_session) {
+            preview_session = std::move(build->preview_session);
+          } else {
+            auto assembly =
+                build->provider.create(std::move(build->platform_inputs));
+            if (!assembly) {
+              local = assembly.diagnostic.empty()
+                          ? "production platform assembly failed"
+                          : std::move(assembly.diagnostic);
+              return std::nullopt;
+            }
+            if (assembly.platform != expected || !assembly.preview_session ||
+                !assembly.timeline_binding || !assembly.timeline_binding->valid() ||
+                !assembly.encoder_factory) {
+              local =
+                  "production platform assembly is missing preview, timeline, or lazy encoder state";
+              return std::nullopt;
+            }
+            preview_session = std::move(assembly.preview_session);
+            encoder_callbacks = std::move(assembly.encoder_callbacks);
+            encoder_factory = std::move(assembly.encoder_factory);
           }
 
           FlutterProductionHostAdapterInputs out{};
           out.decoder_factory = std::move(build->decoder_factory);
           out.frame_resolver = std::move(build->frame_resolver);
-          out.preview_session = std::move(assembly.preview_session);
-          out.encoder_callbacks = std::move(assembly.encoder_callbacks);
-          out.encoder_factory = std::move(assembly.encoder_factory);
+          out.preview_session = std::move(preview_session);
+          out.encoder_callbacks = std::move(encoder_callbacks);
+          out.encoder_factory = std::move(encoder_factory);
           out.texture_descriptor_builder =
               std::move(build->texture_descriptor_builder);
           out.preview_target_binder = std::move(build->preview_target_binder);

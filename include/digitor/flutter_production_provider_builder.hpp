@@ -11,6 +11,11 @@ namespace digitor {
 
 struct FlutterProductionProviderBuild final {
   NativePlatformProvider provider;
+  // Preview-only platform assembly used when the engine can build the native
+  // decode/presentation path directly but export/timeline provider packages
+  // are not installed yet. Export remains fail-closed without encoder_factory.
+  std::shared_ptr<NativePreviewPresentationSession> preview_session;
+  ProductionEncoderFactory encoder_factory;
   ProductionPlatformFactoryInputs platform_inputs;
   ProductionDecoderFactory decoder_factory;
   ProductionTimestampFrameResolver frame_resolver;

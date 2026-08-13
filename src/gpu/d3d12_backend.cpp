@@ -26,6 +26,7 @@
 #include "gpu/native_hsl_qualifier.hpp"
 #include "gpu/native_rgb_curves.hpp"
 #include "digitor/native_node_mask_backend.hpp"
+#include "digitor/windows_d3d12_yuv_converter.hpp"
 #include "digitor/native_node_shader_contracts.hpp"
 #include "primary_wheels_shader.hpp"
 #include "log_wheels_shader.hpp"
@@ -95,13 +96,16 @@ struct D3DObject {
   ComPtr<ID3D12Resource> resource;
 };
 struct D3DPreviewOwner {
-  ComPtr<ID3D12Resource> output, preview;
+  ComPtr<ID3D12Resource> output, preview, flutter_preview;
+  HANDLE flutter_shared_handle{};
+  D3D12_RESOURCE_STATES flutter_preview_state{D3D12_RESOURCE_STATE_COMMON};
   D3D12_RESOURCE_STATES output_state{
       D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
   std::shared_ptr<void> upstream;
   std::int64_t tracked_resources{};
   bool tracked_owner{};
   ~D3DPreviewOwner() {
+    if (flutter_shared_handle) CloseHandle(flutter_shared_handle);
     d3d_live.resources -= tracked_resources;
     if (tracked_owner)
       --d3d_live.owners;
@@ -612,6 +616,113 @@ public:
     out.context_identity = backend_context_identity();
     out.frame_context_identity = this;
     out.resources = D3D12ProductionResources{device_.Get(), queue_.Get()};
+    auto* backend = const_cast<D3DBackend*>(this);
+    try {
+      auto converter = std::make_shared<WindowsD3D12YuvConverter>(
+          device_.Get(), this, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+          [backend](void*, void* output_resource,
+                    const WindowsZeroCopySurface& surface,
+                    DigitorPixelFormat output_format,
+                    std::uint64_t identity) -> ProcessedGpuFramePtr {
+            if (!output_resource || output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+              return {};
+            auto owner = std::make_shared<D3DPreviewOwner>();
+            owner->output = static_cast<ID3D12Resource*>(output_resource);
+            owner->output_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            owner->upstream = surface.lifetime;
+            owner->tracked_owner = true;
+            ++d3d_live.owners;
+            GpuFrameMetadata metadata{};
+            metadata.width = surface.width;
+            metadata.height = surface.height;
+            metadata.format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+            metadata.timestamp = surface.timestamp_us;
+            metadata.color_metadata = "linear-rgba32f";
+            auto frame = std::make_shared<ProcessedGpuFrame>(
+                backend, DIGITOR_RENDERER_D3D12, std::move(metadata), identity,
+                std::static_pointer_cast<void>(owner),
+                std::make_shared<std::atomic_bool>(true), false);
+            backend->bind_frame_context_lifetime(frame);
+            return frame;
+          });
+      auto importer = std::make_shared<WindowsD3D12ZeroCopyImporter>(
+          device_.Get(), converter->callback(), DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT);
+      out.native_media_import =
+          [importer](const ZeroCopyImportRequest& request,
+                     ProcessedGpuFramePtr& frame) noexcept {
+            frame.reset();
+            if (!request.surface ||
+                request.renderer_backend != DIGITOR_RENDERER_D3D12 ||
+                request.output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT ||
+                request.working_color_space != "linear-rgba")
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto& descriptor = request.surface->descriptor();
+            if (descriptor.platform != NativeMediaPlatform::windows ||
+                descriptor.handle_type != NativeMediaHandleType::dxgi_shared_handle ||
+                (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
+                 descriptor.pixel_format != NativeMediaPixelFormat::p010))
+              return DIGITOR_RESULT_UNSUPPORTED;
+            WindowsZeroCopySurface surface{};
+            surface.struct_size = sizeof(surface);
+            surface.api_version = 1;
+            surface.format = descriptor.pixel_format == NativeMediaPixelFormat::p010
+                                 ? WindowsZeroCopyFormat::p010
+                                 : WindowsZeroCopyFormat::nv12;
+            surface.width = descriptor.width;
+            surface.height = descriptor.height;
+            surface.array_slice = descriptor.array_slice;
+            surface.shared_handle = descriptor.native_handle;
+            surface.decoder_device = descriptor.native_device;
+            surface.timestamp_us = descriptor.timestamp_us;
+            surface.acquire_fence_handle = descriptor.acquire_sync.handle;
+            surface.acquire_fence_value = descriptor.acquire_sync.value;
+            surface.color.matrix = descriptor.color.matrix == 9
+                                       ? WindowsYuvMatrix::bt2020_ncl
+                                       : (descriptor.color.matrix == 1
+                                              ? WindowsYuvMatrix::bt709
+                                              : WindowsYuvMatrix::bt601);
+            surface.color.chroma_siting = descriptor.color.chroma_location == 2
+                                              ? WindowsChromaSiting::center
+                                              : (descriptor.color.chroma_location == 3
+                                                     ? WindowsChromaSiting::top_left
+                                                     : WindowsChromaSiting::left);
+            surface.color.full_range = descriptor.color.full_range != 0;
+            surface.color.primaries = descriptor.color.primaries;
+            surface.color.transfer = descriptor.color.transfer;
+            surface.lifetime = request.surface;
+            return importer->import(surface, frame);
+          };
+      out.native_preview_descriptor =
+          [backend](const ProcessedGpuFramePtr& frame, std::uint64_t generation,
+                    DigitorNativeGpuTextureDescriptor& descriptor,
+                    std::string& diagnostic) noexcept {
+            return backend->build_flutter_preview_descriptor(
+                frame, generation, descriptor, diagnostic);
+          };
+      out.native_preview_capabilities.struct_size =
+          sizeof(out.native_preview_capabilities);
+      out.native_preview_capabilities.api_version =
+          DIGITOR_NATIVE_PREVIEW_CAPABILITIES_VERSION;
+      out.native_preview_capabilities.native_gpu_preview_available = 1;
+      out.native_preview_capabilities.true_shared_resource_zero_copy = 1;
+      out.native_preview_capabilities.gpu_to_gpu_copy = 1;
+      out.native_preview_capabilities.cpu_fallback_only = 0;
+      out.native_preview_capabilities.sdr_supported = 1;
+      out.native_preview_capabilities.hdr_supported = 0;
+      out.native_preview_capabilities.protected_content_supported = 0;
+      out.native_preview_capabilities.resize_supported = 1;
+      out.native_preview_capabilities.backend = DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12;
+      out.native_preview_capabilities.handle_type =
+          DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE;
+      out.native_preview_capabilities.supported_pixel_formats =
+          (std::uint64_t{1} << DIGITOR_PIXEL_FORMAT_RGBA8_UNORM);
+      out.native_preview_capabilities.selected_mode =
+          DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
+    } catch (...) {
+      out.native_media_import = {};
+      out.native_preview_descriptor = {};
+      out.native_preview_capabilities = {};
+    }
     return out;
   }
   [[nodiscard]] NativeNodeMaskCapabilities
@@ -829,6 +940,236 @@ public:
         info_.supports_fp32 = 1;
   }
   ~D3DBackend() override { shutdown(); }
+
+  std::shared_ptr<D3DPipelineBundle> flutter_preview_pipeline() noexcept {
+    NativePipelineCacheKey key{DIGITOR_RENDERER_D3D12,
+                               reinterpret_cast<std::uintptr_t>(device_.Get()),
+                               "flutter-preview:linear-float-to-rgba8:cs5.1:v1",
+                               1, GpuPrecisionMode::Float32,
+                               DIGITOR_PIXEL_FORMAT_RGBA8_UNORM};
+    return std::static_pointer_cast<D3DPipelineBundle>(pipeline_cache_.get_or_create(
+        key, [&]() -> NativePipelineCache::Object {
+          constexpr const char shader_source[] = R"HLSL(
+Texture2D<float4> source_texture : register(t0);
+RWTexture2D<float4> output_texture : register(u0);
+float encode_srgb(float v) {
+  v = max(v, 0.0);
+  return v <= 0.0031308 ? 12.92 * v
+                        : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  uint width, height;
+  output_texture.GetDimensions(width, height);
+  if (id.x >= width || id.y >= height) return;
+  float4 value = source_texture.Load(int3(id.xy, 0));
+  output_texture[id.xy] = float4(
+      saturate(encode_srgb(value.r)),
+      saturate(encode_srgb(value.g)),
+      saturate(encode_srgb(value.b)),
+      saturate(value.a));
+}
+)HLSL";
+          auto bundle = std::make_shared<D3DPipelineBundle>();
+          ComPtr<ID3DBlob> errors;
+          if (FAILED(D3DCompile(shader_source, sizeof(shader_source) - 1,
+                                "flutter_preview.hlsl", nullptr, nullptr,
+                                "main", "cs_5_1",
+                                D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                                bundle->shader.ReleaseAndGetAddressOf(),
+                                errors.ReleaseAndGetAddressOf())))
+            return {};
+
+          D3D12_DESCRIPTOR_RANGE ranges[2]{};
+          ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0};
+          ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0};
+          D3D12_ROOT_PARAMETER roots[2]{};
+          for (int i = 0; i < 2; ++i) {
+            roots[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            roots[i].DescriptorTable = {1, &ranges[i]};
+          }
+          D3D12_ROOT_SIGNATURE_DESC root_desc{2, roots, 0, nullptr,
+                                              D3D12_ROOT_SIGNATURE_FLAG_NONE};
+          ComPtr<ID3DBlob> serialized;
+          if (FAILED(D3D12SerializeRootSignature(
+                  &root_desc, D3D_ROOT_SIGNATURE_VERSION_1,
+                  serialized.ReleaseAndGetAddressOf(),
+                  errors.ReleaseAndGetAddressOf())) ||
+              FAILED(device_->CreateRootSignature(
+                  0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                  IID_PPV_ARGS(&bundle->root))))
+            return {};
+          ++d3d_live.pipelines;
+          D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline_desc{};
+          pipeline_desc.pRootSignature = bundle->root.Get();
+          pipeline_desc.CS = {bundle->shader->GetBufferPointer(),
+                              bundle->shader->GetBufferSize()};
+          if (FAILED(device_->CreateComputePipelineState(
+                  &pipeline_desc, IID_PPV_ARGS(&bundle->pipeline))))
+            return {};
+          ++d3d_live.pipelines;
+          return std::static_pointer_cast<void>(bundle);
+        }));
+  }
+
+  DigitorResult build_flutter_preview_descriptor(
+      const ProcessedGpuFramePtr& frame, std::uint64_t generation,
+      DigitorNativeGpuTextureDescriptor& descriptor,
+      std::string& diagnostic) noexcept {
+    descriptor = {};
+    if (!frame || generation == 0 || frame->backend() != DIGITOR_RENDERER_D3D12 ||
+        !frame->ready() || !frame->context_live() ||
+        !frame->has_context_identity(this)) {
+      diagnostic = "D3D12 preview frame is stale or belongs to another backend generation";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    const auto metadata = frame->metadata();
+    if (!metadata.width || !metadata.height ||
+        (metadata.format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+         metadata.format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)) {
+      diagnostic = "D3D12 production preview requires a floating-point RGBA frame";
+      return DIGITOR_RESULT_UNSUPPORTED;
+    }
+    auto owner = std::static_pointer_cast<D3DPreviewOwner>(native_owner(*frame));
+    if (!owner || !owner->output) {
+      diagnostic = "D3D12 production frame has no renderer-owned output resource";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+    const auto source_desc = owner->output->GetDesc();
+    const auto source_format = format(metadata.format);
+    if (source_desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+        source_desc.Width != metadata.width ||
+        source_desc.Height != metadata.height ||
+        source_desc.Format != source_format) {
+      diagnostic = "D3D12 production frame resource metadata is inconsistent";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
+
+    LocalCounts local;
+    if (!owner->flutter_preview) {
+      D3D12_RESOURCE_DESC output_desc{};
+      output_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+      output_desc.Width = metadata.width;
+      output_desc.Height = metadata.height;
+      output_desc.DepthOrArraySize = 1;
+      output_desc.MipLevels = 1;
+      output_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      output_desc.SampleDesc.Count = 1;
+      output_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+      D3D12_HEAP_PROPERTIES heap{};
+      heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+      if (FAILED(create_resource(
+              GpuFailurePoint::PreviewDestinationCreation,
+              "CreateCommittedResource(Flutter shared preview)", &heap,
+              D3D12_HEAP_FLAG_SHARED, &output_desc,
+              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+              owner->flutter_preview, local))) {
+        diagnostic = "could not create the shared D3D12 Flutter preview texture";
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+      local.transfer_resource(*owner);
+      owner->flutter_preview_state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+      if (FAILED(device_->CreateSharedHandle(
+              owner->flutter_preview.Get(), nullptr, GENERIC_ALL, nullptr,
+              &owner->flutter_shared_handle)) || !owner->flutter_shared_handle) {
+        owner->flutter_preview.Reset();
+        --owner->tracked_resources;
+        diagnostic = "could not export the D3D12 Flutter preview shared handle";
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+    }
+
+    auto pipeline = flutter_preview_pipeline();
+    if (!pipeline) {
+      diagnostic = "D3D12 Flutter display-transform pipeline is unavailable";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc{
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2,
+        D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};
+    ComPtr<ID3D12DescriptorHeap> heap;
+    if (FAILED(create_heap(&heap_desc, heap, local))) {
+      diagnostic = "could not allocate Flutter preview descriptors";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
+    const auto stride = device_->GetDescriptorHandleIncrementSize(
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = source_format;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    if (!create_srv(GpuFailurePoint::GpuSourceShaderResourceViewCreation,
+                    owner->output.Get(), &srv, cpu,
+                    "CreateShaderResourceView(Flutter preview)", local)) {
+      diagnostic = "could not create Flutter preview source view";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    cpu.ptr += stride;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    if (!create_uav(owner->flutter_preview.Get(), &uav, cpu, local)) {
+      diagnostic = "could not create Flutter preview output view";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    if (!prepare_commands(pipeline->pipeline.Get())) {
+      diagnostic = "could not begin the Flutter preview display transform";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    if (owner->flutter_preview_state != D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+      D3D12_RESOURCE_BARRIER to_uav{};
+      to_uav.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+      to_uav.Transition = {owner->flutter_preview.Get(), 0,
+                           owner->flutter_preview_state,
+                           D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+      list_->ResourceBarrier(1, &to_uav);
+      owner->flutter_preview_state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    }
+    ID3D12DescriptorHeap* heaps[]{heap.Get()};
+    list_->SetDescriptorHeaps(1, heaps);
+    list_->SetComputeRootSignature(pipeline->root.Get());
+    list_->SetPipelineState(pipeline->pipeline.Get());
+    auto gpu = heap->GetGPUDescriptorHandleForHeapStart();
+    list_->SetComputeRootDescriptorTable(0, gpu);
+    gpu.ptr += stride;
+    list_->SetComputeRootDescriptorTable(1, gpu);
+    list_->Dispatch((metadata.width + 7u) / 8u,
+                    (metadata.height + 7u) / 8u, 1);
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition = {owner->flutter_preview.Get(), 0,
+                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                          D3D12_RESOURCE_STATE_COMMON};
+    list_->ResourceBarrier(1, &barrier);
+    owner->flutter_preview_state = D3D12_RESOURCE_STATE_COMMON;
+    if (FAILED(close_commands()) || FAILED(execute_commands()) ||
+        signal_and_wait() != DIGITOR_RESULT_OK) {
+      diagnostic = "D3D12 Flutter preview display transform failed";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    descriptor.struct_size = sizeof(descriptor);
+    descriptor.api_version = DIGITOR_NATIVE_GPU_TEXTURE_DESCRIPTOR_VERSION;
+    descriptor.backend = DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12;
+    descriptor.handle_type = DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE;
+    descriptor.native_handle = reinterpret_cast<std::uint64_t>(
+        owner->flutter_shared_handle);
+    descriptor.width = metadata.width;
+    descriptor.height = metadata.height;
+    descriptor.pixel_format = DIGITOR_PIXEL_FORMAT_RGBA8_UNORM;
+    descriptor.alpha_mode = 1;
+    descriptor.timestamp_us = metadata.timestamp;
+    descriptor.generation = generation;
+    descriptor.device_identity = reinterpret_cast<std::uint64_t>(this);
+    descriptor.context_identity = backend_context_identity();
+    descriptor.ownership_token = frame->identity();
+    descriptor.readiness = DIGITOR_NATIVE_TEXTURE_READY;
+    diagnostic.clear();
+    return DIGITOR_RESULT_OK;
+  }
 
   std::shared_ptr<D3DPipelineBundle> color_pipeline(int operation) noexcept {
     const bool curves = operation == 1; const bool log_wheels = operation == 2; const bool qualifier = operation == 3;

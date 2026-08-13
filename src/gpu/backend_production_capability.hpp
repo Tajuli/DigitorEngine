@@ -4,6 +4,8 @@
 #include "digitor/native_media.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <variant>
 
 namespace digitor {
@@ -20,6 +22,10 @@ using BackendProductionResources = std::variant<std::monostate,
     D3D12ProductionResources, VulkanProductionResources,
     GlesProductionResources, MetalProductionResources>;
 
+using NativePreviewDescriptorCallback = std::function<DigitorResult(
+    const ProcessedGpuFramePtr&, std::uint64_t,
+    DigitorNativeGpuTextureDescriptor&, std::string&)>;
+
 struct BackendProductionCapability {
   DigitorRendererBackend backend{DIGITOR_RENDERER_CPU};
   std::uint64_t context_identity{};
@@ -31,6 +37,11 @@ struct BackendProductionCapability {
   // selected backend generation so imported frames carry real backend context
   // identity/lifetime instead of a platform-fabricated GPU token.
   NativeMediaImportCallback native_media_import{};
+  // Renderer-owned final preview descriptor builder. The selected backend
+  // remains the only code allowed to unwrap its ProcessedGpuFrame ownership
+  // and publish a Flutter-compatible native GPU resource.
+  NativePreviewDescriptorCallback native_preview_descriptor{};
+  DigitorNativePreviewCapabilities native_preview_capabilities{};
   [[nodiscard]] bool valid() const noexcept {
     return backend != DIGITOR_RENDERER_CPU && context_identity != 0 &&
            frame_context_identity != nullptr && resources.index() != 0;

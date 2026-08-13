@@ -44,6 +44,10 @@ struct WindowsZeroCopySurface {
   std::uintptr_t shared_handle{};
   std::uintptr_t decoder_device{};
   std::int64_t timestamp_us{};
+  // Decoder acquire fence exported with the D3D11VA shared surface. The D3D12
+  // conversion queue must wait on this exact fence/value before sampling.
+  std::uintptr_t acquire_fence_handle{};
+  std::uint64_t acquire_fence_value{};
   WindowsZeroCopyColor color{};
   NativeMediaSurfacePtr lifetime;
 };
@@ -63,7 +67,7 @@ struct WindowsZeroCopyQualification {
 
 // Backend callback performs the native command recording. It receives the
 // imported ID3D12Resource as an opaque pointer to avoid exposing D3D headers in
-// the public API. Implementations must create plane SRVs and write RGBA16F.
+// the public API. Implementations must create plane SRVs and write floating-point RGBA.
 using WindowsD3D12ConvertCallback = std::function<DigitorResult(
     void* d3d12_resource,
     const WindowsZeroCopySurface&,
@@ -71,8 +75,10 @@ using WindowsD3D12ConvertCallback = std::function<DigitorResult(
 
 class WindowsD3D12ZeroCopyImporter final {
 public:
-  WindowsD3D12ZeroCopyImporter(void* d3d12_device,
-                               WindowsD3D12ConvertCallback converter);
+  WindowsD3D12ZeroCopyImporter(
+      void* d3d12_device, WindowsD3D12ConvertCallback converter,
+      DigitorPixelFormat expected_output_format =
+          DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT);
   ~WindowsD3D12ZeroCopyImporter();
 
   WindowsD3D12ZeroCopyImporter(const WindowsD3D12ZeroCopyImporter&) = delete;

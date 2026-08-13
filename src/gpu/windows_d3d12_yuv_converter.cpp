@@ -84,24 +84,40 @@ Constants constants_for(const WindowsZeroCopySurface& s) noexcept {
     o.uv_scale = 255.0f / 224.0f;
   }
 
-  // Rows multiply float3(y, u, v). Coefficients are the standard
-  // non-constant-luminance Y'CbCr matrices for the declared source matrix.
   switch (s.color.matrix) {
     case WindowsYuvMatrix::bt601:
-      o.row_r[0] = 1.0f; o.row_r[1] = 0.0f;       o.row_r[2] = 1.4020f;
-      o.row_g[0] = 1.0f; o.row_g[1] = -0.344136f; o.row_g[2] = -0.714136f;
-      o.row_b[0] = 1.0f; o.row_b[1] = 1.7720f;    o.row_b[2] = 0.0f;
+      o.row_r[0] = 1.0f;
+      o.row_r[1] = 0.0f;
+      o.row_r[2] = 1.4020f;
+      o.row_g[0] = 1.0f;
+      o.row_g[1] = -0.344136f;
+      o.row_g[2] = -0.714136f;
+      o.row_b[0] = 1.0f;
+      o.row_b[1] = 1.7720f;
+      o.row_b[2] = 0.0f;
       break;
     case WindowsYuvMatrix::bt2020_ncl:
-      o.row_r[0] = 1.0f; o.row_r[1] = 0.0f;       o.row_r[2] = 1.4746f;
-      o.row_g[0] = 1.0f; o.row_g[1] = -0.164553f; o.row_g[2] = -0.571353f;
-      o.row_b[0] = 1.0f; o.row_b[1] = 1.8814f;    o.row_b[2] = 0.0f;
+      o.row_r[0] = 1.0f;
+      o.row_r[1] = 0.0f;
+      o.row_r[2] = 1.4746f;
+      o.row_g[0] = 1.0f;
+      o.row_g[1] = -0.164553f;
+      o.row_g[2] = -0.571353f;
+      o.row_b[0] = 1.0f;
+      o.row_b[1] = 1.8814f;
+      o.row_b[2] = 0.0f;
       break;
     case WindowsYuvMatrix::bt709:
     default:
-      o.row_r[0] = 1.0f; o.row_r[1] = 0.0f;       o.row_r[2] = 1.5748f;
-      o.row_g[0] = 1.0f; o.row_g[1] = -0.187324f; o.row_g[2] = -0.468124f;
-      o.row_b[0] = 1.0f; o.row_b[1] = 1.8556f;    o.row_b[2] = 0.0f;
+      o.row_r[0] = 1.0f;
+      o.row_r[1] = 0.0f;
+      o.row_r[2] = 1.5748f;
+      o.row_g[0] = 1.0f;
+      o.row_g[1] = -0.187324f;
+      o.row_g[2] = -0.468124f;
+      o.row_b[0] = 1.0f;
+      o.row_b[1] = 1.8556f;
+      o.row_b[2] = 0.0f;
       break;
   }
   return o;
@@ -111,6 +127,8 @@ Constants constants_for(const WindowsZeroCopySurface& s) noexcept {
 
 struct WindowsD3D12YuvConverter::Impl {
   const void* frame_context_identity{};
+  DigitorPixelFormat output_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
+  WindowsD3D12ConvertedFrameFactory frame_factory;
 #ifdef _WIN32
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12CommandQueue> queue;
@@ -130,10 +148,18 @@ struct WindowsD3D12YuvConverter::Impl {
 };
 
 WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
-    void* raw, const void* frame_context_identity)
+    void* raw, const void* frame_context_identity,
+    DigitorPixelFormat output_format,
+    WindowsD3D12ConvertedFrameFactory frame_factory)
     : impl_(std::make_shared<Impl>()) {
   if (!raw) throw std::invalid_argument("D3D12 device is required");
-  impl_->frame_context_identity = frame_context_identity ? frame_context_identity : raw;
+  if (output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+      output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+    throw std::invalid_argument("D3D12 YUV output must be RGBA16F or RGBA32F");
+  impl_->frame_context_identity =
+      frame_context_identity ? frame_context_identity : raw;
+  impl_->output_format = output_format;
+  impl_->frame_factory = std::move(frame_factory);
 #ifdef _WIN32
   impl_->device = static_cast<ID3D12Device*>(raw);
   D3D12_COMMAND_QUEUE_DESC q{};
@@ -151,7 +177,8 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   hd.NumDescriptors = 3;
   hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-  if (FAILED(impl_->device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&impl_->heap))))
+  if (FAILED(
+          impl_->device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&impl_->heap))))
     throw std::runtime_error("cannot create descriptor heap");
   impl_->descriptor_size = impl_->device->GetDescriptorHandleIncrementSize(
       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -188,7 +215,8 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
           0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl_->fence))))
     throw std::runtime_error("cannot create YUV pipeline");
   impl_->event_handle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-  if (!impl_->event_handle) throw std::runtime_error("cannot create fence event");
+  if (!impl_->event_handle)
+    throw std::runtime_error("cannot create fence event");
 #else
   (void)raw;
   throw std::runtime_error("D3D12 is unavailable");
@@ -232,7 +260,9 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     od.Height = s.height;
     od.DepthOrArraySize = 1;
     od.MipLevels = 1;
-    od.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    od.Format = impl_->output_format == DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT
+                    ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                    : DXGI_FORMAT_R16G16B16A16_FLOAT;
     od.SampleDesc.Count = 1;
     od.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     D3D12_HEAP_PROPERTIES hp{};
@@ -261,7 +291,7 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     cpu.ptr += impl_->descriptor_size;
     D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
     u.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    u.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    u.Format = od.Format;
     impl_->device->CreateUnorderedAccessView(output.Get(), nullptr, &u, cpu);
 
     if (FAILED(impl_->allocator->Reset()) ||
@@ -271,8 +301,7 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     impl_->list->SetDescriptorHeaps(1, heaps);
     impl_->list->SetComputeRootSignature(impl_->root.Get());
     const auto c = constants_for(s);
-    impl_->list->SetComputeRoot32BitConstants(
-        0, sizeof(Constants) / 4, &c, 0);
+    impl_->list->SetComputeRoot32BitConstants(0, sizeof(Constants) / 4, &c, 0);
     impl_->list->SetComputeRootDescriptorTable(
         1, impl_->heap->GetGPUDescriptorHandleForHeapStart());
     impl_->list->Dispatch((s.width + 7) / 8, (s.height + 7) / 8, 1);
@@ -283,7 +312,19 @@ DigitorResult WindowsD3D12YuvConverter::convert(
                     D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                     D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     impl_->list->ResourceBarrier(1, &b);
-    if (FAILED(impl_->list->Close())) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    if (FAILED(impl_->list->Close()))
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+
+    if (s.acquire_fence_handle && s.acquire_fence_value) {
+      ComPtr<ID3D12Fence> acquire_fence;
+      const auto open_fence = impl_->device->OpenSharedHandle(
+          reinterpret_cast<HANDLE>(s.acquire_fence_handle),
+          IID_PPV_ARGS(&acquire_fence));
+      if (FAILED(open_fence) ||
+          FAILED(impl_->queue->Wait(acquire_fence.Get(), s.acquire_fence_value)))
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
     ID3D12CommandList* lists[]{impl_->list.Get()};
     impl_->queue->ExecuteCommandLists(1, lists);
     const auto id = impl_->sequence.fetch_add(1);
@@ -302,13 +343,31 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     GpuFrameMetadata m{};
     m.width = s.width;
     m.height = s.height;
-    m.format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+    m.format = impl_->output_format;
     m.timestamp = s.timestamp_us;
-    m.color_metadata = "linear-rgba16f:" +
-                       std::to_string(static_cast<unsigned>(s.color.matrix)) + ":" +
-                       std::to_string(s.color.full_range ? 1 : 0) + ":" +
-                       std::to_string(s.color.primaries) + ":" +
-                       std::to_string(s.color.transfer);
+    m.color_metadata =
+        (impl_->output_format == DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT
+             ? "linear-rgba32f:"
+             : "linear-rgba16f:") +
+        std::to_string(static_cast<unsigned>(s.color.matrix)) + ":" +
+        std::to_string(s.color.full_range ? 1 : 0) + ":" +
+        std::to_string(s.color.primaries) + ":" +
+        std::to_string(s.color.transfer);
+
+    if (impl_->frame_factory) {
+      out =
+          impl_->frame_factory(input, output.Get(), s, impl_->output_format, id);
+      if (!out || out->backend() != DIGITOR_RENDERER_D3D12 ||
+          out->metadata().width != s.width ||
+          out->metadata().height != s.height ||
+          out->metadata().format != impl_->output_format ||
+          out->metadata().timestamp != s.timestamp_us) {
+        out.reset();
+        return DIGITOR_RESULT_INTERNAL_ERROR;
+      }
+      return DIGITOR_RESULT_OK;
+    }
+
     out = std::make_shared<ProcessedGpuFrame>(
         impl_->frame_context_identity, DIGITOR_RENDERER_D3D12, std::move(m), id,
         owner, std::make_shared<std::atomic_bool>(true), false);

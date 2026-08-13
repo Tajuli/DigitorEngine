@@ -1,3 +1,5 @@
+#include "digitor/flutter_production_c_api.h"
+#include "digitor/flutter_production_plugin_bootstrap.hpp"
 #include "platform/android/android_engine_production.hpp"
 #include "platform/apple/apple_engine_production.hpp"
 #include "platform/windows/windows_engine_production.hpp"
@@ -20,6 +22,32 @@ int main() {
   windows.context_identity = 101;
   windows.frame_context_identity = &context;
   windows.resources = D3D12ProductionResources{&device, &queue};
+  windows.native_media_import =
+      [](const ZeroCopyImportRequest&, ProcessedGpuFramePtr& frame) {
+        frame.reset();
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      };
+  windows.native_preview_descriptor = [](
+                                          const ProcessedGpuFramePtr&,
+                                          std::uint64_t,
+                                          DigitorNativeGpuTextureDescriptor&,
+                                          std::string&) {
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  };
+  windows.native_preview_capabilities.struct_size =
+      sizeof(windows.native_preview_capabilities);
+  windows.native_preview_capabilities.api_version =
+      DIGITOR_NATIVE_PREVIEW_CAPABILITIES_VERSION;
+  windows.native_preview_capabilities.native_gpu_preview_available = 1;
+  windows.native_preview_capabilities.true_shared_resource_zero_copy = 1;
+  windows.native_preview_capabilities.gpu_to_gpu_copy = 1;
+  windows.native_preview_capabilities.sdr_supported = 1;
+  windows.native_preview_capabilities.backend =
+      DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12;
+  windows.native_preview_capabilities.handle_type =
+      DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE;
+  windows.native_preview_capabilities.selected_mode =
+      DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
   assert(windows.valid());
 
   BackendProductionCapability cpu{};
@@ -73,12 +101,34 @@ int main() {
   assert(!flutter_production_provider_builder_installed(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
 
+  // With no optional full Windows dependency package installed, a selected
+  // D3D12 renderer that owns strict decode/import and native preview descriptor
+  // bindings must still be able to consume the real Flutter attachment and
+  // register the production preview host. Export remains fail-closed because
+  // this preview-only build intentionally contains no encoder factory.
   diagnostic.clear();
   auto wr = install_windows_engine_production_runtime(windows, &diagnostic);
   assert(wr && wr->active());
   assert(diagnostic.empty());
   assert(flutter_production_provider_builder_installed(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));
+
+  DigitorFlutterProductionPluginAttachment windows_attachment{};
+  windows_attachment.struct_size = sizeof(windows_attachment);
+  windows_attachment.api_version =
+      DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ATTACHMENT_VERSION;
+  windows_attachment.platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS;
+  windows_attachment.flutter_texture_registrar = &registrar;
+  windows_attachment.implementation_identity = "test.flutter.windows.preview";
+  assert(digitor_flutter_production_plugin_attach(&windows_attachment) ==
+         DIGITOR_RESULT_OK);
+  assert(digitor_flutter_production_plugin_attached() == 1);
+  assert(digitor_flutter_production_host_registered() == 1);
+  assert(digitor_flutter_production_plugin_detach(&registrar) ==
+         DIGITOR_RESULT_OK);
+  assert(digitor_flutter_production_plugin_attached() == 0);
+  assert(digitor_flutter_production_host_registered() == 0);
+
   assert(wr->shutdown() == DIGITOR_RESULT_OK);
   assert(!flutter_production_provider_builder_installed(
       DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS));

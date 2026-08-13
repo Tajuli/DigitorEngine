@@ -37,6 +37,124 @@ bool complete_dependencies(const WindowsEngineProductionDependencies& value) noe
          !value.package_identity.empty() && !value.build_identity.empty();
 }
 
+ProductionDecoderFactory make_engine_d3d12_decoder_factory(
+    NativeMediaImportCallback importer) {
+  if (!importer) return {};
+  return [importer = std::move(importer)](
+             const std::string& media_path,
+             std::string& diagnostic)
+             -> std::unique_ptr<ProductionHardwareDecodeSession> {
+    try {
+      DecoderOptions decoder_options{};
+      decoder_options.hardware = HardwareDecode::dxva;
+      decoder_options.allow_cpu_fallback = false;
+      decoder_options.output_mode = DecodeOutputMode::native_gpu_surface;
+      decoder_options.require_zero_copy = true;
+
+      auto decoder = open_video_decoder(media_path, decoder_options);
+      if (!decoder) {
+        diagnostic = "strict D3D11VA decoder could not be opened";
+        return {};
+      }
+      const auto info = decoder->info();
+      if (!info.hardware_accelerated || info.selected != HardwareDecode::dxva ||
+          !info.native_surface_output ||
+          info.native_handle_type != NativeMediaHandleType::dxgi_shared_handle) {
+        diagnostic =
+            "strict D3D12 preview requires D3D11VA DXGI shared surfaces";
+        return {};
+      }
+
+      ProductionHardwareDecodeOptions production_options{};
+      production_options.renderer_backend = DIGITOR_RENDERER_D3D12;
+      production_options.render_format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+      production_options.require_zero_copy = true;
+      production_options.require_monotonic_timestamps = true;
+      auto session = std::make_unique<ProductionHardwareDecodeSession>(
+          std::move(decoder), importer, production_options);
+      diagnostic.clear();
+      return session;
+    } catch (const std::bad_alloc&) {
+      diagnostic = "out of memory opening strict Windows D3D12 decoder";
+      return {};
+    } catch (const std::exception& error) {
+      diagnostic = error.what();
+      return {};
+    } catch (...) {
+      diagnostic = "unexpected strict Windows D3D12 decoder initialization failure";
+      return {};
+    }
+  };
+}
+
+std::optional<FlutterProductionProviderBuild> make_engine_d3d12_preview_build(
+    const BackendProductionCapability& backend,
+    const FlutterProductionPluginAttachment& attachment,
+    std::string& diagnostic) {
+  if (backend.backend != DIGITOR_RENDERER_D3D12 ||
+      !backend.native_media_import || !backend.native_preview_descriptor ||
+      backend.native_preview_capabilities.native_gpu_preview_available == 0 ||
+      backend.native_preview_capabilities.backend !=
+          DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12 ||
+      backend.native_preview_capabilities.handle_type !=
+          DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE) {
+    diagnostic =
+        "selected D3D12 backend does not expose engine-owned decode/preview bindings";
+    return std::nullopt;
+  }
+  if (!attachment.flutter_texture_registrar) {
+    diagnostic = "Flutter Windows texture registrar is unavailable";
+    return std::nullopt;
+  }
+
+  FlutterNativeTextureRegistrar registrar{};
+  registrar.platform = ProductionPlatform::windows;
+  registrar.backend = DIGITOR_RENDERER_D3D12;
+  registrar.device_identity = backend.frame_context_identity;
+  registrar.device_name = "DigitorEngine D3D12 production preview";
+  registrar.attached = [token = attachment.flutter_texture_registrar] {
+    return token != nullptr;
+  };
+  registrar.delivery_mode = FlutterPreviewDeliveryMode::deferred_to_flutter_texture;
+  registrar.descriptor_applies_display_transform = true;
+  auto host = std::make_shared<ConcreteFlutterTextureHost>(std::move(registrar));
+  if (!host->valid()) {
+    diagnostic = "engine-owned D3D12 Flutter preview host is invalid";
+    return std::nullopt;
+  }
+
+  FlutterProductionProviderBuild build{};
+  build.provider.platform = ProductionPlatform::windows;
+  build.platform_inputs.platform = ProductionPlatform::windows;
+  build.preview_session =
+      std::make_shared<NativePreviewPresentationSession>(std::move(host));
+  build.decoder_factory =
+      make_engine_d3d12_decoder_factory(backend.native_media_import);
+  build.frame_resolver = [](std::int64_t timestamp_us) -> FrameNumber {
+    if (timestamp_us <= 0) return 0;
+    constexpr std::int64_t frame_duration_us = 33'333;
+    return static_cast<FrameNumber>(timestamp_us / frame_duration_us);
+  };
+  build.texture_descriptor_builder = backend.native_preview_descriptor;
+  build.preview_target_binder = [](
+      std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t,
+      std::string& local) {
+    local.clear();
+    // Windows is descriptor-driven; no engine render target is bound here.
+    return DIGITOR_RESULT_OK;
+  };
+  build.preview_capabilities = backend.native_preview_capabilities;
+  build.encoder_backend = EncoderBackend::software;
+  build.fps_num = 30;
+  build.fps_den = 1;
+  build.video_bitrate = 12'000'000;
+  build.required_device_identity = static_cast<std::uint64_t>(
+      reinterpret_cast<std::uintptr_t>(backend.frame_context_identity));
+  build.required_context_identity = backend.context_identity;
+  diagnostic.clear();
+  return build;
+}
+
 ProductionDecoderFactory make_engine_vulkan_decoder_factory(
     NativeMediaImportCallback importer) {
   if (!importer) return {};
@@ -300,6 +418,14 @@ install_windows_engine_production_runtime(
           factory = state.factory;
         }
         if (!factory) {
+          // D3D12 preview has a complete engine-owned native path and does not
+          // need the optional export/timeline dependency package. Keep the full
+          // factory authoritative when installed, but register a strict
+          // descriptor-driven preview host otherwise. Export remains fail-closed
+          // because this preview-only build intentionally has no encoder factory.
+          if (backend.backend == DIGITOR_RENDERER_D3D12) {
+            return make_engine_d3d12_preview_build(backend, attachment, local);
+          }
           local = "engine-owned Windows production dependencies are not installed";
           return std::nullopt;
         }
