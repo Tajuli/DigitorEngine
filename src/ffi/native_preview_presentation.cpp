@@ -12,7 +12,8 @@ NativePreviewSubmitResult failure(DigitorResult result, NativePreviewFailure kin
 bool presentation_format(DigitorPixelFormat format) noexcept {
   return format == DIGITOR_PIXEL_FORMAT_RGBA8_UNORM ||
          format == DIGITOR_PIXEL_FORMAT_BGRA8_UNORM ||
-         format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+         format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+         format == DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
 }
 } // namespace
 
