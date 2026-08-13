@@ -135,10 +135,6 @@ WindowsEngineProductionBuildResult assemble_windows_engine_production_build(
       return out;
     }
     if (backend.backend == DIGITOR_RENDERER_VULKAN) {
-      // Decode/import belongs to the selected Vulkan backend generation. Never
-      // accept an app/provider supplied importer here: once Vulkan is selected,
-      // a missing native importer is a hard production failure rather than a
-      // D3D12/CPU fallback opportunity.
       dependencies.decoder_factory =
           make_engine_vulkan_decoder_factory(backend.native_media_import);
     }
@@ -251,18 +247,21 @@ DigitorResult install_windows_engine_production_dependencies_factory(
       state.factory = std::move(factory);
     }
 
+    // Installing the engine-owned dependency factory and registering a Flutter
+    // production host are deliberately separate lifecycle events. The Flutter
+    // attachment can arrive after engine/backend bootstrap, so a deferred retry
+    // must never roll back a valid dependency factory. The pending attachment
+    // path will call retry again when it becomes available.
     std::string retry_diagnostic;
     const auto retry = retry_flutter_production_host_registration(
         DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS, &retry_diagnostic);
     if (retry != DIGITOR_RESULT_OK) {
-      std::scoped_lock lock(state.mutex);
-      state.factory = {};
       if (diagnostic) {
         *diagnostic = retry_diagnostic.empty()
-                          ? "Windows dependencies could not register the pending Flutter production host"
+                          ? "Windows production dependency factory installed; Flutter host registration is pending"
                           : std::move(retry_diagnostic);
       }
-      return retry;
+      return DIGITOR_RESULT_OK;
     }
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
