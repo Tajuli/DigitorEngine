@@ -18,4 +18,24 @@ void main() {
     expect(pipeline.snapshot, isNull);
     pipeline.close();
   });
+
+  test('workspace callers can opt out of strict zero-copy media probing', () {
+    const renderer = DigitorRendererInfo(
+      backend: DigitorBackend.direct3D12,
+      backendName: 'Direct3D 12',
+      deviceName: 'test',
+      isGpu: true,
+      supportsCompute: true,
+      supportsFp16: true,
+      supportsFp32: true,
+    );
+
+    final pipeline = DigitorProductionMediaPipeline(
+      renderer: renderer,
+      requireZeroCopy: false,
+    );
+    expect(pipeline.hasMedia, isFalse);
+    expect(pipeline.snapshot, isNull);
+    pipeline.close();
+  });
 }
