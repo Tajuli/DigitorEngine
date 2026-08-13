@@ -51,7 +51,8 @@ NativePreviewSubmitResult NativePreviewPresentationSession::submit(
         "timeline and Flutter host device/context identities differ");
   if (!presentation_format(frame->metadata().format)) return failure(DIGITOR_RESULT_UNSUPPORTED,
       NativePreviewFailure::unsupported_pixel_format, "GPU presentation format is unsupported");
-  if (frame->metadata().color_metadata.find("linear") != std::string::npos)
+  if (frame->metadata().color_metadata.find("linear") != std::string::npos &&
+      !host_->deferred_display_transform())
     return failure(DIGITOR_RESULT_UNSUPPORTED,
         NativePreviewFailure::display_transform_unavailable,
         "scene-linear timeline output requires a GPU display transform");
