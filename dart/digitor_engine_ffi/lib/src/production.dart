@@ -18,10 +18,24 @@ final class DigitorProductionException implements Exception {
   final int resultCode;
   final String diagnostic;
 
+  /// Stable symbolic name from DigitorEngine's public `DigitorResult` ABI.
+  String get symbolicCode => switch (resultCode) {
+    0 => 'DIGITOR_RESULT_OK',
+    1 => 'DIGITOR_RESULT_INVALID_ARGUMENT',
+    2 => 'DIGITOR_RESULT_NOT_INITIALIZED',
+    3 => 'DIGITOR_RESULT_ALREADY_INITIALIZED',
+    4 => 'DIGITOR_RESULT_BACKEND_UNAVAILABLE',
+    5 => 'DIGITOR_RESULT_UNSUPPORTED',
+    6 => 'DIGITOR_RESULT_RESOURCE_IN_USE',
+    7 => 'DIGITOR_RESULT_OUT_OF_MEMORY',
+    100 => 'DIGITOR_RESULT_INTERNAL_ERROR',
+    _ => 'DIGITOR_RESULT_UNKNOWN',
+  };
+
   @override
   String toString() => diagnostic.isEmpty
-      ? 'DigitorProductionException(operation: $operation, result: $resultCode)'
-      : 'DigitorProductionException(operation: $operation, result: $resultCode, diagnostic: $diagnostic)';
+      ? 'DigitorProductionException(operation: $operation, result: $resultCode, code: $symbolicCode)'
+      : 'DigitorProductionException(operation: $operation, result: $resultCode, code: $symbolicCode, diagnostic: $diagnostic)';
 }
 
 enum DigitorPixelFormat {

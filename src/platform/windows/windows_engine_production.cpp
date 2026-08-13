@@ -69,7 +69,9 @@ ProductionDecoderFactory make_engine_d3d12_decoder_factory(
       production_options.renderer_backend = DIGITOR_RENDERER_D3D12;
       production_options.render_format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
       production_options.require_zero_copy = true;
-      production_options.require_monotonic_timestamps = true;
+      // Editor preview is random access: scrubbing may legitimately request an
+      // earlier frame. Export retains strict ordering in its own frame range.
+      production_options.require_monotonic_timestamps = false;
       auto session = std::make_unique<ProductionHardwareDecodeSession>(
           std::move(decoder), importer, production_options);
       diagnostic.clear();

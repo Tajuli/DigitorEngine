@@ -357,9 +357,32 @@ final class DigitorRegisteredProductionSession {
     }
   }
 
-  static void _check(String operation, int result) {
+  String get lastError {
+    _ensureAlive();
+    final size = calloc<Uint32>();
+    try {
+      if (digitorFlutterProductionGetLastError(_handle, nullptr, size) != 0 ||
+          size.value == 0) {
+        return '';
+      }
+      final buffer = calloc<Uint8>(size.value);
+      try {
+        if (digitorFlutterProductionGetLastError(_handle, buffer, size) != 0) {
+          return '';
+        }
+        return buffer.cast<Utf8>().toDartString();
+      } finally {
+        calloc.free(buffer);
+      }
+    } finally {
+      calloc.free(size);
+    }
+  }
+
+  void _check(String operation, int result) {
     if (result != 0) {
-      throw DigitorProductionException(operation, result);
+      final diagnostic = _disposed || _handle == nullptr ? '' : lastError;
+      throw DigitorProductionException(operation, result, diagnostic);
     }
   }
 
