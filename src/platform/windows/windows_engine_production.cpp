@@ -119,11 +119,6 @@ std::optional<FlutterProductionProviderBuild> make_engine_d3d12_preview_build(
       std::make_shared<NativePreviewPresentationSession>(std::move(host));
   build.decoder_factory =
       make_engine_d3d12_decoder_factory(backend.native_media_import);
-  build.frame_resolver = [](std::int64_t timestamp_us) -> FrameNumber {
-    if (timestamp_us <= 0) return 0;
-    constexpr std::int64_t frame_duration_us = 33'333;
-    return static_cast<FrameNumber>(timestamp_us / frame_duration_us);
-  };
   build.texture_descriptor_builder = backend.native_preview_descriptor;
   build.preview_target_binder = [](
       std::uint64_t, std::uint32_t, std::uint32_t, std::int32_t,
@@ -134,9 +129,6 @@ std::optional<FlutterProductionProviderBuild> make_engine_d3d12_preview_build(
   };
   build.preview_capabilities = backend.native_preview_capabilities;
   build.encoder_backend = EncoderBackend::software;
-  build.fps_num = 30;
-  build.fps_den = 1;
-  build.video_bitrate = 12'000'000;
   build.required_device_identity = static_cast<std::uint64_t>(
       reinterpret_cast<std::uintptr_t>(backend.frame_context_identity));
   build.required_context_identity = backend.context_identity;

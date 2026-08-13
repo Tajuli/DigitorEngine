@@ -164,10 +164,6 @@ validate_flutter_production_provider_build(
       return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
               "production decoder factory is required"};
     }
-    if (!build.frame_resolver) {
-      return {DIGITOR_RESULT_INVALID_ARGUMENT,
-              "production timestamp/frame resolver is required"};
-    }
     if (!build.texture_descriptor_builder) {
       return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
               "production GPU texture descriptor builder is required"};
@@ -176,11 +172,11 @@ validate_flutter_production_provider_build(
       return {DIGITOR_RESULT_BACKEND_UNAVAILABLE,
               "production Flutter preview target binder is required"};
     }
-    if (build.fps_num <= 0 || build.fps_den <= 0) {
+    if (build.encoder_factory && (build.fps_num <= 0 || build.fps_den <= 0)) {
       return {DIGITOR_RESULT_INVALID_ARGUMENT,
               "production frame rate must be positive"};
     }
-    if (build.video_bitrate <= 0) {
+    if (build.encoder_factory && build.video_bitrate <= 0) {
       return {DIGITOR_RESULT_INVALID_ARGUMENT,
               "production video bitrate must be positive"};
     }

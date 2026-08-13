@@ -42,6 +42,9 @@ public:
     [[nodiscard]] DigitorResult decode(FrameNumber frame_number,
                                        ProductionDecodedFrame& output,
                                        std::string* diagnostic = nullptr) noexcept;
+    [[nodiscard]] DigitorResult decode_at_timestamp(
+        std::int64_t pts_us, ProductionDecodedFrame& output,
+        std::string* diagnostic = nullptr) noexcept;
     [[nodiscard]] DigitorResult seek(std::int64_t pts_us,
                                      std::string* diagnostic = nullptr) noexcept;
     [[nodiscard]] HardwareDecodeQualification qualification() const;

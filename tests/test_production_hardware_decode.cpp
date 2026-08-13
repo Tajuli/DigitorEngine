@@ -48,6 +48,49 @@ private:
     bool cpu_pixels_{};
 };
 
+class RandomAccessFakeDecoder final : public VideoDecoder {
+public:
+    std::shared_ptr<VideoFrame> decode(FrameNumber number) override {
+        return frame(number, number * 10'000);
+    }
+    std::shared_ptr<VideoFrame> decode_at_timestamp(std::int64_t pts) override {
+        ++timestamp_decodes;
+        // Model VFR selection: the first source PTS at or after the request.
+        const std::int64_t selected = ((pts + 9'999) / 10'000) * 10'000;
+        return frame(0, selected);
+    }
+    void seek(std::int64_t pts) override { seeks.push_back(pts); }
+    DecoderInfo info() const override {
+        return {HardwareDecode::dxva, true, "random-access fake D3D11VA", true,
+                NativeMediaHandleType::d3d11_texture2d};
+    }
+    int timestamp_decodes{};
+    std::vector<std::int64_t> seeks;
+private:
+    static std::shared_ptr<VideoFrame> frame(FrameNumber number,
+                                             std::int64_t pts) {
+        auto result = std::make_shared<VideoFrame>();
+        result->number = number;
+        result->pts = pts;
+        result->duration = 10'000;
+        result->width = 1920;
+        result->height = 1080;
+        NativeMediaSurfaceDescriptor descriptor{};
+        descriptor.struct_size = sizeof(descriptor);
+        descriptor.api_version = 1;
+        descriptor.platform = NativeMediaPlatform::windows;
+        descriptor.handle_type = NativeMediaHandleType::d3d11_texture2d;
+        descriptor.pixel_format = NativeMediaPixelFormat::nv12;
+        descriptor.width = result->width;
+        descriptor.height = result->height;
+        descriptor.native_handle = static_cast<std::uintptr_t>(pts + 1);
+        descriptor.timestamp_us = pts;
+        result->native_surface = std::make_shared<NativeMediaSurface>(
+            descriptor, std::static_pointer_cast<void>(std::make_shared<int>(1)));
+        return result;
+    }
+};
+
 ProcessedGpuFramePtr make_gpu_frame(std::int64_t timestamp) {
     GpuFrameMetadata metadata{};
     metadata.width = 1920;
@@ -101,6 +144,32 @@ int main() {
     assert(import_failure.decode(0, frame, &diagnostic) == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
 
     assert(session.seek(1000000, &diagnostic) == DIGITOR_RESULT_OK);
+
+    auto random_decoder = std::make_unique<RandomAccessFakeDecoder>();
+    auto* random_observer = random_decoder.get();
+    options.require_monotonic_timestamps = false;
+    ProductionHardwareDecodeSession random_access(
+        std::move(random_decoder),
+        [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
+            output = make_gpu_frame(request.surface->descriptor().timestamp_us);
+            return DIGITOR_RESULT_OK;
+        }, options);
+    for (const auto requested : {0LL, 250'000LL, 600'000LL, 50'000LL,
+                                 590'001LL, 50'000LL, 0LL}) {
+        diagnostic = "stale";
+        assert(random_access.decode_at_timestamp(requested, frame, &diagnostic) ==
+               DIGITOR_RESULT_OK);
+        assert(frame.pts >= requested);
+        assert(frame.pts - requested < 10'000);
+        assert(diagnostic.empty());
+        assert(frame.gpu_frame && frame.decoder_surface);
+    }
+    assert(random_observer->timestamp_decodes == 7);
+    const auto random_q = random_access.qualification();
+    assert(random_q.hardware_frame_received);
+    assert(random_q.native_surface_exported);
+    assert(random_q.render_backend_imported);
+    assert(random_q.cpu_readbacks == 0);
 
     ProductionHardwareDecodeSession e2e_decoder(
         std::make_unique<FakeDecoder>(),

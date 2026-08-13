@@ -355,6 +355,13 @@ public:
  Video(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_VIDEO,o),cache_(o.cache_capacity){}
  ~Video()override{sws_freeContext(sws_);}
  std::shared_ptr<VideoFrame> decode(FrameNumber n)override{if(n<0)throw std::out_of_range("negative frame");if(auto hit=cache_.get(n))return hit;if(n<next_number_)throw std::out_of_range("frame is no longer cached; seek before decoding it again");std::shared_ptr<VideoFrame> result;while(next_number_<=n){result=next();if(!result)return {};}return result;}
+ std::shared_ptr<VideoFrame> decode_at_timestamp(std::int64_t p)override{
+  if(p<0)throw std::out_of_range("negative timestamp");
+  if(auto hit=cache_.find([p](const VideoFrame& frame){return frame.pts==p;}))return hit;
+  // A seek starts a new decoder-local numbering epoch at zero. Decode the
+  // first post-preroll frame rather than reusing an absolute frame index.
+  seek_to(p);cache_.clear();return next();
+ }
  void seek(std::int64_t p)override{if(p<0)throw std::out_of_range("negative timestamp");seek_to(p);cache_.clear();}
  DecoderInfo info()const override{return decoder_info();}
 };
