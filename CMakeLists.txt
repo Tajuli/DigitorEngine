@@ -99,31 +99,24 @@ target_sources(digitor_engine PRIVATE
 # shared/static engine artifact consumed by Flutter. Qualification-only targets
 # are not sufficient for runtime provider assembly.
 if(WIN32)
-    # Keep the complete Windows production media implementation in the Engine
-    # native asset.  These objects are not qualification-only: the registered
-    # Flutter production host depends on the D3D11VA decoder/import path, the
-    # D3D12 conversion/presentation path, and the Media Foundation hardware
-    # encoder being present in the exact Engine binary that owns the renderer.
+    # Keep only runtime production objects in the Engine native asset. Offline
+    # qualification/media-host/reference-validation sources stay in their own
+    # qualification targets because they may depend on FFmpeg-only test APIs
+    # and must not become a runtime dependency of the Flutter native asset.
     target_sources(digitor_engine PRIVATE
         src/gpu/windows_d3d12_yuv_converter.cpp
-        src/gpu/windows_d3d12_qualified_converter.cpp
         src/media/ffmpeg_d3d11va_surface.cpp
         src/media/ffmpeg_d3d11va_zero_copy_decoder.cpp
         src/media/windows_d3d12_p010_converter.cpp
         src/media/windows_d3d12_p010_dispatch.cpp
         src/media/windows_zero_copy.cpp
-        src/media/windows_zero_copy_complete_validation.cpp
         src/media/windows_zero_copy_concrete_bindings.cpp
         src/media/windows_zero_copy_frame_broker.cpp
-        src/media/windows_zero_copy_media_host.cpp
         src/media/windows_zero_copy_native_consumers.cpp
         src/media/windows_zero_copy_production.cpp
         src/media/windows_zero_copy_production_gate.cpp
-        src/media/windows_zero_copy_qualification.cpp
-        src/media/windows_zero_copy_reference_decoder.cpp
         src/media/windows_zero_copy_rollout.cpp
-        src/media/windows_zero_copy_runtime.cpp
-        src/media/windows_zero_copy_validation_io.cpp)
+        src/media/windows_zero_copy_runtime.cpp)
     target_link_libraries(digitor_engine PRIVATE
         d3d11
         dxgi
