@@ -34,6 +34,7 @@ struct FlutterNativeTextureRegistrar final {
   std::string device_name;
   std::function<bool()> attached;
   FlutterPreviewDeliveryMode delivery_mode{FlutterPreviewDeliveryMode::native_present};
+  bool descriptor_applies_display_transform{};
   // The platform embedding owns registration/replacement and must retain the
   // exact frame until Flutter reports that the generation was consumed.
   std::function<DigitorResult(const ProcessedGpuFramePtr&, std::uint64_t)> register_or_present;
@@ -63,6 +64,12 @@ class ConcreteFlutterTextureHost final : public NativePreviewTextureHost {
 
   [[nodiscard]] const void* device_identity() const noexcept override {
     return registrar_.device_identity;
+  }
+
+  [[nodiscard]] bool deferred_display_transform() const noexcept override {
+    return registrar_.delivery_mode ==
+               FlutterPreviewDeliveryMode::deferred_to_flutter_texture &&
+           registrar_.descriptor_applies_display_transform;
   }
 
   DigitorResult present(const ProcessedGpuFramePtr& frame,
