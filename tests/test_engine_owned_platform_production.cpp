@@ -50,6 +50,57 @@ int main() {
       DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
   assert(windows.valid());
 
+  FlutterProductionPluginAttachment preview_attachment{};
+  preview_attachment.platform = DIGITOR_FLUTTER_PRODUCTION_PLUGIN_WINDOWS;
+  preview_attachment.flutter_texture_registrar = &registrar;
+  preview_attachment.implementation_identity = "test.flutter.windows.preview";
+  std::string preview_diagnostic;
+  assert(validate_windows_d3d12_preview_build_inputs(
+      windows, preview_attachment, preview_diagnostic));
+  assert(preview_diagnostic.empty());
+
+  const auto expect_preview_failure = [&](BackendProductionCapability value,
+                                          const char* expected) {
+    preview_diagnostic.clear();
+    assert(!validate_windows_d3d12_preview_build_inputs(
+        value, preview_attachment, preview_diagnostic));
+    assert(preview_diagnostic == expected);
+  };
+  auto missing = windows;
+  missing.native_media_import = {};
+  expect_preview_failure(missing,
+                         "D3D12 native_media_import callback is missing");
+  missing = windows;
+  missing.native_preview_descriptor = {};
+  expect_preview_failure(
+      missing, "D3D12 native_preview_descriptor callback is missing");
+  missing = windows;
+  missing.native_preview_capabilities.native_gpu_preview_available = 0;
+  expect_preview_failure(
+      missing, "D3D12 native GPU preview capability is disabled");
+  missing = windows;
+  missing.native_preview_capabilities.backend =
+      DIGITOR_NATIVE_TEXTURE_BACKEND_VULKAN;
+  expect_preview_failure(missing,
+                         "D3D12 preview backend capability mismatch");
+  missing = windows;
+  missing.native_preview_capabilities.handle_type =
+      DIGITOR_NATIVE_TEXTURE_HANDLE_D3D11_TEXTURE;
+  expect_preview_failure(missing, "D3D12 preview handle type mismatch");
+  missing = windows;
+  missing.resources = D3D12ProductionResources{nullptr, &queue};
+  expect_preview_failure(missing, "D3D12 device is unavailable");
+  missing = windows;
+  missing.resources = D3D12ProductionResources{&device, nullptr};
+  expect_preview_failure(missing, "D3D12 command queue is unavailable");
+  auto missing_registrar = preview_attachment;
+  missing_registrar.flutter_texture_registrar = nullptr;
+  preview_diagnostic.clear();
+  assert(!validate_windows_d3d12_preview_build_inputs(
+      windows, missing_registrar, preview_diagnostic));
+  assert(preview_diagnostic ==
+         "Flutter Windows texture registrar is unavailable");
+
   BackendProductionCapability cpu{};
   cpu.backend = DIGITOR_RENDERER_CPU;
   cpu.context_identity = 1;
