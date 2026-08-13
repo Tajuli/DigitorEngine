@@ -30,6 +30,27 @@ int main() {
 
   std::string diagnostic;
 
+  // Installing engine-owned dependencies may happen before the Flutter texture
+  // attachment exists. A deferred registration attempt must not roll the
+  // factory back; only the explicit clear operation owns that lifecycle.
+  auto deferred_factory = [](
+                              const BackendProductionCapability&,
+                              const FlutterProductionPluginAttachment&,
+                              std::string& local)
+      -> std::optional<WindowsEngineProductionDependencies> {
+    local = "test dependency factory invoked";
+    return std::nullopt;
+  };
+  diagnostic.clear();
+  assert(install_windows_engine_production_dependencies_factory(
+             deferred_factory, &diagnostic) == DIGITOR_RESULT_OK);
+  diagnostic.clear();
+  assert(install_windows_engine_production_dependencies_factory(
+             deferred_factory, &diagnostic) == DIGITOR_RESULT_RESOURCE_IN_USE);
+  assert(!diagnostic.empty());
+  assert(clear_windows_engine_production_dependencies_factory() ==
+         DIGITOR_RESULT_OK);
+
   // CPU and incomplete native capabilities must never install a nominal
   // production runtime or provider builder.
   auto cpu_runtime = install_windows_engine_production_runtime(cpu, &diagnostic);
