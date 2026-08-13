@@ -91,21 +91,8 @@ std::optional<FlutterProductionProviderBuild> make_engine_d3d12_preview_build(
     const BackendProductionCapability& backend,
     const FlutterProductionPluginAttachment& attachment,
     std::string& diagnostic) {
-  if (backend.backend != DIGITOR_RENDERER_D3D12 ||
-      !backend.native_media_import || !backend.native_preview_descriptor ||
-      backend.native_preview_capabilities.native_gpu_preview_available == 0 ||
-      backend.native_preview_capabilities.backend !=
-          DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12 ||
-      backend.native_preview_capabilities.handle_type !=
-          DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE) {
-    diagnostic =
-        "selected D3D12 backend does not expose engine-owned decode/preview bindings";
-    return std::nullopt;
-  }
-  if (!attachment.flutter_texture_registrar) {
-    diagnostic = "Flutter Windows texture registrar is unavailable";
-    return std::nullopt;
-  }
+  if (!validate_windows_d3d12_preview_build_inputs(
+          backend, attachment, diagnostic)) return std::nullopt;
 
   FlutterNativeTextureRegistrar registrar{};
   registrar.platform = ProductionPlatform::windows;
@@ -213,8 +200,12 @@ bool capability_resources_complete(const BackendProductionCapability& backend,
   }
   if (backend.backend == DIGITOR_RENDERER_D3D12) {
     const auto* d3d12 = std::get_if<D3D12ProductionResources>(&backend.resources);
-    if (!d3d12 || !d3d12->device || !d3d12->command_queue) {
-      diagnostic = "D3D12 production capability is missing device/queue ownership";
+    if (!d3d12 || !d3d12->device) {
+      diagnostic = "D3D12 device is unavailable";
+      return false;
+    }
+    if (!d3d12->command_queue) {
+      diagnostic = "D3D12 command queue is unavailable";
       return false;
     }
     return true;
@@ -234,6 +225,62 @@ bool capability_resources_complete(const BackendProductionCapability& backend,
 }
 
 }  // namespace
+
+bool validate_windows_d3d12_preview_build_inputs(
+    const BackendProductionCapability& backend,
+    const FlutterProductionPluginAttachment& attachment,
+    std::string& diagnostic) noexcept {
+  if (backend.backend != DIGITOR_RENDERER_D3D12) {
+    diagnostic = "D3D12 renderer capability is not selected";
+    return false;
+  }
+  const auto* resources =
+      std::get_if<D3D12ProductionResources>(&backend.resources);
+  if (!resources || !resources->device) {
+    diagnostic = "D3D12 device is unavailable";
+    return false;
+  }
+  if (!resources->command_queue) {
+    diagnostic = "D3D12 command queue is unavailable";
+    return false;
+  }
+  if (!backend.frame_context_identity) {
+    diagnostic = "D3D12 frame context identity is unavailable";
+    return false;
+  }
+  if (backend.context_identity == 0) {
+    diagnostic = "D3D12 backend context identity is unavailable";
+    return false;
+  }
+  if (!backend.native_media_import) {
+    diagnostic = "D3D12 native_media_import callback is missing";
+    return false;
+  }
+  if (!backend.native_preview_descriptor) {
+    diagnostic = "D3D12 native_preview_descriptor callback is missing";
+    return false;
+  }
+  if (backend.native_preview_capabilities.native_gpu_preview_available == 0) {
+    diagnostic = "D3D12 native GPU preview capability is disabled";
+    return false;
+  }
+  if (backend.native_preview_capabilities.backend !=
+      DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12) {
+    diagnostic = "D3D12 preview backend capability mismatch";
+    return false;
+  }
+  if (backend.native_preview_capabilities.handle_type !=
+      DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE) {
+    diagnostic = "D3D12 preview handle type mismatch";
+    return false;
+  }
+  if (!attachment.flutter_texture_registrar) {
+    diagnostic = "Flutter Windows texture registrar is unavailable";
+    return false;
+  }
+  diagnostic.clear();
+  return true;
+}
 
 WindowsEngineProductionBuildResult assemble_windows_engine_production_build(
     const BackendProductionCapability& backend,

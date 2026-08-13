@@ -42,6 +42,14 @@ using WindowsEngineProductionDependenciesFactory = std::function<std::optional<
         const BackendProductionCapability&,
         const FlutterProductionPluginAttachment&, std::string&)>;
 
+// Validates the strict, engine-owned D3D12 preview seam used by the
+// preview-only provider builder. Kept as an internal platform contract so the
+// individual bootstrap failure is observable and regression-testable.
+[[nodiscard]] bool validate_windows_d3d12_preview_build_inputs(
+    const BackendProductionCapability& backend,
+    const FlutterProductionPluginAttachment& attachment,
+    std::string& diagnostic) noexcept;
+
 // Internal Windows platform seam. The factory is owned by DigitorEngine's
 // native Windows integration, never by the consuming Flutter application.
 DigitorResult install_windows_engine_production_dependencies_factory(
