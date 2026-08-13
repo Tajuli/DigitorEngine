@@ -154,9 +154,11 @@ int32_t digitor_production_media_open(
   if (!path || path[0] == '\0' || !valid_options(options)) {
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
+#if !defined(__ANDROID__)
   if (!digitor::ffmpeg_available()) {
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
+#endif
 
   return guard([&]() -> DigitorResult {
     digitor::DecoderOptions resolved{};
