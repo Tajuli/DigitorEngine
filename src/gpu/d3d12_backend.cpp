@@ -12,6 +12,7 @@
 #include <climits>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <span>
 #include <string_view>
@@ -618,38 +619,21 @@ public:
     out.resources = D3D12ProductionResources{device_.Get(), queue_.Get()};
     auto* backend = const_cast<D3DBackend*>(this);
     try {
-      auto converter = std::make_shared<WindowsD3D12YuvConverter>(
-          device_.Get(), this, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
-          [backend](void*, void* output_resource,
-                    const WindowsZeroCopySurface& surface,
-                    DigitorPixelFormat output_format,
-                    std::uint64_t identity) -> ProcessedGpuFramePtr {
-            if (!output_resource || output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
-              return {};
-            auto owner = std::make_shared<D3DPreviewOwner>();
-            owner->output = static_cast<ID3D12Resource*>(output_resource);
-            owner->output_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            owner->upstream = surface.lifetime;
-            owner->tracked_owner = true;
-            ++d3d_live.owners;
-            GpuFrameMetadata metadata{};
-            metadata.width = surface.width;
-            metadata.height = surface.height;
-            metadata.format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
-            metadata.timestamp = surface.timestamp_us;
-            metadata.color_metadata = "linear-rgba32f";
-            auto frame = std::make_shared<ProcessedGpuFrame>(
-                backend, DIGITOR_RENDERER_D3D12, std::move(metadata), identity,
-                std::static_pointer_cast<void>(owner),
-                std::make_shared<std::atomic_bool>(true), false);
-            backend->bind_frame_context_lifetime(frame);
-            return frame;
-          });
-      auto importer = std::make_shared<WindowsD3D12ZeroCopyImporter>(
-          device_.Get(), converter->callback(), DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT);
+      // Register the renderer-owned import seam without eagerly constructing
+      // the D3D12 YUV pipeline. Flutter production-host registration happens
+      // during engine bootstrap and must not be disabled just because media
+      // conversion resources have not been created yet. The converter/importer
+      // are initialized on the first real decoder surface and then reused.
+      auto import_mutex = std::make_shared<std::mutex>();
+      auto converter =
+          std::make_shared<std::shared_ptr<WindowsD3D12YuvConverter>>();
+      auto importer =
+          std::make_shared<std::shared_ptr<WindowsD3D12ZeroCopyImporter>>();
+      auto* device = device_.Get();
       out.native_media_import =
-          [importer](const ZeroCopyImportRequest& request,
-                     ProcessedGpuFramePtr& frame) noexcept {
+          [backend, device, import_mutex, converter, importer](
+              const ZeroCopyImportRequest& request,
+              ProcessedGpuFramePtr& frame) noexcept {
             frame.reset();
             if (!request.surface ||
                 request.renderer_backend != DIGITOR_RENDERER_D3D12 ||
@@ -658,39 +642,100 @@ public:
               return DIGITOR_RESULT_INVALID_ARGUMENT;
             const auto& descriptor = request.surface->descriptor();
             if (descriptor.platform != NativeMediaPlatform::windows ||
-                descriptor.handle_type != NativeMediaHandleType::dxgi_shared_handle ||
+                descriptor.handle_type !=
+                    NativeMediaHandleType::dxgi_shared_handle ||
                 (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
                  descriptor.pixel_format != NativeMediaPixelFormat::p010))
               return DIGITOR_RESULT_UNSUPPORTED;
-            WindowsZeroCopySurface surface{};
-            surface.struct_size = sizeof(surface);
-            surface.api_version = 1;
-            surface.format = descriptor.pixel_format == NativeMediaPixelFormat::p010
-                                 ? WindowsZeroCopyFormat::p010
-                                 : WindowsZeroCopyFormat::nv12;
-            surface.width = descriptor.width;
-            surface.height = descriptor.height;
-            surface.array_slice = descriptor.array_slice;
-            surface.shared_handle = descriptor.native_handle;
-            surface.decoder_device = descriptor.native_device;
-            surface.timestamp_us = descriptor.timestamp_us;
-            surface.acquire_fence_handle = descriptor.acquire_sync.handle;
-            surface.acquire_fence_value = descriptor.acquire_sync.value;
-            surface.color.matrix = descriptor.color.matrix == 9
-                                       ? WindowsYuvMatrix::bt2020_ncl
-                                       : (descriptor.color.matrix == 1
-                                              ? WindowsYuvMatrix::bt709
-                                              : WindowsYuvMatrix::bt601);
-            surface.color.chroma_siting = descriptor.color.chroma_location == 2
-                                              ? WindowsChromaSiting::center
-                                              : (descriptor.color.chroma_location == 3
-                                                     ? WindowsChromaSiting::top_left
-                                                     : WindowsChromaSiting::left);
-            surface.color.full_range = descriptor.color.full_range != 0;
-            surface.color.primaries = descriptor.color.primaries;
-            surface.color.transfer = descriptor.color.transfer;
-            surface.lifetime = request.surface;
-            return importer->import(surface, frame);
+
+            try {
+              // WindowsD3D12YuvConverter owns a single allocator/list/descriptor
+              // heap, so serialize imports as well as first-use initialization.
+              std::lock_guard<std::mutex> lock(*import_mutex);
+              if (!*importer) {
+                auto created_converter =
+                    std::make_shared<WindowsD3D12YuvConverter>(
+                        device, backend, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                        [backend](void*, void* output_resource,
+                                  const WindowsZeroCopySurface& surface,
+                                  DigitorPixelFormat output_format,
+                                  std::uint64_t identity)
+                            -> ProcessedGpuFramePtr {
+                          if (!output_resource ||
+                              output_format !=
+                                  DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+                            return {};
+                          auto owner = std::make_shared<D3DPreviewOwner>();
+                          owner->output =
+                              static_cast<ID3D12Resource*>(output_resource);
+                          owner->output_state =
+                              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                          owner->upstream = surface.lifetime;
+                          owner->tracked_owner = true;
+                          ++d3d_live.owners;
+                          GpuFrameMetadata metadata{};
+                          metadata.width = surface.width;
+                          metadata.height = surface.height;
+                          metadata.format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+                          metadata.timestamp = surface.timestamp_us;
+                          metadata.color_metadata = "linear-rgba32f";
+                          auto output_frame =
+                              std::make_shared<ProcessedGpuFrame>(
+                                  backend, DIGITOR_RENDERER_D3D12,
+                                  std::move(metadata), identity,
+                                  std::static_pointer_cast<void>(owner),
+                                  std::make_shared<std::atomic_bool>(true),
+                                  false);
+                          backend->bind_frame_context_lifetime(output_frame);
+                          return output_frame;
+                        });
+                auto created_importer =
+                    std::make_shared<WindowsD3D12ZeroCopyImporter>(
+                        device, created_converter->callback(),
+                        DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT);
+                *converter = std::move(created_converter);
+                *importer = std::move(created_importer);
+              }
+
+              WindowsZeroCopySurface surface{};
+              surface.struct_size = sizeof(surface);
+              surface.api_version = 1;
+              surface.format =
+                  descriptor.pixel_format == NativeMediaPixelFormat::p010
+                      ? WindowsZeroCopyFormat::p010
+                      : WindowsZeroCopyFormat::nv12;
+              surface.width = descriptor.width;
+              surface.height = descriptor.height;
+              surface.array_slice = descriptor.array_slice;
+              surface.shared_handle = descriptor.native_handle;
+              surface.decoder_device = descriptor.native_device;
+              surface.timestamp_us = descriptor.timestamp_us;
+              surface.acquire_fence_handle = descriptor.acquire_sync.handle;
+              surface.acquire_fence_value = descriptor.acquire_sync.value;
+              surface.color.matrix =
+                  descriptor.color.matrix == 9
+                      ? WindowsYuvMatrix::bt2020_ncl
+                      : (descriptor.color.matrix == 1
+                             ? WindowsYuvMatrix::bt709
+                             : WindowsYuvMatrix::bt601);
+              surface.color.chroma_siting =
+                  descriptor.color.chroma_location == 2
+                      ? WindowsChromaSiting::center
+                      : (descriptor.color.chroma_location == 3
+                             ? WindowsChromaSiting::top_left
+                             : WindowsChromaSiting::left);
+              surface.color.full_range = descriptor.color.full_range != 0;
+              surface.color.primaries = descriptor.color.primaries;
+              surface.color.transfer = descriptor.color.transfer;
+              surface.lifetime = request.surface;
+              return (*importer)->import(surface, frame);
+            } catch (const std::bad_alloc&) {
+              frame.reset();
+              return DIGITOR_RESULT_OUT_OF_MEMORY;
+            } catch (...) {
+              frame.reset();
+              return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+            }
           };
       out.native_preview_descriptor =
           [backend](const ProcessedGpuFramePtr& frame, std::uint64_t generation,
