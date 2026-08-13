@@ -17,23 +17,28 @@ final class DigitorProductionMediaSnapshot {
   final DigitorProductionDecodedFrameInfo firstFrame;
   final DigitorProductionNativeSurface? nativeSurface;
 
-  /// True when the selected renderer is GPU-backed. In this mode decode is
-  /// opened with zero-copy required and CPU fallback disabled so an already
-  /// selected GPU backend can never silently switch processing to CPU.
+  /// True when this media facade was opened in explicit strict GPU mode.
+  /// Strict mode requires zero-copy native decode and disables CPU-copy
+  /// fallback for this source.
   final bool strictGpuPath;
 }
 
 /// Engine-owned production media facade used by Flutter applications.
 ///
-/// Applications provide only the selected renderer and media path. Decode
-/// policy, frame probing and native-surface ownership stay inside the engine
-/// SDK. This keeps app code at the UI/command boundary and prevents a Flutter
-/// caller from accidentally enabling a CPU copy after GPU selection.
+/// Applications provide the selected renderer and media path. This facade is
+/// tolerant by default because editor workspaces use it for auxiliary metadata
+/// and first-frame probing. Callers that explicitly need a strict native-surface
+/// probe can set [requireZeroCopy] to true. Registered production preview/export
+/// bypasses this facade and keeps its own strict GPU policy.
 final class DigitorProductionMediaPipeline {
-  DigitorProductionMediaPipeline({required DigitorRendererInfo renderer})
-    : _renderer = renderer;
+  DigitorProductionMediaPipeline({
+    required DigitorRendererInfo renderer,
+    bool requireZeroCopy = false,
+  }) : _renderer = renderer,
+       _requireZeroCopy = requireZeroCopy;
 
   final DigitorRendererInfo _renderer;
+  final bool _requireZeroCopy;
   DigitorProductionMediaSource? _source;
   DigitorProductionMediaSnapshot? _snapshot;
   bool _closed = false;
@@ -47,7 +52,7 @@ final class DigitorProductionMediaPipeline {
       throw ArgumentError.value(path, 'path', 'must not be empty');
     }
 
-    final strictGpuPath = _renderer.isGpu;
+    final strictGpuPath = _renderer.isGpu && _requireZeroCopy;
     DigitorProductionMediaSource? next;
     try {
       next = DigitorProductionMediaSource.open(
