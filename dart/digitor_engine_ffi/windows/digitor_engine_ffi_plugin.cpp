@@ -54,16 +54,51 @@ FlutterDesktopPixelFormat FlutterPixelFormat(std::int64_t pixel_format) {
 struct HandleLease {
   enum class Kind { kNone, kWin32Handle, kComObject } kind{Kind::kNone};
   void* value{};
+
+  ~HandleLease() {
+    if (!value) return;
+    if (kind == Kind::kWin32Handle) {
+      CloseHandle(static_cast<HANDLE>(value));
+    } else if (kind == Kind::kComObject) {
+      static_cast<IUnknown*>(value)->Release();
+    }
+    value = nullptr;
+    kind = Kind::kNone;
+  }
 };
 
 void ReleaseLease(void* context) {
-  std::unique_ptr<HandleLease> lease(static_cast<HandleLease*>(context));
-  if (!lease || !lease->value) return;
-  if (lease->kind == HandleLease::Kind::kWin32Handle) {
-    CloseHandle(static_cast<HANDLE>(lease->value));
-  } else if (lease->kind == HandleLease::Kind::kComObject) {
-    static_cast<IUnknown*>(lease->value)->Release();
+  delete static_cast<HandleLease*>(context);
+}
+
+std::unique_ptr<HandleLease> RetainNativeHandle(
+    std::int64_t handle_type, std::uint64_t native_handle) {
+  if (!native_handle) return nullptr;
+  auto lease = std::make_unique<HandleLease>();
+  if (handle_type == kDxgiSharedHandle) {
+    HANDLE duplicate = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(),
+                         reinterpret_cast<HANDLE>(native_handle),
+                         GetCurrentProcess(), &duplicate, 0, FALSE,
+                         DUPLICATE_SAME_ACCESS)) {
+      return nullptr;
+    }
+    lease->kind = HandleLease::Kind::kWin32Handle;
+    lease->value = duplicate;
+    return lease;
   }
+  if (handle_type == kD3d11Texture) {
+    auto* object = reinterpret_cast<IUnknown*>(native_handle);
+    object->AddRef();
+    lease->kind = HandleLease::Kind::kComObject;
+    lease->value = object;
+    return lease;
+  }
+  return nullptr;
+}
+
+void ReleaseOwnedLease(std::unique_ptr<HandleLease>& lease) {
+  lease.reset();
 }
 
 }  // namespace
@@ -71,7 +106,7 @@ void ReleaseLease(void* context) {
 struct DigitorEngineFfiPlugin::TextureState {
   std::mutex mutex;
   std::int64_t handle_type{};
-  std::uint64_t native_handle{};
+  std::unique_ptr<HandleLease> retained_handle;
   std::size_t width{};
   std::size_t height{};
   FlutterDesktopPixelFormat pixel_format{kFlutterDesktopPixelFormatNone};
@@ -81,10 +116,14 @@ struct DigitorEngineFfiPlugin::TextureState {
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
   std::unique_ptr<flutter::TextureVariant> texture;
 
+  ~TextureState() { ReleaseOwnedLease(retained_handle); }
+
   const FlutterDesktopGpuSurfaceDescriptor* ObtainDescriptor(
       std::size_t requested_width, std::size_t requested_height) {
     std::scoped_lock lock(mutex);
-    if (!native_handle || !generation || !width || !height) return nullptr;
+    if (!retained_handle || !retained_handle->value || !generation ||
+        !width || !height)
+      return nullptr;
     if (requested_width && requested_width != width) return nullptr;
     if (requested_height && requested_height != height) return nullptr;
 
@@ -93,7 +132,7 @@ struct DigitorEngineFfiPlugin::TextureState {
     if (handle_type == kDxgiSharedHandle) {
       HANDLE duplicate = nullptr;
       if (!DuplicateHandle(GetCurrentProcess(),
-                           reinterpret_cast<HANDLE>(native_handle),
+                           static_cast<HANDLE>(retained_handle->value),
                            GetCurrentProcess(), &duplicate, 0, FALSE,
                            DUPLICATE_SAME_ACCESS)) {
         return nullptr;
@@ -102,7 +141,7 @@ struct DigitorEngineFfiPlugin::TextureState {
       lease->value = duplicate;
       flutter_handle = duplicate;
     } else if (handle_type == kD3d11Texture) {
-      auto* object = reinterpret_cast<IUnknown*>(native_handle);
+      auto* object = static_cast<IUnknown*>(retained_handle->value);
       object->AddRef();
       lease->kind = HandleLease::Kind::kComObject;
       lease->value = object;
@@ -287,6 +326,21 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
                     "Frame is stale, protected, not ready, or incompatible with the registered texture.");
       return;
     }
+    const auto flutter_pixel_format = FlutterPixelFormat(*pixel_format);
+    if (flutter_pixel_format == kFlutterDesktopPixelFormatNone) {
+      result->Error("unsupported_pixel_format",
+                    "Windows GPU surface requires RGBA8 or BGRA8.");
+      return;
+    }
+    auto retained = RetainNativeHandle(
+        *handle_type, static_cast<std::uint64_t>(*native_handle));
+    if (!retained) {
+      result->Error(
+          "frame_handle_retain_failed",
+          "Windows could not retain the GPU resource before the engine released the preview generation.");
+      return;
+    }
+    std::unique_ptr<HandleLease> previous_handle;
     {
       std::scoped_lock lock(state->mutex);
       if (static_cast<std::uint64_t>(*generation) <= state->generation) {
@@ -303,14 +357,16 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
         result->Error("context_mismatch", "Preview context identity changed.");
         return;
       }
-      state->native_handle = static_cast<std::uint64_t>(*native_handle);
+      previous_handle = std::move(state->retained_handle);
+      state->retained_handle = std::move(retained);
       state->width = static_cast<std::size_t>(*width);
       state->height = static_cast<std::size_t>(*height);
       state->generation = static_cast<std::uint64_t>(*generation);
       state->device_identity = device_identity ? static_cast<std::uint64_t>(*device_identity) : 0;
       state->context_identity = context_identity ? static_cast<std::uint64_t>(*context_identity) : 0;
-      state->pixel_format = FlutterPixelFormat(*pixel_format);
+      state->pixel_format = flutter_pixel_format;
     }
+    ReleaseOwnedLease(previous_handle);
     if (!texture_registrar_->MarkTextureFrameAvailable(*texture_id)) {
       result->Error("frame_signal_failed",
                     "Flutter texture registrar rejected the frame signal.");
