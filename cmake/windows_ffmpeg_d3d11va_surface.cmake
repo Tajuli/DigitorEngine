@@ -10,7 +10,7 @@ if(WIN32 AND TARGET digitor_engine AND TARGET FFmpeg::FFmpeg)
     add_executable(digitor_ffmpeg_d3d11va_surface_contract
       ${CMAKE_CURRENT_LIST_DIR}/../tests/test_ffmpeg_d3d11va_surface_contract.cpp)
     target_link_libraries(digitor_ffmpeg_d3d11va_surface_contract
-      PRIVATE Digitor::Engine)
+      PRIVATE Digitor::Engine d3d11 d3d12 dxgi)
     add_test(NAME digitor_ffmpeg_d3d11va_surface_contract
       COMMAND digitor_ffmpeg_d3d11va_surface_contract)
   endif()
