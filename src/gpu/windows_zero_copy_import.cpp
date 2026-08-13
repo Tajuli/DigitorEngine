@@ -45,19 +45,25 @@ struct WindowsD3D12ZeroCopyImporter::Impl {
   void* device{};
 #endif
   WindowsD3D12ConvertCallback converter;
+  DigitorPixelFormat expected_output_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
 };
 
 WindowsD3D12ZeroCopyImporter::WindowsD3D12ZeroCopyImporter(
-    void* d3d12_device, WindowsD3D12ConvertCallback converter)
+    void* d3d12_device, WindowsD3D12ConvertCallback converter,
+    DigitorPixelFormat expected_output_format)
     : impl_(std::make_unique<Impl>()) {
   if (!d3d12_device || !converter)
     throw std::invalid_argument("D3D12 device and converter are required");
+  if (expected_output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+      expected_output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+    throw std::invalid_argument("D3D12 import output must be RGBA16F or RGBA32F");
 #ifdef _WIN32
   impl_->device = static_cast<ID3D12Device*>(d3d12_device);
 #else
   impl_->device = d3d12_device;
 #endif
   impl_->converter = std::move(converter);
+  impl_->expected_output_format = expected_output_format;
 }
 
 WindowsD3D12ZeroCopyImporter::~WindowsD3D12ZeroCopyImporter() = default;
@@ -117,15 +123,16 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
     if (!out || out->backend() != DIGITOR_RENDERER_D3D12 ||
         out->metadata().width != surface.width ||
         out->metadata().height != surface.height ||
-        out->metadata().format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||
+        out->metadata().format != impl_->expected_output_format ||
         out->metadata().timestamp != surface.timestamp_us) {
       out.reset();
       qualification.diagnostic =
-          "converter returned a frame that violates the RGBA16F contract";
+          "converter returned a frame that violates the requested floating-point contract";
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }
     qualification.gpu_conversion_submitted = true;
-    qualification.rgba16f_output = true;
+    qualification.rgba16f_output =
+        impl_->expected_output_format == DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
     qualification.diagnostic.clear();
     return DIGITOR_RESULT_OK;
   } catch (const std::bad_alloc&) {
