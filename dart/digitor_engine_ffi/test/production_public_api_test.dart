@@ -2,19 +2,22 @@ import 'package:digitor_engine_ffi/digitor_engine_ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('production exceptions expose symbolic native result and diagnostic', () {
-    const error = DigitorProductionException(
-      'preview',
-      100,
-      'decoded timestamps moved backwards without a seek',
-    );
+  test(
+    'production exceptions expose symbolic native result and diagnostic',
+    () {
+      const error = DigitorProductionException(
+        'preview',
+        100,
+        'decoded timestamps moved backwards without a seek',
+      );
 
-    expect(error.symbolicCode, 'DIGITOR_RESULT_INTERNAL_ERROR');
-    expect(error.toString(), contains('operation: preview'));
-    expect(error.toString(), contains('result: 100'));
-    expect(error.toString(), contains('DIGITOR_RESULT_INTERNAL_ERROR'));
-    expect(error.toString(), contains('decoded timestamps moved backwards'));
-  });
+      expect(error.symbolicCode, 'DIGITOR_RESULT_INTERNAL_ERROR');
+      expect(error.toString(), contains('operation: preview'));
+      expect(error.toString(), contains('result: 100'));
+      expect(error.toString(), contains('DIGITOR_RESULT_INTERNAL_ERROR'));
+      expect(error.toString(), contains('decoded timestamps moved backwards'));
+    },
+  );
 
   test('production pixel formats match the native ABI', () {
     expect(DigitorPixelFormat.rgba32Float.nativeValue, 1);
