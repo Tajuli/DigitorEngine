@@ -67,6 +67,12 @@ public:
     std::shared_ptr<T> get(FrameNumber key) {
         auto i=index_.find(key); if(i==index_.end()) return {}; entries_.splice(entries_.begin(),entries_,i->second); return i->second->second;
     }
+    template<class Predicate> std::shared_ptr<T> find(Predicate predicate) {
+        for(auto i=entries_.begin();i!=entries_.end();++i)if(predicate(*i->second)){
+            auto value=i->second;entries_.splice(entries_.begin(),entries_,i);return value;
+        }
+        return {};
+    }
     void erase(FrameNumber key){auto i=index_.find(key);if(i!=index_.end()){entries_.erase(i->second);index_.erase(i);}}
     void clear(){entries_.clear();index_.clear();} std::size_t size()const{return entries_.size();}
 private:
@@ -77,6 +83,13 @@ private:
 class VideoDecoder { public:
     virtual ~VideoDecoder()=default;
     virtual std::shared_ptr<VideoFrame> decode(FrameNumber)=0;
+    // Random-access media-time lookup. FrameNumber remains local to the
+    // current decode epoch after seek; callers must not derive media time from
+    // it. The selected frame is the first decoded frame whose PTS is at or
+    // after pts_us (or an exact cached match).
+    virtual std::shared_ptr<VideoFrame> decode_at_timestamp(std::int64_t pts_us) {
+        seek(pts_us); return decode(0);
+    }
     virtual void seek(std::int64_t pts_us)=0;
     virtual DecoderInfo info()const=0;
     // Authoritative full-resolution sample access used by qualifier eyedroppers.

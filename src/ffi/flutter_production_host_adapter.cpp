@@ -88,10 +88,9 @@ struct FlutterProductionHostAdapter::Impl {
     // Preview attachment is intentionally independent of export. Encoder
     // callbacks, codec selection and immutable export snapshots are validated
     // only when V1/V2 export is invoked.
-    return inputs.decoder_factory && inputs.frame_resolver &&
+    return inputs.decoder_factory &&
            inputs.preview_session && inputs.texture_descriptor_builder &&
-           inputs.preview_target_binder && inputs.fps_num > 0 &&
-           inputs.fps_den > 0 &&
+           inputs.preview_target_binder &&
            native_preview_capabilities_valid(inputs.preview_capabilities);
   }
 
@@ -207,7 +206,6 @@ struct FlutterProductionHostAdapter::Impl {
 
     std::string message;
     ProductionMediaGraphRuntime* runtime = nullptr;
-    FrameNumber frame_number{};
     std::uint64_t current_generation{};
     try {
       {
@@ -220,12 +218,11 @@ struct FlutterProductionHostAdapter::Impl {
         }
         runtime = p->runtime.get();
         current_generation = ++p->generation;
-        frame_number = p->inputs.frame_resolver(timestamp_us);
       }
 
       ProcessedGpuFramePtr frame;
-      const auto render_result = runtime->preview(
-          frame_number, &frame, &message);
+      const auto render_result = runtime->preview_at_timestamp(
+          timestamp_us, &frame, &message);
       if (render_result != DIGITOR_RESULT_OK) {
         write_diagnostic(diagnostic, diagnostic_capacity, message);
         return render_result;

@@ -347,10 +347,18 @@ DigitorResult digitor_flutter_production_preview(
         std::lock_guard registry_lock(g_flutter_sessions_mutex);
         if (!registered(session)) return DIGITOR_RESULT_RESOURCE_IN_USE;
         std::lock_guard session_lock(session->mutex);
-        if (!session->media_open || !session->graph)
+        if (!session->media_open || !session->graph) {
+            session->last_error =
+                "production preview requires open media and a bound node graph";
             return DIGITOR_RESULT_NOT_INITIALIZED;
-        if (session->active_operation || session->has_current_preview)
+        }
+        if (session->active_operation || session->has_current_preview) {
+            session->last_error =
+                "production preview already has an active or unconsumed frame";
             return DIGITOR_RESULT_RESOURCE_IN_USE;
+        }
+        // An operation must never inherit a diagnostic from an earlier call.
+        session->last_error.clear();
         session->active_operation = true;
         host = session->host;
         graph = session->graph;

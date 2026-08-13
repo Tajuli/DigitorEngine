@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <string>
 
 namespace {
 
@@ -12,9 +14,12 @@ DigitorResult open_media(void*, const char* path, char*, std::uint32_t) {
 DigitorResult render_frame(void*, DigitorFlutterProductionRenderMode,
                            DigitorNodeGraph*, std::uint64_t, std::uint64_t,
                            std::int64_t, std::uint32_t, std::uint32_t,
-                           DigitorNativeGpuTextureDescriptor*, char*,
-                           std::uint32_t) {
-  return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+                           DigitorNativeGpuTextureDescriptor*, char* diagnostic,
+                           std::uint32_t capacity) {
+  constexpr char message[] = "native D3D12 preview operation failed";
+  if (diagnostic && capacity >= sizeof(message))
+    std::memcpy(diagnostic, message, sizeof(message));
+  return DIGITOR_RESULT_INTERNAL_ERROR;
 }
 
 DigitorResult export_media(void*, DigitorNodeGraph*, std::uint64_t,
@@ -66,11 +71,41 @@ int main() {
          DIGITOR_RESULT_OK);
   assert(session != nullptr);
 
+  DigitorNodeGraph* graph = nullptr;
+  assert(digitor_node_graph_create(&graph) == DIGITOR_RESULT_OK);
+  assert(digitor_flutter_production_bind_node_graph(session, graph, 1, 1) ==
+         DIGITOR_RESULT_OK);
+  DigitorNativeGpuTextureDescriptor texture{};
+  assert(digitor_flutter_production_preview(session, 0, 16, 16, &texture) ==
+         DIGITOR_RESULT_INTERNAL_ERROR);
+  std::uint32_t diagnostic_size = 0;
+  assert(digitor_flutter_production_get_last_error(
+             session, nullptr, &diagnostic_size) == DIGITOR_RESULT_OK);
+  std::string diagnostic(diagnostic_size, '\0');
+  assert(digitor_flutter_production_get_last_error(
+             session, diagnostic.data(), &diagnostic_size) == DIGITOR_RESULT_OK);
+  assert(diagnostic.c_str() ==
+         std::string("native D3D12 preview operation failed"));
+
+  DigitorFlutterPreviewTarget target{};
+  target.struct_size = sizeof(target);
+  target.api_version = DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION;
+  target.native_target_handle = 1;
+  target.width = target.height = 16;
+  target.handle_type = DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE;
+  assert(digitor_flutter_production_set_preview_target(session, &target) ==
+         DIGITOR_RESULT_OK);
+  diagnostic_size = 0;
+  assert(digitor_flutter_production_get_last_error(
+             session, nullptr, &diagnostic_size) == DIGITOR_RESULT_OK);
+  assert(diagnostic_size == 1);
+
   // A plugin host cannot be detached while a Dart-facing production session
   // still owns it. This guards the Flutter hot-restart/detach lifetime rule.
   assert(digitor_flutter_production_unregister_host(&owner) ==
          DIGITOR_RESULT_RESOURCE_IN_USE);
   assert(digitor_flutter_production_destroy(session) == DIGITOR_RESULT_OK);
+  assert(digitor_node_graph_destroy(graph) == DIGITOR_RESULT_OK);
   assert(digitor_flutter_production_unregister_host(&owner) == DIGITOR_RESULT_OK);
   assert(digitor_flutter_production_host_registered() == 0);
 

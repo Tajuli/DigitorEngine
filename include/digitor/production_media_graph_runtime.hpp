@@ -54,6 +54,9 @@ class ProductionMediaGraphRuntime final {
       FrameNumber frame_number,
       ProcessedGpuFramePtr* out_frame = nullptr,
       std::string* diagnostic = nullptr) noexcept;
+  [[nodiscard]] DigitorResult preview_at_timestamp(
+      std::int64_t timestamp_us, ProcessedGpuFramePtr* out_frame = nullptr,
+      std::string* diagnostic = nullptr) noexcept;
 
   // Encodes the requested source frames in order. The caller determines the
   // frame range/timeline sampling, while decode, graph processing and encoding
@@ -91,6 +94,9 @@ class ProductionMediaGraphRuntime final {
   [[nodiscard]] DigitorResult render_frame(
       FrameNumber frame_number,
       RenderedFrame& output,
+      std::string* diagnostic) noexcept;
+  [[nodiscard]] DigitorResult render_frame_at_timestamp(
+      std::int64_t timestamp_us, RenderedFrame& output,
       std::string* diagnostic) noexcept;
   static void set_diagnostic(std::string* output, std::string value) noexcept;
 
