@@ -6,11 +6,9 @@
 #include <memory>
 #include <new>
 #include <sstream>
-#include <vector>
 
 #if defined(_WIN32) && defined(DIGITOR_HAS_FFMPEG)
 #include <d3d11_4.h>
-#include <d3d11sdklayers.h>
 #include <dxgi1_2.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -79,68 +77,6 @@ struct SharingCapabilities {
 };
 
 std::string stable_debug_message(std::string text);
-
-struct TextureCreationProbe {
-  const char *name{};
-  HRESULT result{E_FAIL};
-  std::string messages;
-};
-
-std::string info_queue_messages(ID3D11InfoQueue *queue) {
-  if (!queue)
-    return "debug layer unavailable (ID3D11InfoQueue not exposed)";
-  std::ostringstream out;
-  const UINT64 count = queue->GetNumStoredMessagesAllowedByRetrievalFilter();
-  if (!count)
-    return "no new D3D11 InfoQueue messages";
-  for (UINT64 index = 0; index < count; ++index) {
-    SIZE_T size = 0;
-    if (FAILED(queue->GetMessage(index, nullptr, &size)) || !size)
-      continue;
-    std::vector<unsigned char> storage(size);
-    auto *message = reinterpret_cast<D3D11_MESSAGE *>(storage.data());
-    if (FAILED(queue->GetMessage(index, message, &size)))
-      continue;
-    if (out.tellp() > 0)
-      out << " | ";
-    out << "D3D11_MESSAGE_ID=" << static_cast<unsigned>(message->ID)
-        << ", severity=" << static_cast<unsigned>(message->Severity)
-        << ", category=" << static_cast<unsigned>(message->Category)
-        << ", description=";
-    if (message->pDescription)
-      out.write(
-          message->pDescription,
-          static_cast<std::streamsize>(
-              message->DescriptionByteLength &&
-                      message->pDescription[message->DescriptionByteLength -
-                                            1] == '\0'
-                  ? message->DescriptionByteLength - 1
-                  : message->DescriptionByteLength));
-  }
-  return stable_debug_message(out.str());
-}
-
-TextureCreationProbe
-probe_texture_creation(ID3D11Device *device, ID3D11InfoQueue *queue,
-                       const char *name, const D3D11_TEXTURE2D_DESC &desc,
-                       ID3D11Texture2D **texture = nullptr) {
-  if (queue)
-    queue->ClearStoredMessages();
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> local;
-  TextureCreationProbe probe{
-      name, device->CreateTexture2D(&desc, nullptr, &local), {}};
-  probe.messages = info_queue_messages(queue);
-  if (texture && SUCCEEDED(probe.result))
-    *texture = local.Detach();
-  return probe;
-}
-
-void append_probe(std::ostringstream &out, const TextureCreationProbe &probe) {
-  out << "; matrix." << probe.name << ".HRESULT=0x" << std::hex
-      << std::uppercase << std::setw(8) << std::setfill('0')
-      << static_cast<std::uint32_t>(probe.result) << std::dec << "; matrix."
-      << probe.name << ".InfoQueue={" << probe.messages << "}";
-}
 
 SharingCapabilities sharing_capabilities(ID3D11Device *device) noexcept {
   SharingCapabilities result;
@@ -215,7 +151,8 @@ normalized_d3d11va_interop_desc(const D3D11_TEXTURE2D_DESC &source) noexcept {
   // required and is rejected for shared planar textures by some drivers.
   destination.BindFlags = 0;
   destination.CPUAccessFlags = 0;
-  destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+                          D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
   return destination;
 }
 
@@ -294,6 +231,7 @@ DigitorResult hr_result(HRESULT hr) noexcept {
 bool make_shareable_slice_copy(ID3D11Texture2D *source,
                                std::uint32_t source_slice,
                                ComPtr<ID3D11Texture2D> &destination,
+                               HRESULT &creation_hr, HRESULT &keyed_mutex_hr,
                                std::string &diagnostic) {
   D3D11_TEXTURE2D_DESC source_desc{};
   source->GetDesc(&source_desc);
@@ -308,37 +246,8 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
     return false;
   }
   const auto destination_desc = normalized_d3d11va_interop_desc(source_desc);
-  auto shader_desc = destination_desc;
-  shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  auto keyed_desc = destination_desc;
-  keyed_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-  auto keyed_shader_desc = keyed_desc;
-  keyed_shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  auto legacy_desc = destination_desc;
-  legacy_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-  ComPtr<ID3D11InfoQueue> info_queue;
-  device.As(&info_queue);
-  // Qualify every sharing combination independently on the actual decoder
-  // dimensions. Clear the InfoQueue around each call so a driver validation
-  // reason is unambiguously associated with one matrix case. Case A remains
-  // the production descriptor until a real D3D11/D3D12 run proves a different
-  // contract end-to-end; a successful keyed-mutex probe is not selected here.
-  const auto bind0 = probe_texture_creation(
-      device.Get(), info_queue.Get(), "A.NTHANDLE.BindFlags=0",
-      destination_desc, destination.ReleaseAndGetAddressOf());
-  const auto shader = probe_texture_creation(
-      device.Get(), info_queue.Get(), "B.NTHANDLE.BindFlags=SHADER_RESOURCE",
-      shader_desc);
-  const auto keyed0 =
-      probe_texture_creation(device.Get(), info_queue.Get(),
-                             "C.NTHANDLE_KEYEDMUTEX.BindFlags=0", keyed_desc);
-  const auto keyed_shader = probe_texture_creation(
-      device.Get(), info_queue.Get(),
-      "D.NTHANDLE_KEYEDMUTEX.BindFlags=SHADER_RESOURCE", keyed_shader_desc);
-  const auto legacy =
-      probe_texture_creation(device.Get(), info_queue.Get(),
-                             "E.LEGACY_SHARED.BindFlags=0", legacy_desc);
-  const HRESULT hr = bind0.result;
+  const HRESULT hr = creation_hr = device->CreateTexture2D(
+      &destination_desc, nullptr, &destination);
   if (FAILED(hr) || !destination) {
     UINT support = 0;
     const HRESULT support_hr =
@@ -348,15 +257,19 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
         hr, source_desc, destination_desc, device->GetFeatureLevel(),
         support_hr, support);
     append_capabilities(qualification, sharing_capabilities(device.Get()));
-    append_probe(qualification, bind0);
-    append_probe(qualification, shader);
-    append_probe(qualification, keyed0);
-    append_probe(qualification, keyed_shader);
-    append_probe(qualification, legacy);
-    qualification << "; production.BindFlags=0; production.MiscFlags=0x800"
-                     "; synchronization=shared D3D11/D3D12 fence (keyed mutex "
-                     "not selected)";
+    qualification << "; production.BindFlags=0; production.MiscFlags=0x900";
     diagnostic = qualification.str();
+    return false;
+  }
+  ComPtr<IDXGIKeyedMutex> keyed_mutex;
+  keyed_mutex_hr = destination.As(&keyed_mutex);
+  if (FAILED(keyed_mutex_hr) || !keyed_mutex) {
+    std::ostringstream out;
+    out << "Case C texture does not expose IDXGIKeyedMutex: HRESULT=0x"
+        << std::hex << std::uppercase
+        << static_cast<std::uint32_t>(keyed_mutex_hr);
+    diagnostic = out.str();
+    destination.Reset();
     return false;
   }
   ComPtr<ID3D11DeviceContext> context;
@@ -370,18 +283,24 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
       D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
   context->CopySubresourceRegion(destination.Get(), 0, 0, 0, 0, source,
                                  source_subresource, nullptr);
+  // KEYEDMUTEX is required by the driver for this planar NT-shareable texture,
+  // but the D3D12 consumer cannot participate in IDXGIKeyedMutex. Ownership is
+  // not transferred through a mutex key: the D3D11 copy is ordered by the
+  // shared fence below and D3D12 waits for that exact value before sampling.
   return true;
 }
 
 bool create_nt_handle(ID3D11Texture2D *texture, HANDLE &handle,
+                      HRESULT &resource_query_hr, HRESULT &create_handle_hr,
                       std::string &diagnostic) {
   ComPtr<IDXGIResource1> resource;
-  HRESULT hr = texture->QueryInterface(IID_PPV_ARGS(&resource));
+  HRESULT hr = resource_query_hr =
+      texture->QueryInterface(IID_PPV_ARGS(&resource));
   if (FAILED(hr) || !resource) {
     diagnostic = "D3D11 texture does not expose IDXGIResource1";
     return false;
   }
-  hr = resource->CreateSharedHandle(
+  hr = create_handle_hr = resource->CreateSharedHandle(
       nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
       &handle);
   if (FAILED(hr) || !handle) {
@@ -505,24 +424,40 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
 
     owner->texture = texture;
     HANDLE shared{};
+    HRESULT texture_creation_hr = S_OK;
+    HRESULT keyed_mutex_hr = E_NOINTERFACE;
+    HRESULT resource_query_hr = E_NOINTERFACE;
+    HRESULT create_handle_hr = E_FAIL;
     std::uint32_t exported_slice = slice;
     if (desc.ArraySize == 1 && slice == 0 &&
-        create_nt_handle(owner->texture.Get(), shared, out.diagnostic)) {
+        create_nt_handle(owner->texture.Get(), shared, resource_query_hr,
+                         create_handle_hr, out.diagnostic)) {
       out.shareable_texture_reused = true;
       exported_slice = 0;
     } else {
       out.diagnostic.clear();
       ComPtr<ID3D11Texture2D> copy;
-      if (!make_shareable_slice_copy(texture, slice, copy, out.diagnostic))
+      if (!make_shareable_slice_copy(texture, slice, copy, texture_creation_hr,
+                                     keyed_mutex_hr, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       owner->texture = std::move(copy);
-      if (!create_nt_handle(owner->texture.Get(), shared, out.diagnostic))
+      if (!create_nt_handle(owner->texture.Get(), shared, resource_query_hr,
+                            create_handle_hr, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       out.shareable_copy_created = true;
       exported_slice = 0;
     }
     owner->handle = shared;
     out.shared_handle_created = true;
+    out.texture_creation_hresult =
+        static_cast<std::uint32_t>(texture_creation_hr);
+    out.keyed_mutex_query_hresult =
+        static_cast<std::uint32_t>(keyed_mutex_hr);
+    out.keyed_mutex_exposed = SUCCEEDED(keyed_mutex_hr);
+    out.idxgi_resource1_query_hresult =
+        static_cast<std::uint32_t>(resource_query_hr);
+    out.create_shared_handle_hresult =
+        static_cast<std::uint32_t>(create_handle_hr);
 
     std::uint64_t acquire_value = 0;
     if (!create_acquire_fence(owner->texture.Get(), owner->acquire_fence,

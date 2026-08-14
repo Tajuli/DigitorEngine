@@ -254,6 +254,22 @@ DigitorResult WindowsD3D12YuvConverter::convert(
         d.Format != expected || d.Width < s.width || d.Height < s.height)
       return DIGITOR_RESULT_INVALID_ARGUMENT;
 
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT y_support{};
+    y_support.Format = s.format == WindowsZeroCopyFormat::nv12
+                           ? DXGI_FORMAT_R8_UNORM
+                           : DXGI_FORMAT_R16_UNORM;
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT uv_support{};
+    uv_support.Format = s.format == WindowsZeroCopyFormat::nv12
+                            ? DXGI_FORMAT_R8G8_UNORM
+                            : DXGI_FORMAT_R16G16_UNORM;
+    if (FAILED(impl_->device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT, &y_support, sizeof(y_support))) ||
+        FAILED(impl_->device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT, &uv_support, sizeof(uv_support))) ||
+        !(y_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) ||
+        !(uv_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
+      return DIGITOR_RESULT_UNSUPPORTED;
+
     D3D12_RESOURCE_DESC od{};
     od.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     od.Width = s.width;
@@ -304,14 +320,27 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     impl_->list->SetComputeRoot32BitConstants(0, sizeof(Constants) / 4, &c, 0);
     impl_->list->SetComputeRootDescriptorTable(
         1, impl_->heap->GetGPUDescriptorHandleForHeapStart());
+    D3D12_RESOURCE_BARRIER input_to_srv{};
+    input_to_srv.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    input_to_srv.Transition = {
+        input, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+    impl_->list->ResourceBarrier(1, &input_to_srv);
     impl_->list->Dispatch((s.width + 7) / 8, (s.height + 7) / 8, 1);
 
-    D3D12_RESOURCE_BARRIER b{};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
-    impl_->list->ResourceBarrier(1, &b);
+    D3D12_RESOURCE_BARRIER barriers[2]{};
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barriers[0].Transition = {
+        input, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COMMON};
+    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barriers[1].Transition = {
+        output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+    impl_->list->ResourceBarrier(2, barriers);
     if (FAILED(impl_->list->Close()))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 

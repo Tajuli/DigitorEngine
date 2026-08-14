@@ -67,6 +67,13 @@ struct WindowsZeroCopyQualification {
   std::uint32_t shared_resource_compatibility_tier{};
   std::uint32_t shared_resource_compatibility_query_hresult{};
   std::uint32_t open_shared_handle_hresult{};
+  std::uint64_t opened_width{};
+  std::uint32_t opened_height{};
+  std::uint32_t opened_format{};
+  std::uint16_t opened_mip_levels{};
+  std::uint32_t opened_sample_count{};
+  std::uint32_t opened_sample_quality{};
+  std::uint32_t opened_resource_flags{};
   std::string diagnostic;
 };
 

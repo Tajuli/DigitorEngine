@@ -34,7 +34,9 @@ void verify_descriptor(DXGI_FORMAT format) {
   assert(normalized.Usage == D3D11_USAGE_DEFAULT);
   assert(normalized.BindFlags == 0);
   assert(normalized.CPUAccessFlags == 0);
-  assert(normalized.MiscFlags == D3D11_RESOURCE_MISC_SHARED_NTHANDLE);
+  assert(normalized.MiscFlags ==
+         (D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+          D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX));
 
   const auto text = digitor::format_d3d11_texture_creation_failure(
       E_INVALIDARG, decoder, normalized, D3D_FEATURE_LEVEL_11_0, S_OK,
@@ -97,12 +99,13 @@ void verify_gpu_interop(DXGI_FORMAT format) {
     std::cout << "SKIP: device cannot create source planar array\n";
     return;
   }
-  const auto destination_desc =
+  const auto production_desc =
       digitor::normalized_d3d11va_interop_desc(source_desc);
+  auto destination_desc = production_desc;
+  destination_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
   auto shader_desc = destination_desc;
   shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  auto keyed_desc = destination_desc;
-  keyed_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+  auto keyed_desc = production_desc;
   auto keyed_shader_desc = keyed_desc;
   keyed_shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   auto legacy_desc = destination_desc;
@@ -132,14 +135,13 @@ void verify_gpu_interop(DXGI_FORMAT format) {
             << static_cast<unsigned long>(keyed_shader_hr)
             << " E_legacy_shared_bind0_hresult=0x"
             << static_cast<unsigned long>(legacy_hr) << std::dec << '\n';
-  // The production contract intentionally remains case A pending results from
-  // real Windows hardware. Matrix success alone must not select keyed mutex or
-  // legacy sharing because the D3D12 consumer uses an NT handle and a fence.
-  if (FAILED(bind0_hr)) {
-    std::cout << "QUALIFICATION: production case A unavailable; matrix "
-                 "results recorded, D3D12 import not attempted\n";
+  if (FAILED(keyed_hr)) {
+    std::cout << "SKIP: production Case C unavailable; matrix results recorded\n";
     return;
   }
+  destination = keyed_destination;
+  ComPtr<IDXGIKeyedMutex> keyed_mutex;
+  assert(SUCCEEDED(destination.As(&keyed_mutex)) && keyed_mutex);
   // Exercise a non-zero decoder slice and preserve the single-slice contract.
   context11->CopySubresourceRegion(
       destination.Get(), 0, 0, 0, 0, source.Get(),

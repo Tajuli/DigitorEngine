@@ -120,18 +120,37 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
     qualification.shared_resource_opened = true;
 
     const auto desc = resource->GetDesc();
+    qualification.opened_width = desc.Width;
+    qualification.opened_height = desc.Height;
+    qualification.opened_format = static_cast<std::uint32_t>(desc.Format);
+    qualification.opened_mip_levels = desc.MipLevels;
+    qualification.opened_sample_count = desc.SampleDesc.Count;
+    qualification.opened_sample_quality = desc.SampleDesc.Quality;
+    qualification.opened_resource_flags =
+        static_cast<std::uint32_t>(desc.Flags);
     const DXGI_FORMAT expected = surface.format == WindowsZeroCopyFormat::nv12
                                      ? DXGI_FORMAT_NV12
                                      : DXGI_FORMAT_P010;
     if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
         desc.Format != expected || desc.Width < surface.width ||
         desc.Height < surface.height ||
+        desc.MipLevels != 1 || desc.SampleDesc.Count != 1 ||
+        desc.SampleDesc.Quality != 0 ||
+        (desc.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) != 0 ||
         surface.array_slice >= desc.DepthOrArraySize) {
-      qualification.diagnostic =
-          "shared resource does not match the decoder surface contract";
+      std::ostringstream diagnostic;
+      diagnostic << "shared resource does not match the decoder surface "
+                    "contract: Dimension="
+                 << static_cast<unsigned>(desc.Dimension)
+                 << ", Width=" << desc.Width << ", Height=" << desc.Height
+                 << ", Format=" << static_cast<unsigned>(desc.Format)
+                 << ", MipLevels=" << desc.MipLevels
+                 << ", SampleDesc={" << desc.SampleDesc.Count << ","
+                 << desc.SampleDesc.Quality << "}, Flags=0x" << std::hex
+                 << static_cast<unsigned>(desc.Flags);
+      qualification.diagnostic = diagnostic.str();
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    qualification.plane_views_valid = true;
 
     const auto result = impl_->converter(resource.Get(), surface, out);
     if (result != DIGITOR_RESULT_OK) {
@@ -139,6 +158,10 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
       qualification.diagnostic = "GPU YUV conversion callback failed";
       return result;
     }
+    // D3D12 SRV creation has no HRESULT. Reaching a successfully submitted
+    // Digitor conversion proves that the converter's real Y/UV plane views
+    // passed validation and were consumed by the command list.
+    qualification.plane_views_valid = true;
     if (!out || out->backend() != DIGITOR_RENDERER_D3D12 ||
         out->metadata().width != surface.width ||
         out->metadata().height != surface.height ||
