@@ -21,6 +21,7 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE
   flutter
   flutter_wrapper_plugin
   d3d11
+  d3d12
   dxgi)
 
 # DigitorEngine itself is produced by hook/build.dart as a native code asset.
