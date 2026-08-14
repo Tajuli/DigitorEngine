@@ -73,7 +73,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   const HRESULT options4_hr = device11->CheckFeatureSupport(
       D3D11_FEATURE_D3D11_OPTIONS4, &options4, sizeof(options4));
   const HRESULT options5_hr = device11->CheckFeatureSupport(
-      D3D11_FEATURE_DATA_D3D11_OPTIONS5, &options5, sizeof(options5));
+      D3D11_FEATURE_D3D11_OPTIONS5, &options5, sizeof(options5));
   std::cout << "D3D11 ExtendedResourceSharing="
             << (SUCCEEDED(options_hr) ? options.ExtendedResourceSharing : -1)
             << " ExtendedNV12SharedTextureSupported="
