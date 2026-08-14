@@ -1,9 +1,14 @@
 #include "digitor_engine_ffi_plugin.h"
 
 #include <flutter/standard_method_codec.h>
+#include <d3d11.h>
+#include <d3d11_1.h>
+#include <dxgi.h>
 #include <windows.h>
 #include <unknwn.h>
+#include <wrl/client.h>
 
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <utility>
@@ -15,12 +20,14 @@ namespace {
 constexpr char kChannelName[] = "digitor_engine_ffi/platform_host";
 constexpr std::int64_t kDxgiSharedHandle = 1;
 constexpr std::int64_t kD3d11Texture = 2;
+constexpr std::int64_t kD3d12Backend = 2;
 constexpr std::int64_t kReady = 1;
 constexpr std::int64_t kRgba8 = 2;
 constexpr std::int64_t kBgra8 = 3;
 
 using Map = flutter::EncodableMap;
 using Value = flutter::EncodableValue;
+using Microsoft::WRL::ComPtr;
 
 const Map* Arguments(const flutter::MethodCall<Value>& call) {
   return call.arguments() ? std::get_if<Map>(call.arguments()) : nullptr;
@@ -51,6 +58,24 @@ FlutterDesktopPixelFormat FlutterPixelFormat(std::int64_t pixel_format) {
   return kFlutterDesktopPixelFormatNone;
 }
 
+DXGI_FORMAT DxgiFormat(FlutterDesktopPixelFormat pixel_format) {
+  if (pixel_format == kFlutterDesktopPixelFormatRGBA8888) {
+    return DXGI_FORMAT_R8G8B8A8_UNORM;
+  }
+  if (pixel_format == kFlutterDesktopPixelFormatBGRA8888) {
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+  }
+  return DXGI_FORMAT_UNKNOWN;
+}
+
+std::string HResultDiagnostic(const char* operation, HRESULT hr) {
+  char code[16]{};
+  std::snprintf(code, sizeof(code), "0x%08lX",
+                static_cast<unsigned long>(
+                    static_cast<std::uint32_t>(hr)));
+  return std::string(operation) + " failed: HRESULT=" + code;
+}
+
 struct HandleLease {
   enum class Kind { kNone, kWin32Handle, kComObject } kind{Kind::kNone};
   void* value{};
@@ -71,30 +96,15 @@ void ReleaseLease(void* context) {
   delete static_cast<HandleLease*>(context);
 }
 
-std::unique_ptr<HandleLease> RetainNativeHandle(
-    std::int64_t handle_type, std::uint64_t native_handle) {
+std::unique_ptr<HandleLease> RetainD3d11Texture(
+    std::uint64_t native_handle) {
   if (!native_handle) return nullptr;
+  auto* object = reinterpret_cast<IUnknown*>(native_handle);
+  object->AddRef();
   auto lease = std::make_unique<HandleLease>();
-  if (handle_type == kDxgiSharedHandle) {
-    HANDLE duplicate = nullptr;
-    if (!DuplicateHandle(GetCurrentProcess(),
-                         reinterpret_cast<HANDLE>(native_handle),
-                         GetCurrentProcess(), &duplicate, 0, FALSE,
-                         DUPLICATE_SAME_ACCESS)) {
-      return nullptr;
-    }
-    lease->kind = HandleLease::Kind::kWin32Handle;
-    lease->value = duplicate;
-    return lease;
-  }
-  if (handle_type == kD3d11Texture) {
-    auto* object = reinterpret_cast<IUnknown*>(native_handle);
-    object->AddRef();
-    lease->kind = HandleLease::Kind::kComObject;
-    lease->value = object;
-    return lease;
-  }
-  return nullptr;
+  lease->kind = HandleLease::Kind::kComObject;
+  lease->value = object;
+  return lease;
 }
 
 void ReleaseOwnedLease(std::unique_ptr<HandleLease>& lease) {
@@ -103,10 +113,170 @@ void ReleaseOwnedLease(std::unique_ptr<HandleLease>& lease) {
 
 }  // namespace
 
+struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
+  explicit D3D11PreviewBridge(flutter::PluginRegistrarWindows* registrar) {
+    if (!registrar) {
+      diagnostic = "Flutter Windows registrar is unavailable";
+      return;
+    }
+
+    IDXGIAdapter* raw_adapter = nullptr;
+    if (!registrar->GetGraphicsAdapter(&raw_adapter) || !raw_adapter) {
+      diagnostic = "Flutter Windows graphics adapter is unavailable";
+      return;
+    }
+    ComPtr<IDXGIAdapter> adapter;
+    adapter.Attach(raw_adapter);
+
+    const D3D_FEATURE_LEVEL levels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+    };
+    D3D_FEATURE_LEVEL selected_level{};
+    ComPtr<ID3D11Device> base_device;
+    ComPtr<ID3D11DeviceContext> base_context;
+    HRESULT hr = D3D11CreateDevice(
+        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
+        static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
+        base_device.GetAddressOf(), &selected_level,
+        base_context.GetAddressOf());
+    if (hr == E_INVALIDARG) {
+      hr = D3D11CreateDevice(
+          adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+          D3D11_CREATE_DEVICE_BGRA_SUPPORT, &levels[1], 1,
+          D3D11_SDK_VERSION, base_device.GetAddressOf(), &selected_level,
+          base_context.GetAddressOf());
+    }
+    if (FAILED(hr)) {
+      diagnostic = HResultDiagnostic("D3D11CreateDevice(Flutter adapter)", hr);
+      return;
+    }
+    hr = base_device.As(&device);
+    if (FAILED(hr)) {
+      diagnostic = HResultDiagnostic("QueryInterface(ID3D11Device1)", hr);
+      return;
+    }
+    context = std::move(base_context);
+    diagnostic.clear();
+  }
+
+  bool ready() const noexcept { return device && context; }
+
+  bool CopyD3d12NtHandleToLegacySurface(
+      std::uint64_t source_handle,
+      std::size_t width,
+      std::size_t height,
+      FlutterDesktopPixelFormat pixel_format,
+      std::unique_ptr<HandleLease>& destination_lease,
+      HANDLE& legacy_shared_handle,
+      std::string& error) {
+    std::scoped_lock lock(mutex);
+    destination_lease.reset();
+    legacy_shared_handle = nullptr;
+    if (!ready()) {
+      error = diagnostic.empty()
+                  ? "Flutter D3D11 preview bridge is unavailable"
+                  : diagnostic;
+      return false;
+    }
+    if (!source_handle || width == 0 || height == 0) {
+      error = "Flutter D3D11 preview bridge received an invalid D3D12 surface";
+      return false;
+    }
+
+    const auto expected_format = DxgiFormat(pixel_format);
+    if (expected_format == DXGI_FORMAT_UNKNOWN) {
+      error = "Flutter D3D11 preview bridge received an unsupported pixel format";
+      return false;
+    }
+
+    ComPtr<ID3D11Texture2D> source;
+    const auto nt_handle = reinterpret_cast<HANDLE>(source_handle);
+    HRESULT hr = device->OpenSharedResource1(
+        nt_handle, IID_PPV_ARGS(source.GetAddressOf()));
+    if (FAILED(hr) || !source) {
+      error = HResultDiagnostic(
+          "ID3D11Device1::OpenSharedResource1(D3D12 preview)", hr);
+      return false;
+    }
+
+    D3D11_TEXTURE2D_DESC source_desc{};
+    source->GetDesc(&source_desc);
+    if (source_desc.Width != width || source_desc.Height != height ||
+        source_desc.MipLevels != 1 || source_desc.ArraySize != 1 ||
+        source_desc.SampleDesc.Count != 1 ||
+        source_desc.Format != expected_format) {
+      error = "D3D12 preview resource is incompatible with the Flutter D3D11 bridge";
+      return false;
+    }
+
+    D3D11_TEXTURE2D_DESC destination_desc{};
+    destination_desc.Width = static_cast<UINT>(width);
+    destination_desc.Height = static_cast<UINT>(height);
+    destination_desc.MipLevels = 1;
+    destination_desc.ArraySize = 1;
+    destination_desc.Format = expected_format;
+    destination_desc.SampleDesc.Count = 1;
+    destination_desc.Usage = D3D11_USAGE_DEFAULT;
+    destination_desc.BindFlags =
+        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    destination_desc.CPUAccessFlags = 0;
+    // Flutter's Windows DXGI external-texture path uses ANGLE's legacy
+    // EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE contract. That contract is fed by
+    // IDXGIResource::GetSharedHandle, not by an NT handle from
+    // ID3D12Device::CreateSharedHandle.
+    destination_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+    ComPtr<ID3D11Texture2D> destination;
+    hr = device->CreateTexture2D(&destination_desc, nullptr,
+                                 destination.GetAddressOf());
+    if (FAILED(hr) || !destination) {
+      error = HResultDiagnostic(
+          "ID3D11Device::CreateTexture2D(Flutter legacy shared surface)", hr);
+      return false;
+    }
+
+    // The D3D12 producer waits for its GPU conversion before publishing the
+    // descriptor. Keep this bridge entirely GPU-side: copy on the D3D11
+    // immediate context, then Flush before another D3D11 device (Flutter's
+    // ANGLE device) opens/uses the shared resource.
+    context->CopyResource(destination.Get(), source.Get());
+    context->Flush();
+
+    ComPtr<IDXGIResource> shared_resource;
+    hr = destination.As(&shared_resource);
+    if (FAILED(hr) || !shared_resource) {
+      error = HResultDiagnostic("QueryInterface(IDXGIResource)", hr);
+      return false;
+    }
+    HANDLE shared_handle = nullptr;
+    hr = shared_resource->GetSharedHandle(&shared_handle);
+    if (FAILED(hr) || !shared_handle) {
+      error = HResultDiagnostic("IDXGIResource::GetSharedHandle", hr);
+      return false;
+    }
+
+    auto lease = std::make_unique<HandleLease>();
+    lease->kind = HandleLease::Kind::kComObject;
+    lease->value = destination.Detach();
+    destination_lease = std::move(lease);
+    legacy_shared_handle = shared_handle;
+    error.clear();
+    return true;
+  }
+
+  ComPtr<ID3D11Device1> device;
+  ComPtr<ID3D11DeviceContext> context;
+  std::mutex mutex;
+  std::string diagnostic;
+};
+
 struct DigitorEngineFfiPlugin::TextureState {
   std::mutex mutex;
   std::int64_t handle_type{};
   std::unique_ptr<HandleLease> retained_handle;
+  HANDLE flutter_shared_handle{};
   std::size_t width{};
   std::size_t height{};
   FlutterDesktopPixelFormat pixel_format{kFlutterDesktopPixelFormatNone};
@@ -130,16 +300,15 @@ struct DigitorEngineFfiPlugin::TextureState {
     auto lease = std::make_unique<HandleLease>();
     void* flutter_handle = nullptr;
     if (handle_type == kDxgiSharedHandle) {
-      HANDLE duplicate = nullptr;
-      if (!DuplicateHandle(GetCurrentProcess(),
-                           static_cast<HANDLE>(retained_handle->value),
-                           GetCurrentProcess(), &duplicate, 0, FALSE,
-                           DUPLICATE_SAME_ACCESS)) {
-        return nullptr;
-      }
-      lease->kind = HandleLease::Kind::kWin32Handle;
-      lease->value = duplicate;
-      flutter_handle = duplicate;
+      if (!flutter_shared_handle) return nullptr;
+      // GetSharedHandle returns a legacy DXGI shared handle. It is deliberately
+      // not duplicated or closed. Keep the creator texture alive instead until
+      // Flutter confirms that it has opened the handle.
+      auto* object = static_cast<IUnknown*>(retained_handle->value);
+      object->AddRef();
+      lease->kind = HandleLease::Kind::kComObject;
+      lease->value = object;
+      flutter_handle = flutter_shared_handle;
     } else if (handle_type == kD3d11Texture) {
       auto* object = static_cast<IUnknown*>(retained_handle->value);
       object->AddRef();
@@ -172,7 +341,8 @@ void DigitorEngineFfiPlugin::RegisterWithRegistrar(
 
 DigitorEngineFfiPlugin::DigitorEngineFfiPlugin(
     flutter::PluginRegistrarWindows* registrar)
-    : texture_registrar_(registrar->texture_registrar()) {
+    : texture_registrar_(registrar->texture_registrar()),
+      d3d11_preview_bridge_(std::make_unique<D3D11PreviewBridge>(registrar)) {
   channel_ = std::make_unique<flutter::MethodChannel<Value>>(
       registrar->messenger(), kChannelName,
       &flutter::StandardMethodCodec::GetInstance());
@@ -308,6 +478,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
   }
 
   if (call.method_name() == "present") {
+    const auto backend = ReadInt(*args, "backend");
     const auto handle_type = ReadInt(*args, "handleType");
     const auto native_handle = ReadInt(*args, "nativeHandle");
     const auto width = ReadInt(*args, "width");
@@ -318,9 +489,9 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
     const auto device_identity = ReadInt(*args, "deviceIdentity");
     const auto context_identity = ReadInt(*args, "contextIdentity");
     const auto protected_content = ReadBool(*args, "protectedContent").value_or(false);
-    if (!handle_type || !native_handle || !width || !height || !generation ||
-        !readiness || !pixel_format || *native_handle == 0 || *generation <= 0 ||
-        *readiness != kReady || protected_content ||
+    if (!backend || !handle_type || !native_handle || !width || !height ||
+        !generation || !readiness || !pixel_format || *native_handle == 0 ||
+        *generation <= 0 || *readiness != kReady || protected_content ||
         *handle_type != state->handle_type || *width <= 0 || *height <= 0) {
       result->Error("incompatible_frame",
                     "Frame is stale, protected, not ready, or incompatible with the registered texture.");
@@ -332,15 +503,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
                     "Windows GPU surface requires RGBA8 or BGRA8.");
       return;
     }
-    auto retained = RetainNativeHandle(
-        *handle_type, static_cast<std::uint64_t>(*native_handle));
-    if (!retained) {
-      result->Error(
-          "frame_handle_retain_failed",
-          "Windows could not retain the GPU resource before the engine released the preview generation.");
-      return;
-    }
-    std::unique_ptr<HandleLease> previous_handle;
+
     {
       std::scoped_lock lock(state->mutex);
       if (static_cast<std::uint64_t>(*generation) <= state->generation) {
@@ -357,13 +520,54 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
         result->Error("context_mismatch", "Preview context identity changed.");
         return;
       }
+    }
+
+    std::unique_ptr<HandleLease> retained;
+    HANDLE flutter_shared_handle = nullptr;
+    if (*handle_type == kDxgiSharedHandle) {
+      if (*backend != kD3d12Backend) {
+        result->Error("unsupported_dxgi_producer",
+                      "Windows DXGI preview bridge currently requires a D3D12 producer.");
+        return;
+      }
+      std::string bridge_error;
+      if (!d3d11_preview_bridge_ ||
+          !d3d11_preview_bridge_->CopyD3d12NtHandleToLegacySurface(
+              static_cast<std::uint64_t>(*native_handle),
+              static_cast<std::size_t>(*width),
+              static_cast<std::size_t>(*height), flutter_pixel_format,
+              retained, flutter_shared_handle, bridge_error)) {
+        result->Error("d3d12_flutter_bridge_failed", bridge_error);
+        return;
+      }
+    } else {
+      retained = RetainD3d11Texture(static_cast<std::uint64_t>(*native_handle));
+      if (!retained) {
+        result->Error(
+            "frame_handle_retain_failed",
+            "Windows could not retain the D3D11 preview texture before the engine released the preview generation.");
+        return;
+      }
+    }
+
+    std::unique_ptr<HandleLease> previous_handle;
+    {
+      std::scoped_lock lock(state->mutex);
+      // Recheck after the GPU bridge work in case a newer frame won the race.
+      if (static_cast<std::uint64_t>(*generation) <= state->generation) {
+        result->Error("stale_generation", "Preview generations must increase.");
+        return;
+      }
       previous_handle = std::move(state->retained_handle);
       state->retained_handle = std::move(retained);
+      state->flutter_shared_handle = flutter_shared_handle;
       state->width = static_cast<std::size_t>(*width);
       state->height = static_cast<std::size_t>(*height);
       state->generation = static_cast<std::uint64_t>(*generation);
-      state->device_identity = device_identity ? static_cast<std::uint64_t>(*device_identity) : 0;
-      state->context_identity = context_identity ? static_cast<std::uint64_t>(*context_identity) : 0;
+      state->device_identity =
+          device_identity ? static_cast<std::uint64_t>(*device_identity) : 0;
+      state->context_identity =
+          context_identity ? static_cast<std::uint64_t>(*context_identity) : 0;
       state->pixel_format = flutter_pixel_format;
     }
     ReleaseOwnedLease(previous_handle);
