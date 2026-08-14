@@ -147,15 +147,42 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
                  << ", MipLevels=" << desc.MipLevels
                  << ", SampleDesc={" << desc.SampleDesc.Count << ","
                  << desc.SampleDesc.Quality << "}, Flags=0x" << std::hex
-                 << static_cast<unsigned>(desc.Flags);
+                 << static_cast<unsigned>(desc.Flags)
+                 << "; D3D12.SharedResourceCompatibilityTier=" << std::dec
+                 << qualification.shared_resource_compatibility_tier
+                 << "; OPTIONS4.HRESULT=0x" << std::hex << std::uppercase
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << "; OpenSharedHandle.HRESULT=0x"
+                 << qualification.open_shared_handle_hresult;
       qualification.diagnostic = diagnostic.str();
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
-    const auto result = impl_->converter(resource.Get(), surface, out);
+    std::string converter_diagnostic;
+    const auto result = impl_->converter(resource.Get(), surface, out,
+                                         &converter_diagnostic);
     if (result != DIGITOR_RESULT_OK) {
       out.reset();
-      qualification.diagnostic = "GPU YUV conversion callback failed";
+      std::ostringstream diagnostic;
+      diagnostic << (converter_diagnostic.empty()
+                         ? "GPU YUV conversion callback failed"
+                         : converter_diagnostic)
+                 << "; D3D12.SharedResourceCompatibilityTier="
+                 << qualification.shared_resource_compatibility_tier
+                 << "; OPTIONS4.HRESULT=0x" << std::hex << std::uppercase
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << "; OpenSharedHandle.HRESULT=0x"
+                 << qualification.open_shared_handle_hresult << std::dec
+                 << "; opened={Dimension="
+                 << static_cast<unsigned>(desc.Dimension)
+                 << ", Width=" << desc.Width << ", Height=" << desc.Height
+                 << ", Format=" << static_cast<unsigned>(desc.Format)
+                 << ", MipLevels=" << desc.MipLevels
+                 << ", DepthOrArraySize=" << desc.DepthOrArraySize
+                 << ", SampleDesc={" << desc.SampleDesc.Count << ","
+                 << desc.SampleDesc.Quality << "}, Flags=0x" << std::hex
+                 << static_cast<unsigned>(desc.Flags) << "}";
+      qualification.diagnostic = diagnostic.str();
       return result;
     }
     // D3D12 SRV creation has no HRESULT. Reaching a successfully submitted

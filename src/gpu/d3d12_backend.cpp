@@ -638,15 +638,23 @@ public:
             if (!request.surface ||
                 request.renderer_backend != DIGITOR_RENDERER_D3D12 ||
                 request.output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT ||
-                request.working_color_space != "linear-rgba")
+                request.working_color_space != "linear-rgba") {
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native import request validation failed";
               return DIGITOR_RESULT_INVALID_ARGUMENT;
+            }
             const auto& descriptor = request.surface->descriptor();
             if (descriptor.platform != NativeMediaPlatform::windows ||
                 descriptor.handle_type !=
                     NativeMediaHandleType::dxgi_shared_handle ||
                 (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
-                 descriptor.pixel_format != NativeMediaPixelFormat::p010))
+                 descriptor.pixel_format != NativeMediaPixelFormat::p010)) {
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native surface descriptor routing failed";
               return DIGITOR_RESULT_UNSUPPORTED;
+            }
 
             try {
               // WindowsD3D12YuvConverter owns a single allocator/list/descriptor
@@ -728,12 +736,26 @@ public:
               surface.color.primaries = descriptor.color.primaries;
               surface.color.transfer = descriptor.color.transfer;
               surface.lifetime = request.surface;
-              return (*importer)->import(surface, frame);
+              WindowsZeroCopyQualification qualification;
+              const auto result =
+                  (*importer)->import(surface, frame, &qualification);
+              if (request.diagnostic)
+                *request.diagnostic = qualification.diagnostic;
+              return result;
             } catch (const std::bad_alloc&) {
               frame.reset();
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native import allocation failed";
               return DIGITOR_RESULT_OUT_OF_MEMORY;
+            } catch (const std::exception& error) {
+              frame.reset();
+              if (request.diagnostic) *request.diagnostic = error.what();
+              return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             } catch (...) {
               frame.reset();
+              if (request.diagnostic)
+                *request.diagnostic = "unexpected D3D12 native import failure";
               return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             }
           };

@@ -51,7 +51,7 @@ WindowsD3D12QualifiedConverter::WindowsD3D12QualifiedConverter(void* raw):impl_(
 #endif
 }
 WindowsD3D12QualifiedConverter::~WindowsD3D12QualifiedConverter()=default;
-WindowsD3D12ConvertCallback WindowsD3D12QualifiedConverter::callback(){auto self=impl_;return [self](void*r,const WindowsZeroCopySurface&s,ProcessedGpuFramePtr&o)noexcept{WindowsD3D12QualifiedConverter c(self);return c.convert(r,s,o);};}
+WindowsD3D12ConvertCallback WindowsD3D12QualifiedConverter::callback(){auto self=impl_;return [self](void*r,const WindowsZeroCopySurface&s,ProcessedGpuFramePtr&o,std::string*)noexcept{WindowsD3D12QualifiedConverter c(self);return c.convert(r,s,o);};}
 
 DigitorResult WindowsD3D12QualifiedConverter::convert(void* raw,const WindowsZeroCopySurface&s,ProcessedGpuFramePtr&out)noexcept{
  out.reset();

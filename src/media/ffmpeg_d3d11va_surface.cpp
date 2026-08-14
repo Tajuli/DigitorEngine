@@ -342,12 +342,18 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
   HRESULT hr =
       device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence));
   if (FAILED(hr) || !fence) {
-    diagnostic = "ID3D11Device5::CreateFence failed";
+    std::ostringstream out;
+    out << "ID3D11Device5::CreateFence failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr);
+    diagnostic = out.str();
     return false;
   }
   hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &shared_handle);
   if (FAILED(hr) || !shared_handle) {
-    diagnostic = "ID3D11Fence::CreateSharedHandle failed";
+    std::ostringstream out;
+    out << "ID3D11Fence::CreateSharedHandle failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr);
+    diagnostic = out.str();
     fence.Reset();
     return false;
   }
@@ -357,7 +363,11 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
     CloseHandle(shared_handle);
     shared_handle = nullptr;
     fence.Reset();
-    diagnostic = "ID3D11DeviceContext4::Signal failed";
+    std::ostringstream out;
+    out << "ID3D11DeviceContext4::Signal failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr)
+        << ", fence_value=" << std::dec << value;
+    diagnostic = out.str();
     return false;
   }
   return true;

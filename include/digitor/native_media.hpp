@@ -83,6 +83,9 @@ struct ZeroCopyImportRequest {
   DigitorRendererBackend renderer_backend{DIGITOR_RENDERER_AUTO};
   DigitorPixelFormat output_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
   std::string working_color_space{"linear-rgba"};
+  // Optional internal diagnostic sink. Backend-owned importers populate it
+  // with the first native failure; it is not part of the stable C ABI.
+  std::string* diagnostic{};
 };
 using NativeMediaImportCallback=std::function<DigitorResult(const ZeroCopyImportRequest&,ProcessedGpuFramePtr&)>;
 

@@ -83,7 +83,8 @@ struct WindowsZeroCopyQualification {
 using WindowsD3D12ConvertCallback = std::function<DigitorResult(
     void* d3d12_resource,
     const WindowsZeroCopySurface&,
-    ProcessedGpuFramePtr&)>;
+    ProcessedGpuFramePtr&,
+    std::string* diagnostic)>;
 
 class WindowsD3D12ZeroCopyImporter final {
 public:
