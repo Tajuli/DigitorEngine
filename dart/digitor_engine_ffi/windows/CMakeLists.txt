@@ -17,7 +17,11 @@ set_target_properties(${PLUGIN_NAME} PROPERTIES
 target_compile_definitions(${PLUGIN_NAME} PRIVATE DIGITOR_ENGINE_FFI_PLUGIN_EXPORTS)
 target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
+target_link_libraries(${PLUGIN_NAME} PRIVATE
+  flutter
+  flutter_wrapper_plugin
+  d3d11
+  dxgi)
 
 # DigitorEngine itself is produced by hook/build.dart as a native code asset.
 # The Windows plugin target is intentionally only the Flutter texture registrar
