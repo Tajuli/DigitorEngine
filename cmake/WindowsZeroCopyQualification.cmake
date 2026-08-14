@@ -27,4 +27,24 @@ if(DIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION)
     digitor_windows_zero_copy_qualification)
   add_test(NAME windows_zero_copy_qualification_contract
            COMMAND digitor_zero_copy_qualification_contract)
+
+  # Exercise the exact production D3D11VA -> NT handle -> D3D12 planar-SRV
+  # contract. CreateShaderResourceView returns void, so the test explicitly
+  # checks GetDeviceRemovedReason after both Y and UV view creation; this keeps
+  # a driver-level device-removal regression from being hidden by a green
+  # compile-only qualification.
+  add_executable(digitor_ffmpeg_d3d11va_surface_contract
+    ${CMAKE_CURRENT_LIST_DIR}/../tests/test_ffmpeg_d3d11va_surface_contract.cpp)
+  target_include_directories(digitor_ffmpeg_d3d11va_surface_contract PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src)
+  target_compile_features(digitor_ffmpeg_d3d11va_surface_contract PRIVATE cxx_std_20)
+  target_link_libraries(digitor_ffmpeg_d3d11va_surface_contract PRIVATE
+    digitor_engine d3d11 d3d12 dxgi)
+  if(MSVC)
+    target_compile_options(digitor_ffmpeg_d3d11va_surface_contract PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(digitor_ffmpeg_d3d11va_surface_contract PRIVATE -UNDEBUG)
+  endif()
+  add_test(NAME windows_ffmpeg_d3d11va_surface_contract
+           COMMAND digitor_ffmpeg_d3d11va_surface_contract)
 endif()
