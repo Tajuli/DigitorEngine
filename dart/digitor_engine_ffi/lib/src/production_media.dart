@@ -252,7 +252,11 @@ final class DigitorProductionMediaSource {
       final result = _mediaOpen(nativePath, options, out);
       _check('productionMediaOpen', result);
       if (out.value == nullptr) {
-        throw const DigitorEngineException('productionMediaOpen', 100);
+        throw DigitorEngineException(
+          'productionMediaOpen',
+          100,
+          _mediaDiagnostic(),
+        );
       }
       return DigitorProductionMediaSource._(out.value);
     } finally {
@@ -387,9 +391,14 @@ final class DigitorProductionMediaSource {
   }
 }
 
+String _mediaDiagnostic() {
+  final pointer = _mediaLastError();
+  return pointer == nullptr ? '' : pointer.toDartString();
+}
+
 void _check(String operation, int result) {
   if (result != 0) {
-    throw DigitorEngineException(operation, result);
+    throw DigitorEngineException(operation, result, _mediaDiagnostic());
   }
 }
 
@@ -617,6 +626,11 @@ external int _mediaGetNativeSurface(
   Pointer<_ProductionMediaSourceNative> source,
   Pointer<_ProductionNativeSurfaceNative> outSurface,
 );
+
+@Native<Pointer<Utf8> Function()>(
+  symbol: 'digitor_production_media_last_error',
+)
+external Pointer<Utf8> _mediaLastError();
 
 @Native<Void Function(Pointer<_ProductionMediaSourceNative>)>(
   symbol: 'digitor_production_media_close',
