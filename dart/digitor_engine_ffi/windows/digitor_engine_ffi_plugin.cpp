@@ -356,14 +356,17 @@ struct DigitorEngineFfiPlugin::TextureState {
   ~TextureState() { ReleaseOwnedLease(retained_handle); }
 
   const FlutterDesktopGpuSurfaceDescriptor* ObtainDescriptor(
-      std::size_t requested_width, std::size_t requested_height) {
+      std::size_t /*requested_width*/, std::size_t /*requested_height*/) {
     std::scoped_lock lock(mutex);
     if (!retained_handle || !retained_handle->value || !generation ||
         !width || !height)
       return nullptr;
-    if (requested_width && requested_width != width) return nullptr;
-    if (requested_height && requested_height != height) return nullptr;
 
+    // Flutter passes the intended on-screen texture size here, not a contract
+    // that the producer resource must be allocated at exactly that size. The
+    // native preview remains at its production resolution (for example
+    // 1920x1080); the descriptor below reports the actual surface and visible
+    // dimensions so Flutter can scale it into the viewport.
     auto lease = std::make_unique<HandleLease>();
     void* flutter_handle = nullptr;
     if (handle_type == kDxgiSharedHandle) {
