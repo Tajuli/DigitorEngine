@@ -129,6 +129,9 @@ DIGITOR_MEDIA_API int32_t digitor_production_media_decode(
 DIGITOR_MEDIA_API int32_t digitor_production_media_get_native_surface(
     const DigitorProductionMediaSource* source,
     DigitorProductionNativeSurfaceDescriptor* out_surface);
+/* Thread-local diagnostic for the most recent production-media C API failure
+ * on the calling thread. The returned pointer remains owned by DigitorEngine. */
+DIGITOR_MEDIA_API const char* digitor_production_media_last_error(void);
 DIGITOR_MEDIA_API void digitor_production_media_close(
     DigitorProductionMediaSource* source);
 DIGITOR_MEDIA_API uint8_t digitor_production_media_ffmpeg_available(void);
