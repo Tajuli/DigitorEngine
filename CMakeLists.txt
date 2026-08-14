@@ -20,6 +20,15 @@ set(CMAKE_PROJECT_VERSION_PATCH "${DIGITOR_ENGINE_VERSION_PATCH}")
 find_package(Threads REQUIRED)
 target_link_libraries(digitor_engine PRIVATE Threads::Threads)
 
+# d3d12_backend.cpp intentionally reads the diagnostic-only
+# DIGITOR_D3D12_DRED environment switch. MSVC marks getenv as C4996; scope the
+# CRT compatibility opt-out to this translation unit only so /WX remains
+# effective for every other warning and target.
+if(MSVC)
+    set_source_files_properties(src/gpu/d3d12_backend.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+endif()
+
 option(DIGITOR_ENABLE_OCIO "Enable OpenColorIO 2.x integration when available" ON)
 option(DIGITOR_REQUIRE_OCIO "Fail configuration when OpenColorIO 2.x is unavailable" OFF)
 set(DIGITOR_BUILT_WITH_OCIO OFF)
