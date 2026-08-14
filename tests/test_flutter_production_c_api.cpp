@@ -16,9 +16,10 @@ DigitorResult render_frame(void*, DigitorFlutterProductionRenderMode,
                            std::int64_t, std::uint32_t, std::uint32_t,
                            DigitorNativeGpuTextureDescriptor*, char* diagnostic,
                            std::uint32_t capacity) {
-  constexpr char message[] = "native D3D12 preview operation failed";
-  if (diagnostic && capacity >= sizeof(message))
-    std::memcpy(diagnostic, message, sizeof(message));
+  const std::string message = "native D3D12 preview operation failed: " +
+                              std::string(1024, 'x');
+  if (diagnostic && capacity > message.size())
+    std::memcpy(diagnostic, message.c_str(), message.size() + 1);
   return DIGITOR_RESULT_INTERNAL_ERROR;
 }
 
@@ -84,8 +85,9 @@ int main() {
   std::string diagnostic(diagnostic_size, '\0');
   assert(digitor_flutter_production_get_last_error(
              session, diagnostic.data(), &diagnostic_size) == DIGITOR_RESULT_OK);
-  assert(diagnostic.c_str() ==
-         std::string("native D3D12 preview operation failed"));
+  assert(std::string(diagnostic.c_str()).starts_with(
+      "native D3D12 preview operation failed: "));
+  assert(std::strlen(diagnostic.c_str()) > 512);
 
   DigitorFlutterPreviewTarget target{};
   target.struct_size = sizeof(target);

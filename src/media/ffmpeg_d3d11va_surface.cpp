@@ -69,6 +69,49 @@ void append_desc(std::ostringstream &out, const char *name,
       << d.CPUAccessFlags << ", MiscFlags=0x" << d.MiscFlags << std::dec << "}";
 }
 
+struct SharingCapabilities {
+  HRESULT options_hr{E_FAIL};
+  BOOL extended_resource_sharing{};
+  HRESULT options4_hr{E_FAIL};
+  BOOL extended_nv12_sharing{};
+  HRESULT options5_hr{E_FAIL};
+  D3D11_SHARED_RESOURCE_TIER shared_resource_tier{};
+};
+
+SharingCapabilities sharing_capabilities(ID3D11Device *device) noexcept {
+  SharingCapabilities result;
+  D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
+  result.options_hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS,
+                                                  &options, sizeof(options));
+  if (SUCCEEDED(result.options_hr))
+    result.extended_resource_sharing = options.ExtendedResourceSharing;
+  D3D11_FEATURE_DATA_D3D11_OPTIONS4 options4{};
+  result.options4_hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS4,
+                                                   &options4, sizeof(options4));
+  if (SUCCEEDED(result.options4_hr))
+    result.extended_nv12_sharing = options4.ExtendedNV12SharedTextureSupported;
+  D3D11_FEATURE_DATA_D3D11_OPTIONS5 options5{};
+  result.options5_hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS5,
+                                                   &options5, sizeof(options5));
+  if (SUCCEEDED(result.options5_hr))
+    result.shared_resource_tier = options5.SharedResourceTier;
+  return result;
+}
+
+void append_capabilities(std::ostringstream &out,
+                         const SharingCapabilities &c) {
+  out << "; D3D11.ExtendedResourceSharing=" << c.extended_resource_sharing
+      << " (HRESULT=0x" << std::hex << std::uppercase
+      << static_cast<std::uint32_t>(c.options_hr) << ")"
+      << "; D3D11.ExtendedNV12SharedTextureSupported="
+      << c.extended_nv12_sharing << " (HRESULT=0x"
+      << static_cast<std::uint32_t>(c.options4_hr) << ")"
+      << "; D3D11.SharedResourceTier=" << std::dec
+      << static_cast<unsigned>(c.shared_resource_tier) << " (HRESULT=0x"
+      << std::hex << static_cast<std::uint32_t>(c.options5_hr) << ")"
+      << std::dec;
+}
+
 std::string stable_debug_message(std::string text) {
   // Debug-layer text can embed COM object addresses. Keep validation content
   // actionable while ensuring diagnostics crossing the public ABI are stable.
@@ -103,7 +146,10 @@ normalized_d3d11va_interop_desc(const D3D11_TEXTURE2D_DESC &source) noexcept {
   destination.Format = source.Format;
   destination.SampleDesc = source.SampleDesc;
   destination.Usage = D3D11_USAGE_DEFAULT;
-  destination.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  // The texture is a copy destination/export carrier. Sampling happens only
+  // after D3D12 opens it, so a D3D11 shader-resource bind is neither used nor
+  // required and is rejected for shared planar textures by some drivers.
+  destination.BindFlags = 0;
   destination.CPUAccessFlags = 0;
   destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
   return destination;
@@ -198,13 +244,21 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
     return false;
   }
   const auto destination_desc = normalized_d3d11va_interop_desc(source_desc);
+  auto shader_desc = destination_desc;
+  shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   ComPtr<ID3D11InfoQueue> info_queue;
   device.As(&info_queue);
   const UINT64 messages_before =
       info_queue ? info_queue->GetNumStoredMessagesAllowedByRetrievalFilter()
                  : 0;
-  const HRESULT hr =
+  // Run the two-case qualification matrix on the actual decoder dimensions.
+  // Keep the successful bind=0 resource as the production copy destination.
+  const HRESULT bind0_hr =
       device->CreateTexture2D(&destination_desc, nullptr, &destination);
+  ComPtr<ID3D11Texture2D> shader_probe;
+  const HRESULT shader_hr =
+      device->CreateTexture2D(&shader_desc, nullptr, &shader_probe);
+  const HRESULT hr = bind0_hr;
   if (FAILED(hr) || !destination) {
     UINT support = 0;
     const HRESULT support_hr =
@@ -228,9 +282,17 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
         }
       }
     }
-    diagnostic = format_d3d11_texture_creation_failure(
+    std::ostringstream qualification;
+    qualification << format_d3d11_texture_creation_failure(
         hr, source_desc, destination_desc, device->GetFeatureLevel(),
         support_hr, support, debug_message);
+    append_capabilities(qualification, sharing_capabilities(device.Get()));
+    qualification
+        << "; matrix.NV12_or_P010.BindFlags=0.HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(bind0_hr)
+        << "; matrix.NV12_or_P010.BindFlags=SHADER_RESOURCE.HRESULT=0x"
+        << static_cast<std::uint32_t>(shader_hr);
+    diagnostic = qualification.str();
     return false;
   }
   ComPtr<ID3D11DeviceContext> context;
@@ -259,7 +321,15 @@ bool create_nt_handle(ID3D11Texture2D *texture, HANDLE &handle,
       nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
       &handle);
   if (FAILED(hr) || !handle) {
-    diagnostic = "IDXGIResource1::CreateSharedHandle failed";
+    ComPtr<ID3D11Device> device;
+    texture->GetDevice(&device);
+    std::ostringstream out;
+    out << "IDXGIResource1::CreateSharedHandle failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr) << " ("
+        << hresult_name(hr) << ")";
+    if (device)
+      append_capabilities(out, sharing_capabilities(device.Get()));
+    diagnostic = out.str();
     return false;
   }
   return true;
