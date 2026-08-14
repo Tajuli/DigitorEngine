@@ -531,14 +531,19 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     y.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     y.Format = s.format == WindowsZeroCopyFormat::nv12 ? DXGI_FORMAT_R8_UNORM
                                                         : DXGI_FORMAT_R16_UNORM;
+    y.Texture2D.MostDetailedMip = 0;
+    y.Texture2D.MipLevels = 1;
     y.Texture2D.PlaneSlice = 0;
+    y.Texture2D.ResourceMinLODClamp = 0.0f;
     ComPtr<ID3D12InfoQueue> view_info_queue;
     impl_->device.As(&view_info_queue);
     if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateShaderResourceView(input, &y, cpu);
     view_diagnostics += "Y={resource_format=" +
         std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
-        std::to_string(static_cast<unsigned>(y.Format)) + ", PlaneSlice=0, messages=" +
+        std::to_string(static_cast<unsigned>(y.Format)) + ", MostDetailedMip=" +
+        std::to_string(y.Texture2D.MostDetailedMip) + ", MipLevels=" +
+        std::to_string(y.Texture2D.MipLevels) + ", PlaneSlice=0, messages=" +
         d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
     if (check_health("CreateShaderResourceView.Y") != DIGITOR_RESULT_OK)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
@@ -552,7 +557,9 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     impl_->device->CreateShaderResourceView(input, &uv, cpu);
     view_diagnostics += "UV={resource_format=" +
         std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
-        std::to_string(static_cast<unsigned>(uv.Format)) + ", PlaneSlice=1, messages=" +
+        std::to_string(static_cast<unsigned>(uv.Format)) + ", MostDetailedMip=" +
+        std::to_string(uv.Texture2D.MostDetailedMip) + ", MipLevels=" +
+        std::to_string(uv.Texture2D.MipLevels) + ", PlaneSlice=1, messages=" +
         d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
     if (check_health("CreateShaderResourceView.UV") != DIGITOR_RESULT_OK)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
