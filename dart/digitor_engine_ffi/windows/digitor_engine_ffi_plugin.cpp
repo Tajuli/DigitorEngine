@@ -120,8 +120,16 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return;
     }
 
-    IDXGIAdapter* raw_adapter = nullptr;
-    if (!registrar->GetGraphicsAdapter(&raw_adapter) || !raw_adapter) {
+    // Flutter 3.44.x exposes the graphics adapter on FlutterView rather than
+    // PluginRegistrarWindows. GetGraphicsAdapter returns an AddRef'd adapter;
+    // Attach transfers that reference to ComPtr for deterministic release.
+    auto* view = registrar->GetView();
+    if (!view) {
+      diagnostic = "Flutter Windows implicit view is unavailable";
+      return;
+    }
+    IDXGIAdapter* raw_adapter = view->GetGraphicsAdapter();
+    if (!raw_adapter) {
       diagnostic = "Flutter Windows graphics adapter is unavailable";
       return;
     }
