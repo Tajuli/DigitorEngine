@@ -1,6 +1,7 @@
 #include "digitor/windows_zero_copy_import.hpp"
 
 #include <new>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -89,12 +90,30 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
   return DIGITOR_RESULT_UNSUPPORTED;
 #else
   try {
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4{};
+    const HRESULT options4_hr = impl_->device->CheckFeatureSupport(
+        D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4));
+    qualification.shared_resource_compatibility_query_hresult =
+        static_cast<std::uint32_t>(options4_hr);
+    if (SUCCEEDED(options4_hr))
+      qualification.shared_resource_compatibility_tier =
+          static_cast<std::uint32_t>(options4.SharedResourceCompatibilityTier);
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
     const auto handle = reinterpret_cast<HANDLE>(surface.shared_handle);
     const HRESULT hr = impl_->device->OpenSharedHandle(
         handle, IID_PPV_ARGS(resource.ReleaseAndGetAddressOf()));
+    qualification.open_shared_handle_hresult = static_cast<std::uint32_t>(hr);
     if (FAILED(hr) || !resource) {
-      qualification.diagnostic = "ID3D12Device::OpenSharedHandle failed";
+      std::ostringstream diagnostic;
+      diagnostic << "ID3D12Device::OpenSharedHandle failed: HRESULT=0x"
+                 << std::hex << std::uppercase
+                 << static_cast<std::uint32_t>(hr)
+                 << "; D3D12.SharedResourceCompatibilityTier=" << std::dec
+                 << qualification.shared_resource_compatibility_tier
+                 << " (CheckFeatureSupport.HRESULT=0x" << std::hex
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << ")";
+      qualification.diagnostic = diagnostic.str();
       return hr == E_OUTOFMEMORY ? DIGITOR_RESULT_OUT_OF_MEMORY
                                  : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }

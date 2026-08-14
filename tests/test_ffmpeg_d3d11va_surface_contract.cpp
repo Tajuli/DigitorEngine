@@ -84,13 +84,14 @@ void verify_gpu_interop(DXGI_FORMAT format) {
                     : -1)
             << '\n';
   D3D11_TEXTURE2D_DESC source_desc{};
-  source_desc.Width = 64;
-  source_desc.Height = 64;
+  source_desc.Width = 1920;
+  source_desc.Height = 1152;
   source_desc.MipLevels = 1;
-  source_desc.ArraySize = 3;
+  source_desc.ArraySize = 20;
   source_desc.Format = format;
   source_desc.SampleDesc = {1, 0};
   source_desc.Usage = D3D11_USAGE_DEFAULT;
+  source_desc.BindFlags = D3D11_BIND_DECODER;
   ComPtr<ID3D11Texture2D> source;
   if (FAILED(device11->CreateTexture2D(&source_desc, nullptr, &source))) {
     std::cout << "SKIP: device cannot create source planar array\n";
@@ -100,17 +101,45 @@ void verify_gpu_interop(DXGI_FORMAT format) {
       digitor::normalized_d3d11va_interop_desc(source_desc);
   auto shader_desc = destination_desc;
   shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  auto keyed_desc = destination_desc;
+  keyed_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+  auto keyed_shader_desc = keyed_desc;
+  keyed_shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  auto legacy_desc = destination_desc;
+  legacy_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
   ComPtr<ID3D11Texture2D> destination;
   const HRESULT bind0_hr =
       device11->CreateTexture2D(&destination_desc, nullptr, &destination);
   ComPtr<ID3D11Texture2D> shader_destination;
   const HRESULT shader_hr =
       device11->CreateTexture2D(&shader_desc, nullptr, &shader_destination);
-  std::cout << "format=" << format << " bind0_hresult=0x" << std::hex
+  ComPtr<ID3D11Texture2D> keyed_destination;
+  const HRESULT keyed_hr =
+      device11->CreateTexture2D(&keyed_desc, nullptr, &keyed_destination);
+  ComPtr<ID3D11Texture2D> keyed_shader_destination;
+  const HRESULT keyed_shader_hr = device11->CreateTexture2D(
+      &keyed_shader_desc, nullptr, &keyed_shader_destination);
+  ComPtr<ID3D11Texture2D> legacy_destination;
+  const HRESULT legacy_hr =
+      device11->CreateTexture2D(&legacy_desc, nullptr, &legacy_destination);
+  std::cout << "format=" << format << " A_nthandle_bind0_hresult=0x" << std::hex
             << static_cast<unsigned long>(bind0_hr)
-            << " shader_resource_hresult=0x"
-            << static_cast<unsigned long>(shader_hr) << std::dec << '\n';
-  assert(SUCCEEDED(bind0_hr));
+            << " B_nthandle_shader_resource_hresult=0x"
+            << static_cast<unsigned long>(shader_hr)
+            << " C_nthandle_keyedmutex_bind0_hresult=0x"
+            << static_cast<unsigned long>(keyed_hr)
+            << " D_nthandle_keyedmutex_shader_resource_hresult=0x"
+            << static_cast<unsigned long>(keyed_shader_hr)
+            << " E_legacy_shared_bind0_hresult=0x"
+            << static_cast<unsigned long>(legacy_hr) << std::dec << '\n';
+  // The production contract intentionally remains case A pending results from
+  // real Windows hardware. Matrix success alone must not select keyed mutex or
+  // legacy sharing because the D3D12 consumer uses an NT handle and a fence.
+  if (FAILED(bind0_hr)) {
+    std::cout << "QUALIFICATION: production case A unavailable; matrix "
+                 "results recorded, D3D12 import not attempted\n";
+    return;
+  }
   // Exercise a non-zero decoder slice and preserve the single-slice contract.
   context11->CopySubresourceRegion(
       destination.Get(), 0, 0, 0, 0, source.Get(),

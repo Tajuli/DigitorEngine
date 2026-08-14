@@ -62,6 +62,11 @@ struct WindowsZeroCopyQualification {
   bool decoder_lifetime_retained{};
   bool no_cpu_readback{};
   bool per_pixel_contract_preserved{};
+  // Reported by the actual engine-owned D3D12 device, without exposing Windows
+  // SDK types through this public header.
+  std::uint32_t shared_resource_compatibility_tier{};
+  std::uint32_t shared_resource_compatibility_query_hresult{};
+  std::uint32_t open_shared_handle_hresult{};
   std::string diagnostic;
 };
 

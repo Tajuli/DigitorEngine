@@ -78,6 +78,70 @@ struct SharingCapabilities {
   D3D11_SHARED_RESOURCE_TIER shared_resource_tier{};
 };
 
+std::string stable_debug_message(std::string text);
+
+struct TextureCreationProbe {
+  const char *name{};
+  HRESULT result{E_FAIL};
+  std::string messages;
+};
+
+std::string info_queue_messages(ID3D11InfoQueue *queue) {
+  if (!queue)
+    return "debug layer unavailable (ID3D11InfoQueue not exposed)";
+  std::ostringstream out;
+  const UINT64 count = queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+  if (!count)
+    return "no new D3D11 InfoQueue messages";
+  for (UINT64 index = 0; index < count; ++index) {
+    SIZE_T size = 0;
+    if (FAILED(queue->GetMessage(index, nullptr, &size)) || !size)
+      continue;
+    std::vector<unsigned char> storage(size);
+    auto *message = reinterpret_cast<D3D11_MESSAGE *>(storage.data());
+    if (FAILED(queue->GetMessage(index, message, &size)))
+      continue;
+    if (out.tellp() > 0)
+      out << " | ";
+    out << "D3D11_MESSAGE_ID=" << static_cast<unsigned>(message->ID)
+        << ", severity=" << static_cast<unsigned>(message->Severity)
+        << ", category=" << static_cast<unsigned>(message->Category)
+        << ", description=";
+    if (message->pDescription)
+      out.write(
+          message->pDescription,
+          static_cast<std::streamsize>(
+              message->DescriptionByteLength &&
+                      message->pDescription[message->DescriptionByteLength -
+                                            1] == '\0'
+                  ? message->DescriptionByteLength - 1
+                  : message->DescriptionByteLength));
+  }
+  return stable_debug_message(out.str());
+}
+
+TextureCreationProbe
+probe_texture_creation(ID3D11Device *device, ID3D11InfoQueue *queue,
+                       const char *name, const D3D11_TEXTURE2D_DESC &desc,
+                       ID3D11Texture2D **texture = nullptr) {
+  if (queue)
+    queue->ClearStoredMessages();
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> local;
+  TextureCreationProbe probe{
+      name, device->CreateTexture2D(&desc, nullptr, &local), {}};
+  probe.messages = info_queue_messages(queue);
+  if (texture && SUCCEEDED(probe.result))
+    *texture = local.Detach();
+  return probe;
+}
+
+void append_probe(std::ostringstream &out, const TextureCreationProbe &probe) {
+  out << "; matrix." << probe.name << ".HRESULT=0x" << std::hex
+      << std::uppercase << std::setw(8) << std::setfill('0')
+      << static_cast<std::uint32_t>(probe.result) << std::dec << "; matrix."
+      << probe.name << ".InfoQueue={" << probe.messages << "}";
+}
+
 SharingCapabilities sharing_capabilities(ID3D11Device *device) noexcept {
   SharingCapabilities result;
   D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
@@ -246,52 +310,52 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
   const auto destination_desc = normalized_d3d11va_interop_desc(source_desc);
   auto shader_desc = destination_desc;
   shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  auto keyed_desc = destination_desc;
+  keyed_desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+  auto keyed_shader_desc = keyed_desc;
+  keyed_shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  auto legacy_desc = destination_desc;
+  legacy_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
   ComPtr<ID3D11InfoQueue> info_queue;
   device.As(&info_queue);
-  const UINT64 messages_before =
-      info_queue ? info_queue->GetNumStoredMessagesAllowedByRetrievalFilter()
-                 : 0;
-  // Run the two-case qualification matrix on the actual decoder dimensions.
-  // Keep the successful bind=0 resource as the production copy destination.
-  const HRESULT bind0_hr =
-      device->CreateTexture2D(&destination_desc, nullptr, &destination);
-  ComPtr<ID3D11Texture2D> shader_probe;
-  const HRESULT shader_hr =
-      device->CreateTexture2D(&shader_desc, nullptr, &shader_probe);
-  const HRESULT hr = bind0_hr;
+  // Qualify every sharing combination independently on the actual decoder
+  // dimensions. Clear the InfoQueue around each call so a driver validation
+  // reason is unambiguously associated with one matrix case. Case A remains
+  // the production descriptor until a real D3D11/D3D12 run proves a different
+  // contract end-to-end; a successful keyed-mutex probe is not selected here.
+  const auto bind0 = probe_texture_creation(
+      device.Get(), info_queue.Get(), "A.NTHANDLE.BindFlags=0",
+      destination_desc, destination.ReleaseAndGetAddressOf());
+  const auto shader = probe_texture_creation(
+      device.Get(), info_queue.Get(), "B.NTHANDLE.BindFlags=SHADER_RESOURCE",
+      shader_desc);
+  const auto keyed0 =
+      probe_texture_creation(device.Get(), info_queue.Get(),
+                             "C.NTHANDLE_KEYEDMUTEX.BindFlags=0", keyed_desc);
+  const auto keyed_shader = probe_texture_creation(
+      device.Get(), info_queue.Get(),
+      "D.NTHANDLE_KEYEDMUTEX.BindFlags=SHADER_RESOURCE", keyed_shader_desc);
+  const auto legacy =
+      probe_texture_creation(device.Get(), info_queue.Get(),
+                             "E.LEGACY_SHARED.BindFlags=0", legacy_desc);
+  const HRESULT hr = bind0.result;
   if (FAILED(hr) || !destination) {
     UINT support = 0;
     const HRESULT support_hr =
         device->CheckFormatSupport(source_desc.Format, &support);
-    std::string debug_message;
-    if (info_queue) {
-      const UINT64 count =
-          info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
-      for (UINT64 index = messages_before; index < count; ++index) {
-        SIZE_T size = 0;
-        if (FAILED(info_queue->GetMessage(index, nullptr, &size)) || !size)
-          continue;
-        std::vector<unsigned char> storage(size);
-        auto *message = reinterpret_cast<D3D11_MESSAGE *>(storage.data());
-        if (SUCCEEDED(info_queue->GetMessage(index, message, &size)) &&
-            message->pDescription) {
-          if (!debug_message.empty())
-            debug_message += " | ";
-          debug_message.append(message->pDescription,
-                               message->DescriptionByteLength);
-        }
-      }
-    }
     std::ostringstream qualification;
     qualification << format_d3d11_texture_creation_failure(
         hr, source_desc, destination_desc, device->GetFeatureLevel(),
-        support_hr, support, debug_message);
+        support_hr, support);
     append_capabilities(qualification, sharing_capabilities(device.Get()));
-    qualification
-        << "; matrix.NV12_or_P010.BindFlags=0.HRESULT=0x" << std::hex
-        << std::uppercase << static_cast<std::uint32_t>(bind0_hr)
-        << "; matrix.NV12_or_P010.BindFlags=SHADER_RESOURCE.HRESULT=0x"
-        << static_cast<std::uint32_t>(shader_hr);
+    append_probe(qualification, bind0);
+    append_probe(qualification, shader);
+    append_probe(qualification, keyed0);
+    append_probe(qualification, keyed_shader);
+    append_probe(qualification, legacy);
+    qualification << "; production.BindFlags=0; production.MiscFlags=0x800"
+                     "; synchronization=shared D3D11/D3D12 fence (keyed mutex "
+                     "not selected)";
     diagnostic = qualification.str();
     return false;
   }
