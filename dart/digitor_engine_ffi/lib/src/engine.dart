@@ -87,14 +87,21 @@ enum DigitorExportFormat {
 enum DigitorVideoCodec { h264, h265, av1 }
 
 final class DigitorEngineException implements Exception {
-  const DigitorEngineException(this.operation, this.resultCode);
+  const DigitorEngineException(
+    this.operation,
+    this.resultCode, [
+    this.diagnostic = '',
+  ]);
 
   final String operation;
   final int resultCode;
+  final String diagnostic;
 
   @override
-  String toString() =>
-      'DigitorEngineException(operation: $operation, result: $resultCode)';
+  String toString() {
+    final detail = diagnostic.isEmpty ? '' : ', diagnostic: $diagnostic';
+    return 'DigitorEngineException(operation: $operation, result: $resultCode$detail)';
+  }
 }
 
 final class DigitorRendererInfo {
