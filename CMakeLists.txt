@@ -20,6 +20,15 @@ set(CMAKE_PROJECT_VERSION_PATCH "${DIGITOR_ENGINE_VERSION_PATCH}")
 find_package(Threads REQUIRED)
 target_link_libraries(digitor_engine PRIVATE Threads::Threads)
 
+# d3d12_backend.cpp intentionally reads the diagnostic-only
+# DIGITOR_D3D12_DRED environment switch. MSVC marks getenv as C4996; scope the
+# CRT compatibility opt-out to this translation unit only so /WX remains
+# effective for every other warning and target.
+if(MSVC)
+    set_source_files_properties(src/gpu/d3d12_backend.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS")
+endif()
+
 option(DIGITOR_ENABLE_OCIO "Enable OpenColorIO 2.x integration when available" ON)
 option(DIGITOR_REQUIRE_OCIO "Fail configuration when OpenColorIO 2.x is unavailable" OFF)
 set(DIGITOR_BUILT_WITH_OCIO OFF)
@@ -214,11 +223,19 @@ if(DIGITOR_BUILD_TESTS)
     add_executable(digitor_hdr_ecosystem_test tests/test_hdr_ecosystem.cpp)
     add_executable(digitor_professional_lut_scopes_test tests/test_professional_lut_scopes.cpp)
     add_executable(digitor_broadcast_color_matching_test tests/test_broadcast_color_matching.cpp)
+    add_executable(digitor_windows_d3d12_yuv_root_contract_test
+        tests/test_windows_d3d12_yuv_root_contract.cpp)
+    add_executable(digitor_windows_d3d12_device_diagnostics_test
+        tests/test_windows_d3d12_device_diagnostics.cpp)
+    target_include_directories(digitor_windows_d3d12_yuv_root_contract_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(digitor_windows_d3d12_device_diagnostics_test
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     if(WIN32)
         add_executable(digitor_windows_production_media_host_link_test
             tests/test_windows_production_media_host_link.cpp)
     endif()
-    foreach(target digitor_engine_owned_platform_production_test digitor_production_integration_runtime_test digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_production_media_graph_runtime_test digitor_flutter_production_host_adapter_test digitor_flutter_production_plugin_bootstrap_test digitor_flutter_production_c_api_test digitor_production_media_c_api_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_image_io_test digitor_native_still_image_host_test digitor_native_preview_presentation_test digitor_production_hardware_decode_test digitor_native_surface_import_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test)
+    foreach(target digitor_engine_owned_platform_production_test digitor_production_integration_runtime_test digitor_audio_latency_probe_test digitor_audio_sync_compensation_test digitor_professional_audio_engine_test digitor_live_playback_sync_test digitor_playback_transport_test digitor_production_playback_engine_test digitor_unified_real_media_runtime_test digitor_production_media_graph_runtime_test digitor_flutter_production_host_adapter_test digitor_flutter_production_plugin_bootstrap_test digitor_flutter_production_c_api_test digitor_production_media_c_api_test digitor_multitrack_timeline_test digitor_professional_timeline_suite_test digitor_timeline_editing_suite_test digitor_timeline_completion_test digitor_timeline_track_removal_test digitor_timeline_track_enablement_test digitor_production_export_test digitor_ffmpeg_export_runtime_test digitor_hardware_export_runtime_test digitor_production_hardware_encode_test digitor_export_job_c_api_test digitor_resumable_segment_export_test digitor_timeline_render_execution_test digitor_timeline_render_runtime_test digitor_timeline_media_adapter_test digitor_image_io_test digitor_native_still_image_host_test digitor_native_preview_presentation_test digitor_production_hardware_decode_test digitor_native_surface_import_test digitor_professional_import_test digitor_professional_color_management_test digitor_ocio_color_pipeline_test digitor_icc_display_management_test digitor_camera_raw_test digitor_hdr_ecosystem_test digitor_professional_lut_scopes_test digitor_broadcast_color_matching_test digitor_windows_d3d12_yuv_root_contract_test digitor_windows_d3d12_device_diagnostics_test)
         set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
         target_link_libraries(${target} PRIVATE Digitor::Engine)
         # These contract executables intentionally use assert() for executable
@@ -283,6 +300,10 @@ if(DIGITOR_BUILD_TESTS)
     add_test(NAME digitor_hdr_ecosystem COMMAND digitor_hdr_ecosystem_test)
     add_test(NAME digitor_professional_lut_scopes COMMAND digitor_professional_lut_scopes_test)
     add_test(NAME digitor_broadcast_color_matching COMMAND digitor_broadcast_color_matching_test)
+    add_test(NAME digitor_windows_d3d12_yuv_root_contract
+        COMMAND digitor_windows_d3d12_yuv_root_contract_test)
+    add_test(NAME digitor_windows_d3d12_device_diagnostics
+        COMMAND digitor_windows_d3d12_device_diagnostics_test)
     if(WIN32)
         add_test(NAME digitor_windows_production_media_host_link
             COMMAND digitor_windows_production_media_host_link_test)

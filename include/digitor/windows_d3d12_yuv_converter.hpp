@@ -30,7 +30,8 @@ public:
   [[nodiscard]] WindowsD3D12ConvertCallback callback();
   [[nodiscard]] DigitorResult convert(void* imported_resource,
                                       const WindowsZeroCopySurface&,
-                                      ProcessedGpuFramePtr&) noexcept;
+                                      ProcessedGpuFramePtr&,
+                                      std::string* diagnostic = nullptr) noexcept;
 
 private:
   struct Impl;

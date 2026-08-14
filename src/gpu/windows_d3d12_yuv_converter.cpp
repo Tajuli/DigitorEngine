@@ -1,17 +1,23 @@
 #include "digitor/windows_d3d12_yuv_converter.hpp"
 #include "digitor/windows_zero_copy.hpp"
+#include "windows_d3d12_yuv_root_contract_internal.hpp"
+#include "windows_d3d12_device_diagnostics_internal.hpp"
 
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <new>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <d3dcompiler.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -21,6 +27,94 @@ namespace digitor {
 #ifdef _WIN32
 namespace {
 using Microsoft::WRL::ComPtr;
+
+[[noreturn]] void throw_hresult(const char* stage, HRESULT hr) {
+  std::ostringstream message;
+  message << stage << " failed: HRESULT=0x" << std::hex << std::uppercase
+          << static_cast<std::uint32_t>(hr);
+  throw std::runtime_error(message.str());
+}
+
+std::string d3d12_info_queue_messages(ID3D12InfoQueue* queue) {
+  if (!queue) return "debug layer unavailable";
+  std::ostringstream out;
+  const auto count = queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+  if (!count) return "no new D3D12 InfoQueue messages";
+  for (UINT64 index = 0; index < count; ++index) {
+    SIZE_T size{};
+    if (FAILED(queue->GetMessage(index, nullptr, &size)) || !size) continue;
+    std::vector<unsigned char> bytes(size);
+    auto* message = reinterpret_cast<D3D12_MESSAGE*>(bytes.data());
+    if (FAILED(queue->GetMessage(index, message, &size))) continue;
+    if (out.tellp() > 0) out << " | ";
+    out << "ID=" << static_cast<unsigned>(message->ID)
+        << ", severity=" << static_cast<unsigned>(message->Severity)
+        << ", category=" << static_cast<unsigned>(message->Category)
+        << ", description=";
+    if (message->pDescription) out << message->pDescription;
+  }
+  auto text = out.str();
+  for (std::size_t start = 0; start + 2 < text.size();) {
+    if (text[start] != '0' ||
+        (text[start + 1] != 'x' && text[start + 1] != 'X')) {
+      ++start;
+      continue;
+    }
+    std::size_t end = start + 2;
+    while (end < text.size() &&
+           std::isxdigit(static_cast<unsigned char>(text[end])))
+      ++end;
+    if (end - start >= 14) {
+      text.replace(start, end - start, "<object>");
+      start += 8;
+    } else {
+      start = end;
+    }
+  }
+  return text;
+}
+
+std::string dred_diagnostic(ID3D12Device* device) {
+  ComPtr<ID3D12DeviceRemovedExtendedData> dred;
+  if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dred))) || !dred)
+    return "unavailable";
+  D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs{};
+  D3D12_DRED_PAGE_FAULT_OUTPUT page_fault{};
+  const HRESULT breadcrumbs_hr = dred->GetAutoBreadcrumbsOutput(&breadcrumbs);
+  const HRESULT page_fault_hr = dred->GetPageFaultAllocationOutput(&page_fault);
+  std::ostringstream out;
+  out << "breadcrumbs.HRESULT=0x" << std::hex << std::uppercase
+      << static_cast<std::uint32_t>(breadcrumbs_hr)
+      << ", page_fault.HRESULT=0x"
+      << static_cast<std::uint32_t>(page_fault_hr)
+      << ", page_fault_va=0x" << page_fault.PageFaultVA;
+  if (SUCCEEDED(breadcrumbs_hr) && breadcrumbs.pHeadAutoBreadcrumbNode) {
+    const auto* node = breadcrumbs.pHeadAutoBreadcrumbNode;
+    const UINT completed = node->pLastBreadcrumbValue
+                               ? *node->pLastBreadcrumbValue
+                               : 0;
+    out << ", command_list="
+        << (node->pCommandListDebugNameA ? node->pCommandListDebugNameA
+                                        : "unnamed")
+        << ", completed=" << std::dec << completed;
+    if (node->pCommandHistory && completed < node->BreadcrumbCount)
+      out << ", next_operation="
+          << static_cast<unsigned>(node->pCommandHistory[completed]);
+  }
+  if (SUCCEEDED(page_fault_hr)) {
+    if (page_fault.pHeadExistingAllocationNode)
+      out << ", existing_allocation="
+          << (page_fault.pHeadExistingAllocationNode->ObjectNameA
+                  ? page_fault.pHeadExistingAllocationNode->ObjectNameA
+                  : "unnamed");
+    if (page_fault.pHeadRecentFreedAllocationNode)
+      out << ", recently_freed_allocation="
+          << (page_fault.pHeadRecentFreedAllocationNode->ObjectNameA
+                  ? page_fault.pHeadRecentFreedAllocationNode->ObjectNameA
+                  : "unnamed");
+  }
+  return out.str();
+}
 
 constexpr const char kShader[] = R"HLSL(
 cbuffer C : register(b0) {
@@ -40,12 +134,7 @@ RWTexture2D<float4> output_rgba:register(u0);
  output_rgba[id.xy]=float4(float3(dot(row_r,v),dot(row_g,v),dot(row_b,v))*output_scale,1.0);
 })HLSL";
 
-struct Constants {
-  float y_offset, y_scale, uv_offset, uv_scale;
-  float row_r[3], p0, row_g[3], p1, row_b[3], output_scale;
-  std::uint32_t width, height, bit_depth, full_range;
-};
-static_assert(sizeof(Constants) % 16 == 0);
+using Constants = internal::WindowsD3D12YuvConstantsLayout;
 
 struct FrameOwner {
   ComPtr<ID3D12Resource> input, output;
@@ -164,22 +253,25 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   impl_->device = static_cast<ID3D12Device*>(raw);
   D3D12_COMMAND_QUEUE_DESC q{};
   q.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
-  if (FAILED(impl_->device->CreateCommandQueue(&q, IID_PPV_ARGS(&impl_->queue))) ||
-      FAILED(impl_->device->CreateCommandAllocator(
-          D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&impl_->allocator))) ||
-      FAILED(impl_->device->CreateCommandList(
-          0, D3D12_COMMAND_LIST_TYPE_COMPUTE, impl_->allocator.Get(), nullptr,
-          IID_PPV_ARGS(&impl_->list))))
-    throw std::runtime_error("cannot create D3D12 conversion commands");
-  impl_->list->Close();
+  HRESULT hr = impl_->device->CreateCommandQueue(&q, IID_PPV_ARGS(&impl_->queue));
+  if (FAILED(hr)) throw_hresult("D3D12 conversion command queue creation", hr);
+  hr = impl_->device->CreateCommandAllocator(
+      D3D12_COMMAND_LIST_TYPE_COMPUTE, IID_PPV_ARGS(&impl_->allocator));
+  if (FAILED(hr)) throw_hresult("D3D12 conversion command allocator creation", hr);
+  hr = impl_->device->CreateCommandList(
+      0, D3D12_COMMAND_LIST_TYPE_COMPUTE, impl_->allocator.Get(), nullptr,
+      IID_PPV_ARGS(&impl_->list));
+  if (FAILED(hr)) throw_hresult("D3D12 conversion command list creation", hr);
+  hr = impl_->list->Close();
+  if (FAILED(hr)) throw_hresult("D3D12 initial command list Close", hr);
+  impl_->list->SetName(L"Digitor YUV compute command list");
 
   D3D12_DESCRIPTOR_HEAP_DESC hd{};
   hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   hd.NumDescriptors = 3;
   hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-  if (FAILED(
-          impl_->device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&impl_->heap))))
-    throw std::runtime_error("cannot create descriptor heap");
+  hr = impl_->device->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&impl_->heap));
+  if (FAILED(hr)) throw_hresult("D3D12 YUV descriptor heap creation", hr);
   impl_->descriptor_size = impl_->device->GetDescriptorHandleIncrementSize(
       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
@@ -188,7 +280,13 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 2};
   D3D12_ROOT_PARAMETER params[2]{};
   params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-  params[0].Constants = {sizeof(Constants) / 4, 0, 0};
+  params[0].Constants.ShaderRegister =
+      internal::kWindowsD3D12YuvRootConstants.shader_register;
+  params[0].Constants.RegisterSpace =
+      internal::kWindowsD3D12YuvRootConstants.register_space;
+  params[0].Constants.Num32BitValues = static_cast<UINT>(
+      sizeof(Constants) / sizeof(std::uint32_t));
+  params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
   params[1].DescriptorTable = {2, ranges};
   D3D12_ROOT_SIGNATURE_DESC rs{};
@@ -196,24 +294,66 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   rs.pParameters = params;
 
   ComPtr<ID3DBlob> signature, errors, shader;
-  if (FAILED(D3D12SerializeRootSignature(
-          &rs, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &errors)) ||
-      FAILED(impl_->device->CreateRootSignature(
-          0, signature->GetBufferPointer(), signature->GetBufferSize(),
-          IID_PPV_ARGS(&impl_->root))) ||
-      FAILED(D3DCompile(kShader, sizeof(kShader) - 1, "yuv_to_linear_rgba.hlsl",
-                        nullptr, nullptr, "main", "cs_5_1",
-                        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors)))
-    throw std::runtime_error("cannot create YUV root signature or shader");
+  hr = D3D12SerializeRootSignature(
+      &rs, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &errors);
+  if (FAILED(hr)) throw_hresult("D3D12 YUV root signature serialization", hr);
+  hr = impl_->device->CreateRootSignature(
+      0, signature->GetBufferPointer(), signature->GetBufferSize(),
+      IID_PPV_ARGS(&impl_->root));
+  if (FAILED(hr)) throw_hresult("D3D12 YUV root signature creation", hr);
+  hr = D3DCompile(kShader, sizeof(kShader) - 1, "yuv_to_linear_rgba.hlsl",
+                  nullptr, nullptr, "main", "cs_5_1",
+                  D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
+  if (FAILED(hr)) throw_hresult("D3D12 YUV shader compilation", hr);
+
+  ComPtr<ID3D12ShaderReflection> reflection;
+  hr = D3DReflect(shader->GetBufferPointer(), shader->GetBufferSize(),
+                  IID_PPV_ARGS(&reflection));
+  if (FAILED(hr)) throw_hresult("D3D12 YUV shader reflection", hr);
+  const struct ExpectedBinding {
+    const char* name;
+    D3D_SHADER_INPUT_TYPE type;
+    UINT bind_point;
+  } expected_bindings[] = {{"C", D3D_SIT_CBUFFER, 0},
+                           {"y_plane", D3D_SIT_TEXTURE, 0},
+                           {"uv_plane", D3D_SIT_TEXTURE, 1},
+                           {"output_rgba", D3D_SIT_UAV_RWTYPED, 0}};
+  for (const auto& expected_binding : expected_bindings) {
+    D3D12_SHADER_INPUT_BIND_DESC binding{};
+    hr = reflection->GetResourceBindingDescByName(expected_binding.name,
+                                                   &binding);
+    if (FAILED(hr) || binding.Type != expected_binding.type ||
+        binding.BindPoint != expected_binding.bind_point || binding.Space != 0)
+      throw std::runtime_error(
+          "D3D12 YUV shader reflection binding contract failed");
+  }
 
   D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
   pd.pRootSignature = impl_->root.Get();
   pd.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
-  if (FAILED(impl_->device->CreateComputePipelineState(
-          &pd, IID_PPV_ARGS(&impl_->pipeline))) ||
-      FAILED(impl_->device->CreateFence(
-          0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl_->fence))))
-    throw std::runtime_error("cannot create YUV pipeline");
+  ComPtr<ID3D12InfoQueue> info_queue;
+  impl_->device.As(&info_queue);
+  if (info_queue) info_queue->ClearStoredMessages();
+  hr = impl_->device->CreateComputePipelineState(
+      &pd, IID_PPV_ARGS(&impl_->pipeline));
+  if (FAILED(hr)) {
+    std::ostringstream message;
+    message << "D3D12 YUV compute PSO creation failed: HRESULT=0x" << std::hex
+            << std::uppercase << static_cast<std::uint32_t>(hr)
+            << "; profile=cs_5_1; root_constants={ShaderRegister=" << std::dec
+            << params[0].Constants.ShaderRegister
+            << ", RegisterSpace=" << params[0].Constants.RegisterSpace
+            << ", Num32BitValues=" << params[0].Constants.Num32BitValues
+            << "}; reflected_bindings={b0=C,t0=y_plane,t1=uv_plane,"
+               "u0=output_rgba}; InfoQueue={"
+            << d3d12_info_queue_messages(info_queue.Get()) << "}";
+    throw std::runtime_error(message.str());
+  }
+  impl_->pipeline->SetName(L"Digitor YUV pipeline");
+  hr = impl_->device->CreateFence(
+      0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl_->fence));
+  if (FAILED(hr)) throw_hresult("D3D12 conversion fence creation", hr);
+  impl_->fence->SetName(L"Digitor YUV conversion fence");
   impl_->event_handle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
   if (!impl_->event_handle)
     throw std::runtime_error("cannot create fence event");
@@ -228,31 +368,140 @@ WindowsD3D12YuvConverter::~WindowsD3D12YuvConverter() = default;
 WindowsD3D12ConvertCallback WindowsD3D12YuvConverter::callback() {
   auto keep = impl_;
   return [keep](void* r, const WindowsZeroCopySurface& s,
-                ProcessedGpuFramePtr& o) noexcept {
+                ProcessedGpuFramePtr& o, std::string* diagnostic) noexcept {
     WindowsD3D12YuvConverter converter(keep);
-    return converter.convert(r, s, o);
+    return converter.convert(r, s, o, diagnostic);
   };
 }
 
 DigitorResult WindowsD3D12YuvConverter::convert(
     void* raw, const WindowsZeroCopySurface& s,
-    ProcessedGpuFramePtr& out) noexcept {
+    ProcessedGpuFramePtr& out, std::string* diagnostic) noexcept {
   out.reset();
+  auto fail = [&](DigitorResult result, const std::string& message) {
+    if (diagnostic) *diagnostic = message;
+    return result;
+  };
+#ifdef _WIN32
+  auto fail_hr = [&](const char* stage, HRESULT hr) {
+    std::ostringstream message;
+    message << stage << " failed: DigitorResult="
+            << static_cast<unsigned>(hr_result(hr)) << ", HRESULT=0x"
+            << std::hex << std::uppercase << static_cast<std::uint32_t>(hr)
+            << std::dec << ", format=" << static_cast<unsigned>(s.format)
+            << ", dimensions=" << s.width << "x" << s.height;
+    return fail(hr_result(hr), message.str());
+  };
+#endif
 #ifndef _WIN32
   (void)raw;
   (void)s;
-  return DIGITOR_RESULT_UNSUPPORTED;
+  return fail(DIGITOR_RESULT_UNSUPPORTED,
+              "D3D12 YUV conversion is unavailable on this platform");
 #else
-  if (!raw || !s.lifetime) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  if (!raw || !s.lifetime)
+    return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
+                "D3D12 converter input validation failed");
   try {
     auto* input = static_cast<ID3D12Resource*>(raw);
+    internal::DeviceRemovalCheckpointTracker checkpoint_tracker;
+    checkpoint_tracker.observe("converter.entry", S_OK);
+    std::string view_diagnostics;
+    const LUID d3d12_luid = impl_->device->GetAdapterLuid();
+    const bool same_adapter =
+        d3d12_luid.LowPart == s.d3d11_adapter_luid_low &&
+        d3d12_luid.HighPart == s.d3d11_adapter_luid_high;
+    auto append_adapter_identity = [&](std::ostringstream& message) {
+      message << "; D3D11AdapterLuid=" << std::hex << std::uppercase
+              << static_cast<std::uint32_t>(s.d3d11_adapter_luid_high) << ":"
+              << s.d3d11_adapter_luid_low << "; D3D12AdapterLuid="
+              << static_cast<std::uint32_t>(d3d12_luid.HighPart) << ":"
+              << d3d12_luid.LowPart << std::dec
+              << "; same_adapter=" << (same_adapter ? "true" : "false");
+    };
+    auto check_health = [&](const char* checkpoint) -> DigitorResult {
+      const HRESULT reason = impl_->device->GetDeviceRemovedReason();
+      if (SUCCEEDED(reason)) {
+        checkpoint_tracker.observe(checkpoint, reason);
+        return DIGITOR_RESULT_OK;
+      }
+      checkpoint_tracker.observe(checkpoint, reason);
+      std::ostringstream message;
+      message << "D3D12 device removed: device_removed=true; "
+              << "first_failure_checkpoint=" << checkpoint
+              << "; previous_healthy_checkpoint="
+              << checkpoint_tracker.last_healthy()
+              << "; GetDeviceRemovedReason=0x" << std::hex << std::uppercase
+              << static_cast<std::uint32_t>(reason)
+              << "; view_InfoQueue={" << view_diagnostics << "}; DRED={"
+              << dred_diagnostic(impl_->device.Get()) << "}";
+      append_adapter_identity(message);
+      return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, message.str());
+    };
+    if (check_health("converter.before_fence_open") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    ComPtr<ID3D12Fence> acquire_fence;
+    HRESULT fence_open_hr = S_FALSE;
+    HRESULT reason_before_fence_open = impl_->device->GetDeviceRemovedReason();
+    if (s.acquire_fence_handle && s.acquire_fence_value) {
+      fence_open_hr = impl_->device->OpenSharedHandle(
+          reinterpret_cast<HANDLE>(s.acquire_fence_handle),
+          IID_PPV_ARGS(&acquire_fence));
+      const HRESULT reason_after_fence_open =
+          impl_->device->GetDeviceRemovedReason();
+      if (FAILED(fence_open_hr) || FAILED(reason_after_fence_open)) {
+        std::ostringstream message;
+        message << "D3D12 acquire fence early open failed: device_removed="
+                << (FAILED(reason_after_fence_open) ? "true" : "false")
+                << "; first_failure_checkpoint=AcquireFence.OpenSharedHandle"
+                << "; deviceReasonBefore=0x" << std::hex << std::uppercase
+                << static_cast<std::uint32_t>(reason_before_fence_open)
+                << "; fenceOpenHr=0x"
+                << static_cast<std::uint32_t>(fence_open_hr)
+                << "; deviceReasonAfter=0x"
+                << static_cast<std::uint32_t>(reason_after_fence_open)
+                << "; DRED={" << dred_diagnostic(impl_->device.Get()) << "}";
+        append_adapter_identity(message);
+        return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, message.str());
+      }
+      checkpoint_tracker.observe("AcquireFence.OpenSharedHandle", S_OK);
+    }
     const auto d = input->GetDesc();
     const auto expected = s.format == WindowsZeroCopyFormat::nv12
                               ? DXGI_FORMAT_NV12
                               : DXGI_FORMAT_P010;
     if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
         d.Format != expected || d.Width < s.width || d.Height < s.height)
-      return DIGITOR_RESULT_INVALID_ARGUMENT;
+      return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
+                  "D3D12 converter imported-resource descriptor validation "
+                  "failed");
+
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT y_support{};
+    y_support.Format = s.format == WindowsZeroCopyFormat::nv12
+                           ? DXGI_FORMAT_R8_UNORM
+                           : DXGI_FORMAT_R16_UNORM;
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT uv_support{};
+    uv_support.Format = s.format == WindowsZeroCopyFormat::nv12
+                            ? DXGI_FORMAT_R8G8_UNORM
+                            : DXGI_FORMAT_R16G16_UNORM;
+    HRESULT support_hr = impl_->device->CheckFeatureSupport(
+        D3D12_FEATURE_FORMAT_SUPPORT, &y_support, sizeof(y_support));
+    if (FAILED(support_hr))
+      return fail_hr("D3D12 Y-plane CheckFeatureSupport", support_hr);
+    if (!(y_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
+      return fail(DIGITOR_RESULT_UNSUPPORTED,
+                  "D3D12 Y-plane format lacks SHADER_SAMPLE support");
+    if (check_health("YPlane.CheckFeatureSupport") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    support_hr = impl_->device->CheckFeatureSupport(
+        D3D12_FEATURE_FORMAT_SUPPORT, &uv_support, sizeof(uv_support));
+    if (FAILED(support_hr))
+      return fail_hr("D3D12 UV-plane CheckFeatureSupport", support_hr);
+    if (!(uv_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
+      return fail(DIGITOR_RESULT_UNSUPPORTED,
+                  "D3D12 UV-plane format lacks SHADER_SAMPLE support");
+    if (check_health("UVPlane.CheckFeatureSupport") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     D3D12_RESOURCE_DESC od{};
     od.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -271,7 +520,10 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     auto hr = impl_->device->CreateCommittedResource(
         &hp, D3D12_HEAP_FLAG_NONE, &od, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         nullptr, IID_PPV_ARGS(&output));
-    if (FAILED(hr)) return hr_result(hr);
+    if (FAILED(hr)) return fail_hr("D3D12 conversion output creation", hr);
+    output->SetName(L"Digitor YUV output texture");
+    if (check_health("Output.CreateCommittedResource") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     auto cpu = impl_->heap->GetCPUDescriptorHandleForHeapStart();
     D3D12_SHADER_RESOURCE_VIEW_DESC y{};
@@ -280,22 +532,51 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     y.Format = s.format == WindowsZeroCopyFormat::nv12 ? DXGI_FORMAT_R8_UNORM
                                                         : DXGI_FORMAT_R16_UNORM;
     y.Texture2D.PlaneSlice = 0;
+    ComPtr<ID3D12InfoQueue> view_info_queue;
+    impl_->device.As(&view_info_queue);
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateShaderResourceView(input, &y, cpu);
+    view_diagnostics += "Y={resource_format=" +
+        std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(y.Format)) + ", PlaneSlice=0, messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
+    if (check_health("CreateShaderResourceView.Y") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     cpu.ptr += impl_->descriptor_size;
     auto uv = y;
     uv.Format = s.format == WindowsZeroCopyFormat::nv12
                     ? DXGI_FORMAT_R8G8_UNORM
                     : DXGI_FORMAT_R16G16_UNORM;
     uv.Texture2D.PlaneSlice = 1;
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateShaderResourceView(input, &uv, cpu);
+    view_diagnostics += "UV={resource_format=" +
+        std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(uv.Format)) + ", PlaneSlice=1, messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
+    if (check_health("CreateShaderResourceView.UV") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     cpu.ptr += impl_->descriptor_size;
     D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
     u.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     u.Format = od.Format;
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateUnorderedAccessView(output.Get(), nullptr, &u, cpu);
+    view_diagnostics += "UAV={resource_format=" +
+        std::to_string(static_cast<unsigned>(od.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(u.Format)) + ", flags=" +
+        std::to_string(static_cast<unsigned>(od.Flags)) + ", messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}";
+    if (check_health("CreateUnorderedAccessView.Output") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
-    if (FAILED(impl_->allocator->Reset()) ||
-        FAILED(impl_->list->Reset(impl_->allocator.Get(), impl_->pipeline.Get())))
+    hr = impl_->allocator->Reset();
+    if (FAILED(hr)) return fail_hr("D3D12 command allocator Reset", hr);
+    if (check_health("CommandAllocator.Reset") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    hr = impl_->list->Reset(impl_->allocator.Get(), impl_->pipeline.Get());
+    if (FAILED(hr)) return fail_hr("D3D12 command list Reset", hr);
+    if (check_health("CommandList.Reset") != DIGITOR_RESULT_OK)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     ID3D12DescriptorHeap* heaps[]{impl_->heap.Get()};
     impl_->list->SetDescriptorHeaps(1, heaps);
@@ -304,37 +585,74 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     impl_->list->SetComputeRoot32BitConstants(0, sizeof(Constants) / 4, &c, 0);
     impl_->list->SetComputeRootDescriptorTable(
         1, impl_->heap->GetGPUDescriptorHandleForHeapStart());
+    if (check_health("DescriptorHeap.RootBindings") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    D3D12_RESOURCE_BARRIER input_to_srv{};
+    input_to_srv.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    input_to_srv.Transition = {
+        input, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_COMMON,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+    impl_->list->ResourceBarrier(1, &input_to_srv);
+    if (check_health("ResourceBarrier.InputToSRV") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     impl_->list->Dispatch((s.width + 7) / 8, (s.height + 7) / 8, 1);
+    if (check_health("Dispatch.Record") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
-    D3D12_RESOURCE_BARRIER b{};
-    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    b.Transition = {output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
-    impl_->list->ResourceBarrier(1, &b);
-    if (FAILED(impl_->list->Close()))
+    D3D12_RESOURCE_BARRIER barriers[2]{};
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barriers[0].Transition = {
+        input, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COMMON};
+    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barriers[1].Transition = {
+        output.Get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+    impl_->list->ResourceBarrier(2, barriers);
+    if (check_health("ResourceBarrier.ReturnAndOutput") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    hr = impl_->list->Close();
+    if (FAILED(hr)) return fail_hr("D3D12 command list Close", hr);
+    if (check_health("CommandList.Close") != DIGITOR_RESULT_OK)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     if (s.acquire_fence_handle && s.acquire_fence_value) {
-      ComPtr<ID3D12Fence> acquire_fence;
-      const auto open_fence = impl_->device->OpenSharedHandle(
-          reinterpret_cast<HANDLE>(s.acquire_fence_handle),
-          IID_PPV_ARGS(&acquire_fence));
-      if (FAILED(open_fence) ||
-          FAILED(impl_->queue->Wait(acquire_fence.Get(), s.acquire_fence_value)))
+      if (!acquire_fence)
+        return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+                    "D3D12 early-opened acquire fence is unavailable");
+      hr = impl_->queue->Wait(acquire_fence.Get(), s.acquire_fence_value);
+      if (FAILED(hr)) return fail_hr("D3D12 queue acquire-fence Wait", hr);
+      if (check_health("Queue.Wait") != DIGITOR_RESULT_OK)
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
 
     ID3D12CommandList* lists[]{impl_->list.Get()};
     impl_->queue->ExecuteCommandLists(1, lists);
+    if (check_health("ExecuteCommandLists") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     const auto id = impl_->sequence.fetch_add(1);
-    if (FAILED(impl_->queue->Signal(impl_->fence.Get(), id)))
+    hr = impl_->queue->Signal(impl_->fence.Get(), id);
+    if (FAILED(hr)) return fail_hr("D3D12 conversion fence Signal", hr);
+    if (check_health("Queue.Signal") != DIGITOR_RESULT_OK)
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     if (impl_->fence->GetCompletedValue() < id) {
-      if (FAILED(impl_->fence->SetEventOnCompletion(id, impl_->event_handle)))
-        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-      WaitForSingleObject(impl_->event_handle, INFINITE);
+      hr = impl_->fence->SetEventOnCompletion(id, impl_->event_handle);
+      if (FAILED(hr))
+        return fail_hr("D3D12 conversion fence SetEventOnCompletion", hr);
+      const DWORD wait = WaitForSingleObject(impl_->event_handle, INFINITE);
+      if (wait != WAIT_OBJECT_0)
+        return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+                    "D3D12 conversion fence wait failed");
     }
+    hr = impl_->device->GetDeviceRemovedReason();
+    if (FAILED(hr))
+      return fail_hr(
+          "D3D12 Y/UV SRV setup, resource barriers, Dispatch, or "
+          "ExecuteCommandLists device validation",
+          hr);
 
     auto owner = std::make_shared<FrameOwner>();
     owner->input = input;
@@ -363,20 +681,28 @@ DigitorResult WindowsD3D12YuvConverter::convert(
           out->metadata().format != impl_->output_format ||
           out->metadata().timestamp != s.timestamp_us) {
         out.reset();
-        return DIGITOR_RESULT_INTERNAL_ERROR;
+        return fail(DIGITOR_RESULT_INTERNAL_ERROR,
+                    "D3D12 output ProcessedGpuFrame validation failed");
       }
+      if (diagnostic) diagnostic->clear();
       return DIGITOR_RESULT_OK;
     }
 
     out = std::make_shared<ProcessedGpuFrame>(
         impl_->frame_context_identity, DIGITOR_RENDERER_D3D12, std::move(m), id,
         owner, std::make_shared<std::atomic_bool>(true), false);
+    if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
   } catch (const std::bad_alloc&) {
-    return DIGITOR_RESULT_OUT_OF_MEMORY;
+    return fail(DIGITOR_RESULT_OUT_OF_MEMORY,
+                "D3D12 YUV conversion allocation failed");
+  } catch (const std::exception& error) {
+    out.reset();
+    return fail(DIGITOR_RESULT_INTERNAL_ERROR, error.what());
   } catch (...) {
     out.reset();
-    return DIGITOR_RESULT_INTERNAL_ERROR;
+    return fail(DIGITOR_RESULT_INTERNAL_ERROR,
+                "unexpected D3D12 YUV conversion failure");
   }
 #endif
 }

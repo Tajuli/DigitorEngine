@@ -6,11 +6,9 @@
 #include <memory>
 #include <new>
 #include <sstream>
-#include <vector>
 
 #if defined(_WIN32) && defined(DIGITOR_HAS_FFMPEG)
 #include <d3d11_4.h>
-#include <d3d11sdklayers.h>
 #include <dxgi1_2.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -77,6 +75,8 @@ struct SharingCapabilities {
   HRESULT options5_hr{E_FAIL};
   D3D11_SHARED_RESOURCE_TIER shared_resource_tier{};
 };
+
+std::string stable_debug_message(std::string text);
 
 SharingCapabilities sharing_capabilities(ID3D11Device *device) noexcept {
   SharingCapabilities result;
@@ -151,7 +151,8 @@ normalized_d3d11va_interop_desc(const D3D11_TEXTURE2D_DESC &source) noexcept {
   // required and is rejected for shared planar textures by some drivers.
   destination.BindFlags = 0;
   destination.CPUAccessFlags = 0;
-  destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+                          D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
   return destination;
 }
 
@@ -230,6 +231,7 @@ DigitorResult hr_result(HRESULT hr) noexcept {
 bool make_shareable_slice_copy(ID3D11Texture2D *source,
                                std::uint32_t source_slice,
                                ComPtr<ID3D11Texture2D> &destination,
+                               HRESULT &creation_hr, HRESULT &keyed_mutex_hr,
                                std::string &diagnostic) {
   D3D11_TEXTURE2D_DESC source_desc{};
   source->GetDesc(&source_desc);
@@ -244,55 +246,30 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
     return false;
   }
   const auto destination_desc = normalized_d3d11va_interop_desc(source_desc);
-  auto shader_desc = destination_desc;
-  shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  ComPtr<ID3D11InfoQueue> info_queue;
-  device.As(&info_queue);
-  const UINT64 messages_before =
-      info_queue ? info_queue->GetNumStoredMessagesAllowedByRetrievalFilter()
-                 : 0;
-  // Run the two-case qualification matrix on the actual decoder dimensions.
-  // Keep the successful bind=0 resource as the production copy destination.
-  const HRESULT bind0_hr =
-      device->CreateTexture2D(&destination_desc, nullptr, &destination);
-  ComPtr<ID3D11Texture2D> shader_probe;
-  const HRESULT shader_hr =
-      device->CreateTexture2D(&shader_desc, nullptr, &shader_probe);
-  const HRESULT hr = bind0_hr;
+  const HRESULT hr = creation_hr = device->CreateTexture2D(
+      &destination_desc, nullptr, &destination);
   if (FAILED(hr) || !destination) {
     UINT support = 0;
     const HRESULT support_hr =
         device->CheckFormatSupport(source_desc.Format, &support);
-    std::string debug_message;
-    if (info_queue) {
-      const UINT64 count =
-          info_queue->GetNumStoredMessagesAllowedByRetrievalFilter();
-      for (UINT64 index = messages_before; index < count; ++index) {
-        SIZE_T size = 0;
-        if (FAILED(info_queue->GetMessage(index, nullptr, &size)) || !size)
-          continue;
-        std::vector<unsigned char> storage(size);
-        auto *message = reinterpret_cast<D3D11_MESSAGE *>(storage.data());
-        if (SUCCEEDED(info_queue->GetMessage(index, message, &size)) &&
-            message->pDescription) {
-          if (!debug_message.empty())
-            debug_message += " | ";
-          debug_message.append(message->pDescription,
-                               message->DescriptionByteLength);
-        }
-      }
-    }
     std::ostringstream qualification;
     qualification << format_d3d11_texture_creation_failure(
         hr, source_desc, destination_desc, device->GetFeatureLevel(),
-        support_hr, support, debug_message);
+        support_hr, support);
     append_capabilities(qualification, sharing_capabilities(device.Get()));
-    qualification
-        << "; matrix.NV12_or_P010.BindFlags=0.HRESULT=0x" << std::hex
-        << std::uppercase << static_cast<std::uint32_t>(bind0_hr)
-        << "; matrix.NV12_or_P010.BindFlags=SHADER_RESOURCE.HRESULT=0x"
-        << static_cast<std::uint32_t>(shader_hr);
+    qualification << "; production.BindFlags=0; production.MiscFlags=0x900";
     diagnostic = qualification.str();
+    return false;
+  }
+  ComPtr<IDXGIKeyedMutex> keyed_mutex;
+  keyed_mutex_hr = destination.As(&keyed_mutex);
+  if (FAILED(keyed_mutex_hr) || !keyed_mutex) {
+    std::ostringstream out;
+    out << "Case C texture does not expose IDXGIKeyedMutex: HRESULT=0x"
+        << std::hex << std::uppercase
+        << static_cast<std::uint32_t>(keyed_mutex_hr);
+    diagnostic = out.str();
+    destination.Reset();
     return false;
   }
   ComPtr<ID3D11DeviceContext> context;
@@ -306,18 +283,24 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
       D3D11CalcSubresource(0, source_slice, source_desc.MipLevels);
   context->CopySubresourceRegion(destination.Get(), 0, 0, 0, 0, source,
                                  source_subresource, nullptr);
+  // KEYEDMUTEX is required by the driver for this planar NT-shareable texture,
+  // but the D3D12 consumer cannot participate in IDXGIKeyedMutex. Ownership is
+  // not transferred through a mutex key: the D3D11 copy is ordered by the
+  // shared fence below and D3D12 waits for that exact value before sampling.
   return true;
 }
 
 bool create_nt_handle(ID3D11Texture2D *texture, HANDLE &handle,
+                      HRESULT &resource_query_hr, HRESULT &create_handle_hr,
                       std::string &diagnostic) {
   ComPtr<IDXGIResource1> resource;
-  HRESULT hr = texture->QueryInterface(IID_PPV_ARGS(&resource));
+  HRESULT hr = resource_query_hr =
+      texture->QueryInterface(IID_PPV_ARGS(&resource));
   if (FAILED(hr) || !resource) {
     diagnostic = "D3D11 texture does not expose IDXGIResource1";
     return false;
   }
-  hr = resource->CreateSharedHandle(
+  hr = create_handle_hr = resource->CreateSharedHandle(
       nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
       &handle);
   if (FAILED(hr) || !handle) {
@@ -337,6 +320,7 @@ bool create_nt_handle(ID3D11Texture2D *texture, HANDLE &handle,
 
 bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
                           HANDLE &shared_handle, std::uint64_t &value,
+                          FfmpegD3D11vaExtractionResult &result,
                           std::string &diagnostic) {
   ComPtr<ID3D11Device> base_device;
   texture->GetDevice(&base_device);
@@ -345,6 +329,8 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
     return false;
   }
   ComPtr<ID3D11Device5> device;
+  result.d3d11_health_before_fence = static_cast<std::uint32_t>(
+      base_device->GetDeviceRemovedReason());
   if (FAILED(base_device.As(&device)) || !device) {
     diagnostic = "D3D11 device does not expose shared fence support";
     return false;
@@ -358,23 +344,38 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
   }
   HRESULT hr =
       device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence));
+  result.create_fence_hresult = static_cast<std::uint32_t>(hr);
   if (FAILED(hr) || !fence) {
-    diagnostic = "ID3D11Device5::CreateFence failed";
+    std::ostringstream out;
+    out << "ID3D11Device5::CreateFence failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr);
+    diagnostic = out.str();
     return false;
   }
   hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &shared_handle);
+  result.create_fence_handle_hresult = static_cast<std::uint32_t>(hr);
   if (FAILED(hr) || !shared_handle) {
-    diagnostic = "ID3D11Fence::CreateSharedHandle failed";
+    std::ostringstream out;
+    out << "ID3D11Fence::CreateSharedHandle failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr);
+    diagnostic = out.str();
     fence.Reset();
     return false;
   }
   value = 1;
   hr = context->Signal(fence.Get(), value);
+  result.signal_fence_hresult = static_cast<std::uint32_t>(hr);
+  result.d3d11_health_after_signal = static_cast<std::uint32_t>(
+      base_device->GetDeviceRemovedReason());
   if (FAILED(hr)) {
     CloseHandle(shared_handle);
     shared_handle = nullptr;
     fence.Reset();
-    diagnostic = "ID3D11DeviceContext4::Signal failed";
+    std::ostringstream out;
+    out << "ID3D11DeviceContext4::Signal failed: HRESULT=0x" << std::hex
+        << std::uppercase << static_cast<std::uint32_t>(hr)
+        << ", fence_value=" << std::dec << value;
+    diagnostic = out.str();
     return false;
   }
   return true;
@@ -441,29 +442,45 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
 
     owner->texture = texture;
     HANDLE shared{};
+    HRESULT texture_creation_hr = S_OK;
+    HRESULT keyed_mutex_hr = E_NOINTERFACE;
+    HRESULT resource_query_hr = E_NOINTERFACE;
+    HRESULT create_handle_hr = E_FAIL;
     std::uint32_t exported_slice = slice;
     if (desc.ArraySize == 1 && slice == 0 &&
-        create_nt_handle(owner->texture.Get(), shared, out.diagnostic)) {
+        create_nt_handle(owner->texture.Get(), shared, resource_query_hr,
+                         create_handle_hr, out.diagnostic)) {
       out.shareable_texture_reused = true;
       exported_slice = 0;
     } else {
       out.diagnostic.clear();
       ComPtr<ID3D11Texture2D> copy;
-      if (!make_shareable_slice_copy(texture, slice, copy, out.diagnostic))
+      if (!make_shareable_slice_copy(texture, slice, copy, texture_creation_hr,
+                                     keyed_mutex_hr, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       owner->texture = std::move(copy);
-      if (!create_nt_handle(owner->texture.Get(), shared, out.diagnostic))
+      if (!create_nt_handle(owner->texture.Get(), shared, resource_query_hr,
+                            create_handle_hr, out.diagnostic))
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       out.shareable_copy_created = true;
       exported_slice = 0;
     }
     owner->handle = shared;
     out.shared_handle_created = true;
+    out.texture_creation_hresult =
+        static_cast<std::uint32_t>(texture_creation_hr);
+    out.keyed_mutex_query_hresult =
+        static_cast<std::uint32_t>(keyed_mutex_hr);
+    out.keyed_mutex_exposed = SUCCEEDED(keyed_mutex_hr);
+    out.idxgi_resource1_query_hresult =
+        static_cast<std::uint32_t>(resource_query_hr);
+    out.create_shared_handle_hresult =
+        static_cast<std::uint32_t>(create_handle_hr);
 
     std::uint64_t acquire_value = 0;
     if (!create_acquire_fence(owner->texture.Get(), owner->acquire_fence,
                               owner->acquire_fence_handle, acquire_value,
-                              out.diagnostic))
+                              out, out.diagnostic))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out.acquire_sync_created = true;
     out.no_cpu_transfer = true;
@@ -479,6 +496,17 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     native.native_handle = reinterpret_cast<std::uintptr_t>(shared);
     native.native_device =
         reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
+    ComPtr<ID3D11Device> adapter_device11;
+    owner->texture->GetDevice(&adapter_device11);
+    ComPtr<IDXGIDevice> dxgi_device;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC adapter_desc{};
+    if (adapter_device11 && SUCCEEDED(adapter_device11.As(&dxgi_device)) &&
+        dxgi_device && SUCCEEDED(dxgi_device->GetAdapter(&adapter)) && adapter &&
+        SUCCEEDED(adapter->GetDesc(&adapter_desc))) {
+      native.adapter_luid_low = adapter_desc.AdapterLuid.LowPart;
+      native.adapter_luid_high = adapter_desc.AdapterLuid.HighPart;
+    }
     native.timestamp_us =
         normalized_timestamp ? timestamp_us : frame->best_effort_timestamp;
     native.acquire_sync.type = NativeMediaSyncType::d3d11_fence;
@@ -502,6 +530,8 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     out.surface.shared_handle = reinterpret_cast<std::uintptr_t>(shared);
     out.surface.decoder_device =
         reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
+    out.surface.d3d11_adapter_luid_low = native.adapter_luid_low;
+    out.surface.d3d11_adapter_luid_high = native.adapter_luid_high;
     out.surface.timestamp_us = native.timestamp_us;
     out.surface.color.matrix = matrix_from_av(frame->colorspace);
     out.surface.color.chroma_siting = chroma_from_av(frame->chroma_location);

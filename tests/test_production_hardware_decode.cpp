@@ -138,10 +138,16 @@ int main() {
 
     ProductionHardwareDecodeSession import_failure(
         std::make_unique<FakeDecoder>(),
-        [](const ZeroCopyImportRequest&, ProcessedGpuFramePtr&) {
+        [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr&) {
+            assert(request.diagnostic);
+            *request.diagnostic =
+                "D3D12 OpenSharedHandle failed: HRESULT=0x80070057";
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         }, options);
     assert(import_failure.decode(0, frame, &diagnostic) == DIGITOR_RESULT_BACKEND_UNAVAILABLE);
+    assert(diagnostic ==
+           "D3D12 OpenSharedHandle failed: HRESULT=0x80070057");
+    assert(import_failure.qualification().diagnostic == diagnostic);
 
     assert(session.seek(1000000, &diagnostic) == DIGITOR_RESULT_OK);
 

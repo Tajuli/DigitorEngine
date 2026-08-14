@@ -75,11 +75,15 @@ DigitorResult ProductionHardwareDecodeSession::decode(
     request.renderer_backend = options_.renderer_backend;
     request.output_format = options_.render_format;
     request.working_color_space = "linear-rgba";
+    std::string import_diagnostic;
+    request.diagnostic = &import_diagnostic;
 
     ProcessedGpuFramePtr imported;
     const auto result = importer_(request, imported);
     if (result != DIGITOR_RESULT_OK)
-      return fail(result, "render backend rejected the native decoder surface");
+      return fail(result, import_diagnostic.empty()
+                              ? "render backend rejected the native decoder surface"
+                              : import_diagnostic);
     if (!imported)
       return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                   "render backend reported success without a GPU frame");
@@ -165,11 +169,15 @@ DigitorResult ProductionHardwareDecodeSession::decode_at_timestamp(
     request.renderer_backend = options_.renderer_backend;
     request.output_format = options_.render_format;
     request.working_color_space = "linear-rgba";
+    std::string import_diagnostic;
+    request.diagnostic = &import_diagnostic;
 
     ProcessedGpuFramePtr imported;
     const auto result = importer_(request, imported);
     if (result != DIGITOR_RESULT_OK)
-      return fail(result, "render backend rejected the native decoder surface");
+      return fail(result, import_diagnostic.empty()
+                              ? "render backend rejected the native decoder surface"
+                              : import_diagnostic);
     if (!imported)
       return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                   "render backend reported success without a GPU frame");

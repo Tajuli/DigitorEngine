@@ -1,6 +1,7 @@
 #include "digitor/windows_zero_copy_import.hpp"
 
 #include <new>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -89,37 +90,125 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
   return DIGITOR_RESULT_UNSUPPORTED;
 #else
   try {
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4{};
+    const HRESULT options4_hr = impl_->device->CheckFeatureSupport(
+        D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4));
+    qualification.shared_resource_compatibility_query_hresult =
+        static_cast<std::uint32_t>(options4_hr);
+    if (SUCCEEDED(options4_hr))
+      qualification.shared_resource_compatibility_tier =
+          static_cast<std::uint32_t>(options4.SharedResourceCompatibilityTier);
     Microsoft::WRL::ComPtr<ID3D12Resource> resource;
     const auto handle = reinterpret_cast<HANDLE>(surface.shared_handle);
     const HRESULT hr = impl_->device->OpenSharedHandle(
         handle, IID_PPV_ARGS(resource.ReleaseAndGetAddressOf()));
+    qualification.open_shared_handle_hresult = static_cast<std::uint32_t>(hr);
     if (FAILED(hr) || !resource) {
-      qualification.diagnostic = "ID3D12Device::OpenSharedHandle failed";
+      std::ostringstream diagnostic;
+      diagnostic << "ID3D12Device::OpenSharedHandle failed: HRESULT=0x"
+                 << std::hex << std::uppercase
+                 << static_cast<std::uint32_t>(hr)
+                 << "; D3D12.SharedResourceCompatibilityTier=" << std::dec
+                 << qualification.shared_resource_compatibility_tier
+                 << " (CheckFeatureSupport.HRESULT=0x" << std::hex
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << ")";
+      qualification.diagnostic = diagnostic.str();
       return hr == E_OUTOFMEMORY ? DIGITOR_RESULT_OUT_OF_MEMORY
                                  : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
     qualification.shared_resource_opened = true;
+    resource->SetName(L"Digitor NV12/P010 imported resource");
+    const HRESULT reason_after_resource_open =
+        impl_->device->GetDeviceRemovedReason();
+    if (FAILED(reason_after_resource_open)) {
+      std::ostringstream diagnostic;
+      diagnostic << "D3D12 device removed: device_removed=true; "
+                    "first_failure_checkpoint=Resource.OpenSharedHandle; "
+                    "resourceOpenHr=0x"
+                 << std::hex << std::uppercase << static_cast<std::uint32_t>(hr)
+                 << "; deviceRemovedReasonAfterResourceOpen=0x"
+                 << static_cast<std::uint32_t>(reason_after_resource_open);
+      qualification.diagnostic = diagnostic.str();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
 
     const auto desc = resource->GetDesc();
+    qualification.opened_width = desc.Width;
+    qualification.opened_height = desc.Height;
+    qualification.opened_format = static_cast<std::uint32_t>(desc.Format);
+    qualification.opened_mip_levels = desc.MipLevels;
+    qualification.opened_sample_count = desc.SampleDesc.Count;
+    qualification.opened_sample_quality = desc.SampleDesc.Quality;
+    qualification.opened_resource_flags =
+        static_cast<std::uint32_t>(desc.Flags);
     const DXGI_FORMAT expected = surface.format == WindowsZeroCopyFormat::nv12
                                      ? DXGI_FORMAT_NV12
                                      : DXGI_FORMAT_P010;
     if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
         desc.Format != expected || desc.Width < surface.width ||
         desc.Height < surface.height ||
+        desc.MipLevels != 1 || desc.SampleDesc.Count != 1 ||
+        desc.SampleDesc.Quality != 0 ||
+        (desc.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) != 0 ||
         surface.array_slice >= desc.DepthOrArraySize) {
-      qualification.diagnostic =
-          "shared resource does not match the decoder surface contract";
+      std::ostringstream diagnostic;
+      diagnostic << "shared resource does not match the decoder surface "
+                    "contract: Dimension="
+                 << static_cast<unsigned>(desc.Dimension)
+                 << ", Width=" << desc.Width << ", Height=" << desc.Height
+                 << ", Format=" << static_cast<unsigned>(desc.Format)
+                 << ", MipLevels=" << desc.MipLevels
+                 << ", SampleDesc={" << desc.SampleDesc.Count << ","
+                 << desc.SampleDesc.Quality << "}, Flags=0x" << std::hex
+                 << static_cast<unsigned>(desc.Flags)
+                 << "; D3D12.SharedResourceCompatibilityTier=" << std::dec
+                 << qualification.shared_resource_compatibility_tier
+                 << "; OPTIONS4.HRESULT=0x" << std::hex << std::uppercase
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << "; OpenSharedHandle.HRESULT=0x"
+                 << qualification.open_shared_handle_hresult;
+      qualification.diagnostic = diagnostic.str();
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
-    qualification.plane_views_valid = true;
 
-    const auto result = impl_->converter(resource.Get(), surface, out);
+    const HRESULT reason_before_converter = impl_->device->GetDeviceRemovedReason();
+    if (FAILED(reason_before_converter)) {
+      qualification.diagnostic =
+          "D3D12 device removed before WindowsD3D12YuvConverter::convert";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    std::string converter_diagnostic;
+    const auto result = impl_->converter(resource.Get(), surface, out,
+                                         &converter_diagnostic);
     if (result != DIGITOR_RESULT_OK) {
       out.reset();
-      qualification.diagnostic = "GPU YUV conversion callback failed";
+      std::ostringstream diagnostic;
+      diagnostic << (converter_diagnostic.empty()
+                         ? "GPU YUV conversion callback failed"
+                         : converter_diagnostic)
+                 << "; D3D12.SharedResourceCompatibilityTier="
+                 << qualification.shared_resource_compatibility_tier
+                 << "; OPTIONS4.HRESULT=0x" << std::hex << std::uppercase
+                 << qualification.shared_resource_compatibility_query_hresult
+                 << "; OpenSharedHandle.HRESULT=0x"
+                 << qualification.open_shared_handle_hresult << std::dec
+                 << "; opened={Dimension="
+                 << static_cast<unsigned>(desc.Dimension)
+                 << ", Width=" << desc.Width << ", Height=" << desc.Height
+                 << ", Format=" << static_cast<unsigned>(desc.Format)
+                 << ", MipLevels=" << desc.MipLevels
+                 << ", DepthOrArraySize=" << desc.DepthOrArraySize
+                 << ", SampleDesc={" << desc.SampleDesc.Count << ","
+                 << desc.SampleDesc.Quality << "}, Flags=0x" << std::hex
+                 << static_cast<unsigned>(desc.Flags) << "}";
+      qualification.diagnostic = diagnostic.str();
       return result;
     }
+    // D3D12 SRV creation has no HRESULT. Reaching a successfully submitted
+    // Digitor conversion proves that the converter's real Y/UV plane views
+    // passed validation and were consumed by the command list.
+    qualification.plane_views_valid = true;
     if (!out || out->backend() != DIGITOR_RENDERER_D3D12 ||
         out->metadata().width != surface.width ||
         out->metadata().height != surface.height ||

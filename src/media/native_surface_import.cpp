@@ -117,7 +117,13 @@ NativeSurfaceImportResult import_native_media_surface(
       in.color.chroma_siting = windows_chroma(d.color.chroma_location);
       in.color.full_range = d.color.full_range != 0;
       in.color.primaries = d.color.primaries; in.color.transfer = d.color.transfer;
-      result = target.d3d12->import(in, frame);
+      WindowsZeroCopyQualification qualification;
+      result = target.d3d12->import(in, frame, &qualification);
+      if (result != DIGITOR_RESULT_OK)
+        return fail(NativeSurfaceImportFailure::backend_unavailable, result,
+                    qualification.diagnostic.empty()
+                        ? "D3D12 native import failed without CPU fallback"
+                        : qualification.diagnostic.c_str());
     } else if (target.backend == DIGITOR_RENDERER_METAL) {
 #if !defined(__APPLE__)
       return fail(NativeSurfaceImportFailure::backend_unavailable,

@@ -43,6 +43,8 @@ struct WindowsZeroCopySurface {
   std::uint32_t array_slice{};
   std::uintptr_t shared_handle{};
   std::uintptr_t decoder_device{};
+  std::uint32_t d3d11_adapter_luid_low{};
+  std::int32_t d3d11_adapter_luid_high{};
   std::int64_t timestamp_us{};
   // Decoder acquire fence exported with the D3D11VA shared surface. The D3D12
   // conversion queue must wait on this exact fence/value before sampling.
@@ -62,6 +64,18 @@ struct WindowsZeroCopyQualification {
   bool decoder_lifetime_retained{};
   bool no_cpu_readback{};
   bool per_pixel_contract_preserved{};
+  // Reported by the actual engine-owned D3D12 device, without exposing Windows
+  // SDK types through this public header.
+  std::uint32_t shared_resource_compatibility_tier{};
+  std::uint32_t shared_resource_compatibility_query_hresult{};
+  std::uint32_t open_shared_handle_hresult{};
+  std::uint64_t opened_width{};
+  std::uint32_t opened_height{};
+  std::uint32_t opened_format{};
+  std::uint16_t opened_mip_levels{};
+  std::uint32_t opened_sample_count{};
+  std::uint32_t opened_sample_quality{};
+  std::uint32_t opened_resource_flags{};
   std::string diagnostic;
 };
 
@@ -71,7 +85,8 @@ struct WindowsZeroCopyQualification {
 using WindowsD3D12ConvertCallback = std::function<DigitorResult(
     void* d3d12_resource,
     const WindowsZeroCopySurface&,
-    ProcessedGpuFramePtr&)>;
+    ProcessedGpuFramePtr&,
+    std::string* diagnostic)>;
 
 class WindowsD3D12ZeroCopyImporter final {
 public:

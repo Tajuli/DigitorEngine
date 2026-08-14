@@ -11,6 +11,7 @@
 #include <atomic>
 #include <climits>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -638,15 +639,23 @@ public:
             if (!request.surface ||
                 request.renderer_backend != DIGITOR_RENDERER_D3D12 ||
                 request.output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT ||
-                request.working_color_space != "linear-rgba")
+                request.working_color_space != "linear-rgba") {
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native import request validation failed";
               return DIGITOR_RESULT_INVALID_ARGUMENT;
+            }
             const auto& descriptor = request.surface->descriptor();
             if (descriptor.platform != NativeMediaPlatform::windows ||
                 descriptor.handle_type !=
                     NativeMediaHandleType::dxgi_shared_handle ||
                 (descriptor.pixel_format != NativeMediaPixelFormat::nv12 &&
-                 descriptor.pixel_format != NativeMediaPixelFormat::p010))
+                 descriptor.pixel_format != NativeMediaPixelFormat::p010)) {
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native surface descriptor routing failed";
               return DIGITOR_RESULT_UNSUPPORTED;
+            }
 
             try {
               // WindowsD3D12YuvConverter owns a single allocator/list/descriptor
@@ -709,6 +718,8 @@ public:
               surface.array_slice = descriptor.array_slice;
               surface.shared_handle = descriptor.native_handle;
               surface.decoder_device = descriptor.native_device;
+              surface.d3d11_adapter_luid_low = descriptor.adapter_luid_low;
+              surface.d3d11_adapter_luid_high = descriptor.adapter_luid_high;
               surface.timestamp_us = descriptor.timestamp_us;
               surface.acquire_fence_handle = descriptor.acquire_sync.handle;
               surface.acquire_fence_value = descriptor.acquire_sync.value;
@@ -728,12 +739,26 @@ public:
               surface.color.primaries = descriptor.color.primaries;
               surface.color.transfer = descriptor.color.transfer;
               surface.lifetime = request.surface;
-              return (*importer)->import(surface, frame);
+              WindowsZeroCopyQualification qualification;
+              const auto result =
+                  (*importer)->import(surface, frame, &qualification);
+              if (request.diagnostic)
+                *request.diagnostic = qualification.diagnostic;
+              return result;
             } catch (const std::bad_alloc&) {
               frame.reset();
+              if (request.diagnostic)
+                *request.diagnostic =
+                    "D3D12 native import allocation failed";
               return DIGITOR_RESULT_OUT_OF_MEMORY;
+            } catch (const std::exception& error) {
+              frame.reset();
+              if (request.diagnostic) *request.diagnostic = error.what();
+              return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             } catch (...) {
               frame.reset();
+              if (request.diagnostic)
+                *request.diagnostic = "unexpected D3D12 native import failure";
               return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             }
           };
@@ -3700,6 +3725,16 @@ create_native_backend(DigitorRendererBackend backend) {
     ComPtr<ID3D12Debug> debug;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
       debug->EnableDebugLayer();
+  }
+  const char* dred_environment = std::getenv("DIGITOR_D3D12_DRED");
+  if (gpu_validation_requested() ||
+      (dred_environment && std::string_view(dred_environment) == "1")) {
+    ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred_settings;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dred_settings)))) {
+      dred_settings->SetAutoBreadcrumbsEnablement(
+          D3D12_DRED_ENABLEMENT_FORCED_ON);
+      dred_settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    }
   }
   ComPtr<ID3D12Device> device;
   if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
