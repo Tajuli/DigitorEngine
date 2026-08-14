@@ -300,6 +300,17 @@ endif()
 
 if (DIGITOR_BUILD_TESTS)
     enable_testing()
+    if (WIN32)
+        add_executable(digitor_windows_public_header_hygiene_test
+            tests/test_windows_public_header_hygiene.cpp)
+        set_target_properties(digitor_windows_public_header_hygiene_test PROPERTIES
+            CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+        target_link_libraries(digitor_windows_public_header_hygiene_test
+            PRIVATE Digitor::Engine)
+        add_test(NAME digitor_windows_public_header_hygiene
+            COMMAND digitor_windows_public_header_hygiene_test)
+    endif()
+
     add_executable(digitor_tests
         tests/test_engine.cpp
         tests/test_editor.cpp

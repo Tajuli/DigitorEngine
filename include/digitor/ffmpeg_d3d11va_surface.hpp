@@ -5,27 +5,7 @@
 #include <cstdint>
 #include <string>
 
-#if defined(_WIN32)
-#include <d3d11.h>
-#endif
-
 namespace digitor {
-
-#if defined(_WIN32)
-// Constructs the deliberately small descriptor used to detach one FFmpeg
-// decoder-array slice.  Kept public for Windows GPU qualification; no decoder
-// resource flags are inherited by this normalized interop resource.
-[[nodiscard]] D3D11_TEXTURE2D_DESC
-normalized_d3d11va_interop_desc(const D3D11_TEXTURE2D_DESC &source) noexcept;
-
-// Formats stable, actionable CreateTexture2D failure context without exposing
-// COM pointer values. `debug_message` may be empty when no debug layer exists.
-[[nodiscard]] std::string format_d3d11_texture_creation_failure(
-    HRESULT result, const D3D11_TEXTURE2D_DESC &source,
-    const D3D11_TEXTURE2D_DESC &destination, D3D_FEATURE_LEVEL feature_level,
-    HRESULT format_support_result, UINT format_support,
-    const std::string &debug_message = {});
-#endif
 
 // Additive FFmpeg bridge. The AVFrame remains opaque in the public API so
 // clients that do not build with FFmpeg do not inherit FFmpeg headers.

@@ -11,6 +11,8 @@ if(WIN32 AND TARGET digitor_engine AND TARGET FFmpeg::FFmpeg)
       ${CMAKE_CURRENT_LIST_DIR}/../tests/test_ffmpeg_d3d11va_surface_contract.cpp)
     target_link_libraries(digitor_ffmpeg_d3d11va_surface_contract
       PRIVATE Digitor::Engine d3d11 d3d12 dxgi)
+    target_include_directories(digitor_ffmpeg_d3d11va_surface_contract
+      PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../src)
     add_test(NAME digitor_ffmpeg_d3d11va_surface_contract
       COMMAND digitor_ffmpeg_d3d11va_surface_contract)
   endif()

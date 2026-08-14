@@ -1,4 +1,5 @@
 #include "digitor/ffmpeg_d3d11va_surface.hpp"
+#include "ffmpeg_d3d11va_surface_internal.hpp"
 
 #include <cctype>
 #include <iomanip>
@@ -8,9 +9,6 @@
 #include <vector>
 
 #if defined(_WIN32) && defined(DIGITOR_HAS_FFMPEG)
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <d3d11.h>
 #include <d3d11_4.h>
 #include <d3d11sdklayers.h>
 #include <dxgi1_2.h>
