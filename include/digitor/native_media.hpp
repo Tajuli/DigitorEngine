@@ -42,6 +42,8 @@ struct NativeMediaSurfaceDescriptor {
   std::uint32_t width{},height{},plane_count{},array_slice{};
   std::uintptr_t native_handle{},native_device{};
   std::uint64_t allocation_size{};
+  std::uint32_t adapter_luid_low{};
+  std::int32_t adapter_luid_high{};
   std::int64_t timestamp_us{};
   NativeMediaSync acquire_sync{};
   NativeMediaColorMetadata color{};

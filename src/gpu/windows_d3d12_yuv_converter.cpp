@@ -1,6 +1,7 @@
 #include "digitor/windows_d3d12_yuv_converter.hpp"
 #include "digitor/windows_zero_copy.hpp"
 #include "windows_d3d12_yuv_root_contract_internal.hpp"
+#include "windows_d3d12_device_diagnostics_internal.hpp"
 
 #include <atomic>
 #include <cctype>
@@ -71,6 +72,48 @@ std::string d3d12_info_queue_messages(ID3D12InfoQueue* queue) {
     }
   }
   return text;
+}
+
+std::string dred_diagnostic(ID3D12Device* device) {
+  ComPtr<ID3D12DeviceRemovedExtendedData> dred;
+  if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dred))) || !dred)
+    return "unavailable";
+  D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs{};
+  D3D12_DRED_PAGE_FAULT_OUTPUT page_fault{};
+  const HRESULT breadcrumbs_hr = dred->GetAutoBreadcrumbsOutput(&breadcrumbs);
+  const HRESULT page_fault_hr = dred->GetPageFaultAllocationOutput(&page_fault);
+  std::ostringstream out;
+  out << "breadcrumbs.HRESULT=0x" << std::hex << std::uppercase
+      << static_cast<std::uint32_t>(breadcrumbs_hr)
+      << ", page_fault.HRESULT=0x"
+      << static_cast<std::uint32_t>(page_fault_hr)
+      << ", page_fault_va=0x" << page_fault.PageFaultVA;
+  if (SUCCEEDED(breadcrumbs_hr) && breadcrumbs.pHeadAutoBreadcrumbNode) {
+    const auto* node = breadcrumbs.pHeadAutoBreadcrumbNode;
+    const UINT completed = node->pLastBreadcrumbValue
+                               ? *node->pLastBreadcrumbValue
+                               : 0;
+    out << ", command_list="
+        << (node->pCommandListDebugNameA ? node->pCommandListDebugNameA
+                                        : "unnamed")
+        << ", completed=" << std::dec << completed;
+    if (node->pCommandHistory && completed < node->BreadcrumbCount)
+      out << ", next_operation="
+          << static_cast<unsigned>(node->pCommandHistory[completed]);
+  }
+  if (SUCCEEDED(page_fault_hr)) {
+    if (page_fault.pHeadExistingAllocationNode)
+      out << ", existing_allocation="
+          << (page_fault.pHeadExistingAllocationNode->ObjectNameA
+                  ? page_fault.pHeadExistingAllocationNode->ObjectNameA
+                  : "unnamed");
+    if (page_fault.pHeadRecentFreedAllocationNode)
+      out << ", recently_freed_allocation="
+          << (page_fault.pHeadRecentFreedAllocationNode->ObjectNameA
+                  ? page_fault.pHeadRecentFreedAllocationNode->ObjectNameA
+                  : "unnamed");
+  }
+  return out.str();
 }
 
 constexpr const char kShader[] = R"HLSL(
@@ -221,6 +264,7 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   if (FAILED(hr)) throw_hresult("D3D12 conversion command list creation", hr);
   hr = impl_->list->Close();
   if (FAILED(hr)) throw_hresult("D3D12 initial command list Close", hr);
+  impl_->list->SetName(L"Digitor YUV compute command list");
 
   D3D12_DESCRIPTOR_HEAP_DESC hd{};
   hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -305,9 +349,11 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
             << d3d12_info_queue_messages(info_queue.Get()) << "}";
     throw std::runtime_error(message.str());
   }
+  impl_->pipeline->SetName(L"Digitor YUV pipeline");
   hr = impl_->device->CreateFence(
       0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl_->fence));
   if (FAILED(hr)) throw_hresult("D3D12 conversion fence creation", hr);
+  impl_->fence->SetName(L"Digitor YUV conversion fence");
   impl_->event_handle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
   if (!impl_->event_handle)
     throw std::runtime_error("cannot create fence event");
@@ -358,6 +404,68 @@ DigitorResult WindowsD3D12YuvConverter::convert(
                 "D3D12 converter input validation failed");
   try {
     auto* input = static_cast<ID3D12Resource*>(raw);
+    internal::DeviceRemovalCheckpointTracker checkpoint_tracker;
+    checkpoint_tracker.observe("converter.entry", S_OK);
+    std::string view_diagnostics;
+    const LUID d3d12_luid = impl_->device->GetAdapterLuid();
+    const bool same_adapter =
+        d3d12_luid.LowPart == s.d3d11_adapter_luid_low &&
+        d3d12_luid.HighPart == s.d3d11_adapter_luid_high;
+    auto append_adapter_identity = [&](std::ostringstream& message) {
+      message << "; D3D11AdapterLuid=" << std::hex << std::uppercase
+              << static_cast<std::uint32_t>(s.d3d11_adapter_luid_high) << ":"
+              << s.d3d11_adapter_luid_low << "; D3D12AdapterLuid="
+              << static_cast<std::uint32_t>(d3d12_luid.HighPart) << ":"
+              << d3d12_luid.LowPart << std::dec
+              << "; same_adapter=" << (same_adapter ? "true" : "false");
+    };
+    auto check_health = [&](const char* checkpoint) -> DigitorResult {
+      const HRESULT reason = impl_->device->GetDeviceRemovedReason();
+      if (SUCCEEDED(reason)) {
+        checkpoint_tracker.observe(checkpoint, reason);
+        return DIGITOR_RESULT_OK;
+      }
+      checkpoint_tracker.observe(checkpoint, reason);
+      std::ostringstream message;
+      message << "D3D12 device removed: device_removed=true; "
+              << "first_failure_checkpoint=" << checkpoint
+              << "; previous_healthy_checkpoint="
+              << checkpoint_tracker.last_healthy()
+              << "; GetDeviceRemovedReason=0x" << std::hex << std::uppercase
+              << static_cast<std::uint32_t>(reason)
+              << "; view_InfoQueue={" << view_diagnostics << "}; DRED={"
+              << dred_diagnostic(impl_->device.Get()) << "}";
+      append_adapter_identity(message);
+      return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, message.str());
+    };
+    if (check_health("converter.before_fence_open") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    ComPtr<ID3D12Fence> acquire_fence;
+    HRESULT fence_open_hr = S_FALSE;
+    HRESULT reason_before_fence_open = impl_->device->GetDeviceRemovedReason();
+    if (s.acquire_fence_handle && s.acquire_fence_value) {
+      fence_open_hr = impl_->device->OpenSharedHandle(
+          reinterpret_cast<HANDLE>(s.acquire_fence_handle),
+          IID_PPV_ARGS(&acquire_fence));
+      const HRESULT reason_after_fence_open =
+          impl_->device->GetDeviceRemovedReason();
+      if (FAILED(fence_open_hr) || FAILED(reason_after_fence_open)) {
+        std::ostringstream message;
+        message << "D3D12 acquire fence early open failed: device_removed="
+                << (FAILED(reason_after_fence_open) ? "true" : "false")
+                << "; first_failure_checkpoint=AcquireFence.OpenSharedHandle"
+                << "; deviceReasonBefore=0x" << std::hex << std::uppercase
+                << static_cast<std::uint32_t>(reason_before_fence_open)
+                << "; fenceOpenHr=0x"
+                << static_cast<std::uint32_t>(fence_open_hr)
+                << "; deviceReasonAfter=0x"
+                << static_cast<std::uint32_t>(reason_after_fence_open)
+                << "; DRED={" << dred_diagnostic(impl_->device.Get()) << "}";
+        append_adapter_identity(message);
+        return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, message.str());
+      }
+      checkpoint_tracker.observe("AcquireFence.OpenSharedHandle", S_OK);
+    }
     const auto d = input->GetDesc();
     const auto expected = s.format == WindowsZeroCopyFormat::nv12
                               ? DXGI_FORMAT_NV12
@@ -383,6 +491,8 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     if (!(y_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
       return fail(DIGITOR_RESULT_UNSUPPORTED,
                   "D3D12 Y-plane format lacks SHADER_SAMPLE support");
+    if (check_health("YPlane.CheckFeatureSupport") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     support_hr = impl_->device->CheckFeatureSupport(
         D3D12_FEATURE_FORMAT_SUPPORT, &uv_support, sizeof(uv_support));
     if (FAILED(support_hr))
@@ -390,6 +500,8 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     if (!(uv_support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE))
       return fail(DIGITOR_RESULT_UNSUPPORTED,
                   "D3D12 UV-plane format lacks SHADER_SAMPLE support");
+    if (check_health("UVPlane.CheckFeatureSupport") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     D3D12_RESOURCE_DESC od{};
     od.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -409,6 +521,9 @@ DigitorResult WindowsD3D12YuvConverter::convert(
         &hp, D3D12_HEAP_FLAG_NONE, &od, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         nullptr, IID_PPV_ARGS(&output));
     if (FAILED(hr)) return fail_hr("D3D12 conversion output creation", hr);
+    output->SetName(L"Digitor YUV output texture");
+    if (check_health("Output.CreateCommittedResource") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     auto cpu = impl_->heap->GetCPUDescriptorHandleForHeapStart();
     D3D12_SHADER_RESOURCE_VIEW_DESC y{};
@@ -417,24 +532,52 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     y.Format = s.format == WindowsZeroCopyFormat::nv12 ? DXGI_FORMAT_R8_UNORM
                                                         : DXGI_FORMAT_R16_UNORM;
     y.Texture2D.PlaneSlice = 0;
+    ComPtr<ID3D12InfoQueue> view_info_queue;
+    impl_->device.As(&view_info_queue);
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateShaderResourceView(input, &y, cpu);
+    view_diagnostics += "Y={resource_format=" +
+        std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(y.Format)) + ", PlaneSlice=0, messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
+    if (check_health("CreateShaderResourceView.Y") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     cpu.ptr += impl_->descriptor_size;
     auto uv = y;
     uv.Format = s.format == WindowsZeroCopyFormat::nv12
                     ? DXGI_FORMAT_R8G8_UNORM
                     : DXGI_FORMAT_R16G16_UNORM;
     uv.Texture2D.PlaneSlice = 1;
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateShaderResourceView(input, &uv, cpu);
+    view_diagnostics += "UV={resource_format=" +
+        std::to_string(static_cast<unsigned>(d.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(uv.Format)) + ", PlaneSlice=1, messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}; ";
+    if (check_health("CreateShaderResourceView.UV") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     cpu.ptr += impl_->descriptor_size;
     D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
     u.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     u.Format = od.Format;
+    if (view_info_queue) view_info_queue->ClearStoredMessages();
     impl_->device->CreateUnorderedAccessView(output.Get(), nullptr, &u, cpu);
+    view_diagnostics += "UAV={resource_format=" +
+        std::to_string(static_cast<unsigned>(od.Format)) + ", view_format=" +
+        std::to_string(static_cast<unsigned>(u.Format)) + ", flags=" +
+        std::to_string(static_cast<unsigned>(od.Flags)) + ", messages=" +
+        d3d12_info_queue_messages(view_info_queue.Get()) + "}";
+    if (check_health("CreateUnorderedAccessView.Output") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     hr = impl_->allocator->Reset();
     if (FAILED(hr)) return fail_hr("D3D12 command allocator Reset", hr);
+    if (check_health("CommandAllocator.Reset") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     hr = impl_->list->Reset(impl_->allocator.Get(), impl_->pipeline.Get());
     if (FAILED(hr)) return fail_hr("D3D12 command list Reset", hr);
+    if (check_health("CommandList.Reset") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     ID3D12DescriptorHeap* heaps[]{impl_->heap.Get()};
     impl_->list->SetDescriptorHeaps(1, heaps);
     impl_->list->SetComputeRootSignature(impl_->root.Get());
@@ -442,6 +585,8 @@ DigitorResult WindowsD3D12YuvConverter::convert(
     impl_->list->SetComputeRoot32BitConstants(0, sizeof(Constants) / 4, &c, 0);
     impl_->list->SetComputeRootDescriptorTable(
         1, impl_->heap->GetGPUDescriptorHandleForHeapStart());
+    if (check_health("DescriptorHeap.RootBindings") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     D3D12_RESOURCE_BARRIER input_to_srv{};
     input_to_srv.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     input_to_srv.Transition = {
@@ -449,7 +594,11 @@ DigitorResult WindowsD3D12YuvConverter::convert(
         D3D12_RESOURCE_STATE_COMMON,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     impl_->list->ResourceBarrier(1, &input_to_srv);
+    if (check_health("ResourceBarrier.InputToSRV") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     impl_->list->Dispatch((s.width + 7) / 8, (s.height + 7) / 8, 1);
+    if (check_health("Dispatch.Record") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     D3D12_RESOURCE_BARRIER barriers[2]{};
     barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -463,26 +612,32 @@ DigitorResult WindowsD3D12YuvConverter::convert(
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
     impl_->list->ResourceBarrier(2, barriers);
+    if (check_health("ResourceBarrier.ReturnAndOutput") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     hr = impl_->list->Close();
     if (FAILED(hr)) return fail_hr("D3D12 command list Close", hr);
+    if (check_health("CommandList.Close") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
 
     if (s.acquire_fence_handle && s.acquire_fence_value) {
-      ComPtr<ID3D12Fence> acquire_fence;
-      const auto open_fence = impl_->device->OpenSharedHandle(
-          reinterpret_cast<HANDLE>(s.acquire_fence_handle),
-          IID_PPV_ARGS(&acquire_fence));
-      if (FAILED(open_fence))
-        return fail_hr("D3D12 shared acquire-fence OpenSharedHandle",
-                       open_fence);
+      if (!acquire_fence)
+        return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+                    "D3D12 early-opened acquire fence is unavailable");
       hr = impl_->queue->Wait(acquire_fence.Get(), s.acquire_fence_value);
       if (FAILED(hr)) return fail_hr("D3D12 queue acquire-fence Wait", hr);
+      if (check_health("Queue.Wait") != DIGITOR_RESULT_OK)
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
 
     ID3D12CommandList* lists[]{impl_->list.Get()};
     impl_->queue->ExecuteCommandLists(1, lists);
+    if (check_health("ExecuteCommandLists") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     const auto id = impl_->sequence.fetch_add(1);
     hr = impl_->queue->Signal(impl_->fence.Get(), id);
     if (FAILED(hr)) return fail_hr("D3D12 conversion fence Signal", hr);
+    if (check_health("Queue.Signal") != DIGITOR_RESULT_OK)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     if (impl_->fence->GetCompletedValue() < id) {
       hr = impl_->fence->SetEventOnCompletion(id, impl_->event_handle);
       if (FAILED(hr))

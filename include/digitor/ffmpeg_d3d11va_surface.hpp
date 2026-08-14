@@ -23,6 +23,11 @@ struct FfmpegD3D11vaExtractionResult {
   std::uint32_t keyed_mutex_query_hresult{};
   std::uint32_t idxgi_resource1_query_hresult{};
   std::uint32_t create_shared_handle_hresult{};
+  std::uint32_t d3d11_health_before_fence{};
+  std::uint32_t create_fence_hresult{};
+  std::uint32_t create_fence_handle_hresult{};
+  std::uint32_t signal_fence_hresult{};
+  std::uint32_t d3d11_health_after_signal{};
   std::string diagnostic;
 };
 

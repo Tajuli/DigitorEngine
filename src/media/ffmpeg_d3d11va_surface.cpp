@@ -320,6 +320,7 @@ bool create_nt_handle(ID3D11Texture2D *texture, HANDLE &handle,
 
 bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
                           HANDLE &shared_handle, std::uint64_t &value,
+                          FfmpegD3D11vaExtractionResult &result,
                           std::string &diagnostic) {
   ComPtr<ID3D11Device> base_device;
   texture->GetDevice(&base_device);
@@ -328,6 +329,8 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
     return false;
   }
   ComPtr<ID3D11Device5> device;
+  result.d3d11_health_before_fence = static_cast<std::uint32_t>(
+      base_device->GetDeviceRemovedReason());
   if (FAILED(base_device.As(&device)) || !device) {
     diagnostic = "D3D11 device does not expose shared fence support";
     return false;
@@ -341,6 +344,7 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
   }
   HRESULT hr =
       device->CreateFence(0, D3D11_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence));
+  result.create_fence_hresult = static_cast<std::uint32_t>(hr);
   if (FAILED(hr) || !fence) {
     std::ostringstream out;
     out << "ID3D11Device5::CreateFence failed: HRESULT=0x" << std::hex
@@ -349,6 +353,7 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
     return false;
   }
   hr = fence->CreateSharedHandle(nullptr, GENERIC_ALL, nullptr, &shared_handle);
+  result.create_fence_handle_hresult = static_cast<std::uint32_t>(hr);
   if (FAILED(hr) || !shared_handle) {
     std::ostringstream out;
     out << "ID3D11Fence::CreateSharedHandle failed: HRESULT=0x" << std::hex
@@ -359,6 +364,9 @@ bool create_acquire_fence(ID3D11Texture2D *texture, ComPtr<ID3D11Fence> &fence,
   }
   value = 1;
   hr = context->Signal(fence.Get(), value);
+  result.signal_fence_hresult = static_cast<std::uint32_t>(hr);
+  result.d3d11_health_after_signal = static_cast<std::uint32_t>(
+      base_device->GetDeviceRemovedReason());
   if (FAILED(hr)) {
     CloseHandle(shared_handle);
     shared_handle = nullptr;
@@ -472,7 +480,7 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     std::uint64_t acquire_value = 0;
     if (!create_acquire_fence(owner->texture.Get(), owner->acquire_fence,
                               owner->acquire_fence_handle, acquire_value,
-                              out.diagnostic))
+                              out, out.diagnostic))
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     out.acquire_sync_created = true;
     out.no_cpu_transfer = true;
@@ -488,6 +496,17 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     native.native_handle = reinterpret_cast<std::uintptr_t>(shared);
     native.native_device =
         reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
+    ComPtr<ID3D11Device> adapter_device11;
+    owner->texture->GetDevice(&adapter_device11);
+    ComPtr<IDXGIDevice> dxgi_device;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC adapter_desc{};
+    if (adapter_device11 && SUCCEEDED(adapter_device11.As(&dxgi_device)) &&
+        dxgi_device && SUCCEEDED(dxgi_device->GetAdapter(&adapter)) && adapter &&
+        SUCCEEDED(adapter->GetDesc(&adapter_desc))) {
+      native.adapter_luid_low = adapter_desc.AdapterLuid.LowPart;
+      native.adapter_luid_high = adapter_desc.AdapterLuid.HighPart;
+    }
     native.timestamp_us =
         normalized_timestamp ? timestamp_us : frame->best_effort_timestamp;
     native.acquire_sync.type = NativeMediaSyncType::d3d11_fence;
@@ -511,6 +530,8 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     out.surface.shared_handle = reinterpret_cast<std::uintptr_t>(shared);
     out.surface.decoder_device =
         reinterpret_cast<std::uintptr_t>(frame->hw_frames_ctx);
+    out.surface.d3d11_adapter_luid_low = native.adapter_luid_low;
+    out.surface.d3d11_adapter_luid_high = native.adapter_luid_high;
     out.surface.timestamp_us = native.timestamp_us;
     out.surface.color.matrix = matrix_from_av(frame->colorspace);
     out.surface.color.chroma_siting = chroma_from_av(frame->chroma_location);

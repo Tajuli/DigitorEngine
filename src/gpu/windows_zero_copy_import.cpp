@@ -118,6 +118,20 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
                                  : DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
     qualification.shared_resource_opened = true;
+    resource->SetName(L"Digitor NV12/P010 imported resource");
+    const HRESULT reason_after_resource_open =
+        impl_->device->GetDeviceRemovedReason();
+    if (FAILED(reason_after_resource_open)) {
+      std::ostringstream diagnostic;
+      diagnostic << "D3D12 device removed: device_removed=true; "
+                    "first_failure_checkpoint=Resource.OpenSharedHandle; "
+                    "resourceOpenHr=0x"
+                 << std::hex << std::uppercase << static_cast<std::uint32_t>(hr)
+                 << "; deviceRemovedReasonAfterResourceOpen=0x"
+                 << static_cast<std::uint32_t>(reason_after_resource_open);
+      qualification.diagnostic = diagnostic.str();
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
 
     const auto desc = resource->GetDesc();
     qualification.opened_width = desc.Width;
@@ -158,6 +172,12 @@ DigitorResult WindowsD3D12ZeroCopyImporter::import(
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     }
 
+    const HRESULT reason_before_converter = impl_->device->GetDeviceRemovedReason();
+    if (FAILED(reason_before_converter)) {
+      qualification.diagnostic =
+          "D3D12 device removed before WindowsD3D12YuvConverter::convert";
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
     std::string converter_diagnostic;
     const auto result = impl_->converter(resource.Get(), surface, out,
                                          &converter_diagnostic);

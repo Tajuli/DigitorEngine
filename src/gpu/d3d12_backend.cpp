@@ -11,6 +11,7 @@
 #include <atomic>
 #include <climits>
 #include <cstring>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -717,6 +718,8 @@ public:
               surface.array_slice = descriptor.array_slice;
               surface.shared_handle = descriptor.native_handle;
               surface.decoder_device = descriptor.native_device;
+              surface.d3d11_adapter_luid_low = descriptor.adapter_luid_low;
+              surface.d3d11_adapter_luid_high = descriptor.adapter_luid_high;
               surface.timestamp_us = descriptor.timestamp_us;
               surface.acquire_fence_handle = descriptor.acquire_sync.handle;
               surface.acquire_fence_value = descriptor.acquire_sync.value;
@@ -3722,6 +3725,16 @@ create_native_backend(DigitorRendererBackend backend) {
     ComPtr<ID3D12Debug> debug;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
       debug->EnableDebugLayer();
+  }
+  const char* dred_environment = std::getenv("DIGITOR_D3D12_DRED");
+  if (gpu_validation_requested() ||
+      (dred_environment && std::string_view(dred_environment) == "1")) {
+    ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred_settings;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dred_settings)))) {
+      dred_settings->SetAutoBreadcrumbsEnablement(
+          D3D12_DRED_ENABLEMENT_FORCED_ON);
+      dred_settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    }
   }
   ComPtr<ID3D12Device> device;
   if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
