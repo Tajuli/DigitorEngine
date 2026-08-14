@@ -1,4 +1,5 @@
 #include "digitor/ffmpeg_d3d11va_surface.hpp"
+#include "media/ffmpeg_d3d11va_surface_internal.hpp"
 
 #include <cassert>
 #include <iostream>

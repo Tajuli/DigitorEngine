@@ -215,7 +215,7 @@ protected:
   descriptor.color.transfer=frame_->color_trc;
   descriptor.color.matrix=frame_->colorspace;
   descriptor.color.full_range=frame_->color_range==AVCOL_RANGE_JPEG?1:0;
-  descriptor.color.chroma_location=static_cast<std::uint8_t>(std::max(0,static_cast<int>(frame_->chroma_location)));
+  descriptor.color.chroma_location=static_cast<std::uint8_t>((std::max)(0,static_cast<int>(frame_->chroma_location)));
 
   AVPixelFormat software_format=AV_PIX_FMT_NONE;
   if(frame_->hw_frames_ctx){
@@ -311,7 +311,7 @@ class Video final:public VideoDecoder,private DecoderBase {
   if(decoder_finished_)return {};
   auto out=std::make_shared<VideoFrame>();out->number=next_number_++;out->pts=timestamp();out->duration=duration();
   out->width=static_cast<std::uint32_t>(frame_->width);out->height=static_cast<std::uint32_t>(frame_->height);
-  if(frame_->width<=0||frame_->height<=0||static_cast<std::uint64_t>(frame_->width)*frame_->height>std::numeric_limits<std::size_t>::max()/sizeof(Color))
+  if(frame_->width<=0||frame_->height<=0||static_cast<std::uint64_t>(frame_->width)*frame_->height>(std::numeric_limits<std::size_t>::max)()/sizeof(Color))
     throw std::runtime_error("invalid decoded video dimensions");
   out->color.primaries=frame_->color_primaries;out->color.transfer=frame_->color_trc;out->color.matrix=frame_->colorspace;
   out->color.range=frame_->color_range==AVCOL_RANGE_JPEG?ColorRange::full:(frame_->color_range==AVCOL_RANGE_MPEG?ColorRange::limited:ColorRange::unspecified);
@@ -370,7 +370,7 @@ class Audio final:public AudioDecoder,private DecoderBase {
  FrameCache<AudioFrame> cache_; SwrContext* swr_{};
  std::shared_ptr<AudioFrame> next(){if(!receive())return {};auto out=std::make_shared<AudioFrame>();out->number=next_number_++;out->pts=timestamp();out->sample_rate=codec_->sample_rate;out->channels=codec_->ch_layout.nb_channels;out->channel_layout=codec_->ch_layout.u.mask;
   int r=swr_alloc_set_opts2(&swr_,&codec_->ch_layout,AV_SAMPLE_FMT_FLT,codec_->sample_rate,&frame_->ch_layout,static_cast<AVSampleFormat>(frame_->format),frame_->sample_rate,0,nullptr);if(r<0)fail("configure resampler",r);if((r=swr_init(swr_))<0)fail("initialize resampler",r);
-  const std::int64_t capacity64=av_rescale_rnd(swr_get_delay(swr_,frame_->sample_rate)+frame_->nb_samples,codec_->sample_rate,frame_->sample_rate,AV_ROUND_UP);if(capacity64<=0||capacity64>std::numeric_limits<int>::max())throw std::runtime_error("resampled audio capacity is out of range");const int capacity=static_cast<int>(capacity64);out->samples.resize(static_cast<std::size_t>(capacity)*out->channels);std::uint8_t* destination=reinterpret_cast<std::uint8_t*>(out->samples.data());r=swr_convert(swr_,&destination,capacity,const_cast<const std::uint8_t**>(frame_->extended_data),frame_->nb_samples);if(r<0)fail("resample audio",r);out->samples.resize(static_cast<std::size_t>(r)*out->channels);out->duration=av_rescale_q(r,AVRational{1,static_cast<int>(out->sample_rate)},engine_time_base);cache_.put(out->number,out);return out;}
+  const std::int64_t capacity64=av_rescale_rnd(swr_get_delay(swr_,frame_->sample_rate)+frame_->nb_samples,codec_->sample_rate,frame_->sample_rate,AV_ROUND_UP);if(capacity64<=0||capacity64>(std::numeric_limits<int>::max)())throw std::runtime_error("resampled audio capacity is out of range");const int capacity=static_cast<int>(capacity64);out->samples.resize(static_cast<std::size_t>(capacity)*out->channels);std::uint8_t* destination=reinterpret_cast<std::uint8_t*>(out->samples.data());r=swr_convert(swr_,&destination,capacity,const_cast<const std::uint8_t**>(frame_->extended_data),frame_->nb_samples);if(r<0)fail("resample audio",r);out->samples.resize(static_cast<std::size_t>(r)*out->channels);out->duration=av_rescale_q(r,AVRational{1,static_cast<int>(out->sample_rate)},engine_time_base);cache_.put(out->number,out);return out;}
 public:
  Audio(const std::string&p,DecoderOptions o):DecoderBase(p,AVMEDIA_TYPE_AUDIO,audio_decoder_options(o.cache_capacity)),cache_(o.cache_capacity){}
  ~Audio()override{swr_free(&swr_);}
