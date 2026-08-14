@@ -4,8 +4,11 @@ if(DIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION)
   if(NOT WIN32)
     message(FATAL_ERROR "Windows zero-copy qualification requires Windows")
   endif()
-  if(NOT DIGITOR_HAS_FFMPEG)
-    message(FATAL_ERROR "Windows zero-copy qualification requires DIGITOR_HAS_FFMPEG")
+  # DIGITOR_HAS_FFMPEG is a target compile definition, not a CMake feature
+  # variable. Gate qualification on the actual find_package result so the
+  # module cannot be enabled by a stale -DDIGITOR_HAS_FFMPEG=ON cache value.
+  if(NOT FFmpeg_FOUND)
+    message(FATAL_ERROR "Windows zero-copy qualification requires FFmpeg development libraries")
   endif()
 
   add_library(digitor_windows_zero_copy_qualification STATIC
