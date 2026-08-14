@@ -146,10 +146,12 @@ normalized_d3d11va_interop_desc(const D3D11_TEXTURE2D_DESC &source) noexcept {
   destination.Format = source.Format;
   destination.SampleDesc = source.SampleDesc;
   destination.Usage = D3D11_USAGE_DEFAULT;
-  // The texture is a copy destination/export carrier. Sampling happens only
-  // after D3D12 opens it, so a D3D11 shader-resource bind is neither used nor
-  // required and is rejected for shared planar textures by some drivers.
-  destination.BindFlags = 0;
+  // This carrier is copied by D3D11, then opened and sampled as planar SRVs by
+  // D3D12. Preserve SHADER_RESOURCE intent at D3D11 creation time so drivers
+  // choose a cross-API layout that remains shader-readable after NT sharing.
+  // The real-machine matrix established that this requires KEYEDMUTEX together
+  // with NTHANDLE for NV12/P010 creation on the affected driver.
+  destination.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   destination.CPUAccessFlags = 0;
   destination.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
                           D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
@@ -257,7 +259,10 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
         hr, source_desc, destination_desc, device->GetFeatureLevel(),
         support_hr, support);
     append_capabilities(qualification, sharing_capabilities(device.Get()));
-    qualification << "; production.BindFlags=0; production.MiscFlags=0x900";
+    qualification << "; production.BindFlags=0x" << std::hex
+                  << std::uppercase << destination_desc.BindFlags
+                  << "; production.MiscFlags=0x" << destination_desc.MiscFlags
+                  << std::dec;
     diagnostic = qualification.str();
     return false;
   }
@@ -265,7 +270,8 @@ bool make_shareable_slice_copy(ID3D11Texture2D *source,
   keyed_mutex_hr = destination.As(&keyed_mutex);
   if (FAILED(keyed_mutex_hr) || !keyed_mutex) {
     std::ostringstream out;
-    out << "Case C texture does not expose IDXGIKeyedMutex: HRESULT=0x"
+    out << "production D3D12-sampleable shared texture does not expose "
+           "IDXGIKeyedMutex: HRESULT=0x"
         << std::hex << std::uppercase
         << static_cast<std::uint32_t>(keyed_mutex_hr);
     diagnostic = out.str();
@@ -447,7 +453,9 @@ DigitorResult extract_ffmpeg_d3d11va_surface_impl(
     HRESULT resource_query_hr = E_NOINTERFACE;
     HRESULT create_handle_hr = E_FAIL;
     std::uint32_t exported_slice = slice;
-    if (desc.ArraySize == 1 && slice == 0 &&
+    const bool source_is_d3d12_sampleable =
+        (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) != 0;
+    if (desc.ArraySize == 1 && slice == 0 && source_is_d3d12_sampleable &&
         create_nt_handle(owner->texture.Get(), shared, resource_query_hr,
                          create_handle_hr, out.diagnostic)) {
       out.shareable_texture_reused = true;
