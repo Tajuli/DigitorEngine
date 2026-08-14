@@ -73,7 +73,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   const HRESULT options4_hr = device11->CheckFeatureSupport(
       D3D11_FEATURE_D3D11_OPTIONS4, &options4, sizeof(options4));
   const HRESULT options5_hr = device11->CheckFeatureSupport(
-      D3D11_FEATURE_D3D11_OPTIONS5, &options5, sizeof(options5));
+      D3D11_FEATURE_DATA_D3D11_OPTIONS5, &options5, sizeof(options5));
   std::cout << "D3D11 ExtendedResourceSharing="
             << (SUCCEEDED(options_hr) ? options.ExtendedResourceSharing : -1)
             << " ExtendedNV12SharedTextureSupported="
@@ -148,10 +148,11 @@ void verify_gpu_interop(DXGI_FORMAT format) {
             << " E_legacy_shared_bind0_hresult=0x"
             << static_cast<unsigned long>(legacy_hr) << std::dec << '\n';
 
-  if (FAILED(keyed_shader_hr) || !keyed_shader_destination) {
-    std::cout << "SKIP: production Case D unavailable; matrix results recorded\n";
-    return;
-  }
+  // Once the physical adapter reports the planar format as a texture and can
+  // create the decoder-shaped source allocation, Case D is a production
+  // requirement. Do not silently turn a failed production carrier into a
+  // passing test.
+  assert(SUCCEEDED(keyed_shader_hr) && keyed_shader_destination);
   ComPtr<ID3D11Texture2D> destination = keyed_shader_destination;
   ComPtr<IDXGIKeyedMutex> keyed_mutex;
   assert(SUCCEEDED(destination.As(&keyed_mutex)) && keyed_mutex);
@@ -160,6 +161,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   context11->CopySubresourceRegion(
       destination.Get(), 0, 0, 0, 0, source.Get(),
       D3D11CalcSubresource(0, 2, source_desc.MipLevels), nullptr);
+  assert(SUCCEEDED(device11->GetDeviceRemovedReason()));
 
   ComPtr<IDXGIResource1> dxgi;
   assert(SUCCEEDED(destination.As(&dxgi)));
@@ -168,8 +170,15 @@ void verify_gpu_interop(DXGI_FORMAT format) {
       nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
       &texture_handle)));
 
+  // Create D3D12 on the exact adapter that owns the D3D11 decoder resource.
+  // Passing nullptr here can select a different default adapter on hybrid-GPU
+  // systems and would turn a test bug into an interop failure.
+  ComPtr<IDXGIDevice> dxgi_device11;
+  assert(SUCCEEDED(device11.As(&dxgi_device11)) && dxgi_device11);
+  ComPtr<IDXGIAdapter> adapter;
+  assert(SUCCEEDED(dxgi_device11->GetAdapter(&adapter)) && adapter);
   ComPtr<ID3D12Device> device12;
-  assert(SUCCEEDED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
+  assert(SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
                                      IID_PPV_ARGS(&device12))));
   D3D12_FEATURE_DATA_D3D12_OPTIONS4 d3d12_options4{};
   const HRESULT d3d12_options4_hr = device12->CheckFeatureSupport(
