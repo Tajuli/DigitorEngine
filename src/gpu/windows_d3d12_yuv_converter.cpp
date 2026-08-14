@@ -1,18 +1,22 @@
 #include "digitor/windows_d3d12_yuv_converter.hpp"
 #include "digitor/windows_zero_copy.hpp"
+#include "windows_d3d12_yuv_root_contract_internal.hpp"
 
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <d3dcompiler.h>
 #include <windows.h>
 #include <wrl/client.h>
@@ -28,6 +32,45 @@ using Microsoft::WRL::ComPtr;
   message << stage << " failed: HRESULT=0x" << std::hex << std::uppercase
           << static_cast<std::uint32_t>(hr);
   throw std::runtime_error(message.str());
+}
+
+std::string d3d12_info_queue_messages(ID3D12InfoQueue* queue) {
+  if (!queue) return "debug layer unavailable";
+  std::ostringstream out;
+  const auto count = queue->GetNumStoredMessagesAllowedByRetrievalFilter();
+  if (!count) return "no new D3D12 InfoQueue messages";
+  for (UINT64 index = 0; index < count; ++index) {
+    SIZE_T size{};
+    if (FAILED(queue->GetMessage(index, nullptr, &size)) || !size) continue;
+    std::vector<unsigned char> bytes(size);
+    auto* message = reinterpret_cast<D3D12_MESSAGE*>(bytes.data());
+    if (FAILED(queue->GetMessage(index, message, &size))) continue;
+    if (out.tellp() > 0) out << " | ";
+    out << "ID=" << static_cast<unsigned>(message->ID)
+        << ", severity=" << static_cast<unsigned>(message->Severity)
+        << ", category=" << static_cast<unsigned>(message->Category)
+        << ", description=";
+    if (message->pDescription) out << message->pDescription;
+  }
+  auto text = out.str();
+  for (std::size_t start = 0; start + 2 < text.size();) {
+    if (text[start] != '0' ||
+        (text[start + 1] != 'x' && text[start + 1] != 'X')) {
+      ++start;
+      continue;
+    }
+    std::size_t end = start + 2;
+    while (end < text.size() &&
+           std::isxdigit(static_cast<unsigned char>(text[end])))
+      ++end;
+    if (end - start >= 14) {
+      text.replace(start, end - start, "<object>");
+      start += 8;
+    } else {
+      start = end;
+    }
+  }
+  return text;
 }
 
 constexpr const char kShader[] = R"HLSL(
@@ -48,12 +91,7 @@ RWTexture2D<float4> output_rgba:register(u0);
  output_rgba[id.xy]=float4(float3(dot(row_r,v),dot(row_g,v),dot(row_b,v))*output_scale,1.0);
 })HLSL";
 
-struct Constants {
-  float y_offset, y_scale, uv_offset, uv_scale;
-  float row_r[3], p0, row_g[3], p1, row_b[3], output_scale;
-  std::uint32_t width, height, bit_depth, full_range;
-};
-static_assert(sizeof(Constants) % 16 == 0);
+using Constants = internal::WindowsD3D12YuvConstantsLayout;
 
 struct FrameOwner {
   ComPtr<ID3D12Resource> input, output;
@@ -198,7 +236,13 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
   ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 2};
   D3D12_ROOT_PARAMETER params[2]{};
   params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-  params[0].Constants = {sizeof(Constants) / 4, 0, 0};
+  params[0].Constants.ShaderRegister =
+      internal::kWindowsD3D12YuvRootConstants.shader_register;
+  params[0].Constants.RegisterSpace =
+      internal::kWindowsD3D12YuvRootConstants.register_space;
+  params[0].Constants.Num32BitValues = static_cast<UINT>(
+      sizeof(Constants) / sizeof(std::uint32_t));
+  params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
   params[1].DescriptorTable = {2, ranges};
   D3D12_ROOT_SIGNATURE_DESC rs{};
@@ -218,12 +262,49 @@ WindowsD3D12YuvConverter::WindowsD3D12YuvConverter(
                   D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &shader, &errors);
   if (FAILED(hr)) throw_hresult("D3D12 YUV shader compilation", hr);
 
+  ComPtr<ID3D12ShaderReflection> reflection;
+  hr = D3DReflect(shader->GetBufferPointer(), shader->GetBufferSize(),
+                  IID_PPV_ARGS(&reflection));
+  if (FAILED(hr)) throw_hresult("D3D12 YUV shader reflection", hr);
+  const struct ExpectedBinding {
+    const char* name;
+    D3D_SHADER_INPUT_TYPE type;
+    UINT bind_point;
+  } expected_bindings[] = {{"C", D3D_SIT_CBUFFER, 0},
+                           {"y_plane", D3D_SIT_TEXTURE, 0},
+                           {"uv_plane", D3D_SIT_TEXTURE, 1},
+                           {"output_rgba", D3D_SIT_UAV_RWTYPED, 0}};
+  for (const auto& expected_binding : expected_bindings) {
+    D3D12_SHADER_INPUT_BIND_DESC binding{};
+    hr = reflection->GetResourceBindingDescByName(expected_binding.name,
+                                                   &binding);
+    if (FAILED(hr) || binding.Type != expected_binding.type ||
+        binding.BindPoint != expected_binding.bind_point || binding.Space != 0)
+      throw std::runtime_error(
+          "D3D12 YUV shader reflection binding contract failed");
+  }
+
   D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
   pd.pRootSignature = impl_->root.Get();
   pd.CS = {shader->GetBufferPointer(), shader->GetBufferSize()};
+  ComPtr<ID3D12InfoQueue> info_queue;
+  impl_->device.As(&info_queue);
+  if (info_queue) info_queue->ClearStoredMessages();
   hr = impl_->device->CreateComputePipelineState(
       &pd, IID_PPV_ARGS(&impl_->pipeline));
-  if (FAILED(hr)) throw_hresult("D3D12 YUV compute PSO creation", hr);
+  if (FAILED(hr)) {
+    std::ostringstream message;
+    message << "D3D12 YUV compute PSO creation failed: HRESULT=0x" << std::hex
+            << std::uppercase << static_cast<std::uint32_t>(hr)
+            << "; profile=cs_5_1; root_constants={ShaderRegister=" << std::dec
+            << params[0].Constants.ShaderRegister
+            << ", RegisterSpace=" << params[0].Constants.RegisterSpace
+            << ", Num32BitValues=" << params[0].Constants.Num32BitValues
+            << "}; reflected_bindings={b0=C,t0=y_plane,t1=uv_plane,"
+               "u0=output_rgba}; InfoQueue={"
+            << d3d12_info_queue_messages(info_queue.Get()) << "}";
+    throw std::runtime_error(message.str());
+  }
   hr = impl_->device->CreateFence(
       0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl_->fence));
   if (FAILED(hr)) throw_hresult("D3D12 conversion fence creation", hr);
