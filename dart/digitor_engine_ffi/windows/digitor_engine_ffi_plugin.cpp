@@ -2,7 +2,7 @@
 
 #include <flutter/standard_method_codec.h>
 #include <d3d11.h>
-#include <d3d11_1.h>
+#include <d3d11on12.h>
 #include <d3d12.h>
 #include <dxgi.h>
 #include <windows.h>
@@ -86,16 +86,6 @@ std::string LuidDiagnostic(LUID luid) {
   return value;
 }
 
-struct ScopedWin32Handle {
-  HANDLE value{};
-  ~ScopedWin32Handle() {
-    if (value) CloseHandle(value);
-  }
-  ScopedWin32Handle() = default;
-  ScopedWin32Handle(const ScopedWin32Handle&) = delete;
-  ScopedWin32Handle& operator=(const ScopedWin32Handle&) = delete;
-};
-
 struct HandleLease {
   enum class Kind { kNone, kWin32Handle, kComObject } kind{Kind::kNone};
   void* value{};
@@ -140,9 +130,6 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return;
     }
 
-    // Flutter 3.44.x exposes the graphics adapter on FlutterView rather than
-    // PluginRegistrarWindows. GetGraphicsAdapter returns an AddRef'd adapter;
-    // Attach transfers that reference to ComPtr for deterministic release.
     auto* view = registrar->GetView();
     if (!view) {
       diagnostic = "Flutter Windows implicit view is unavailable";
@@ -162,120 +149,50 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     }
     flutter_adapter_luid = adapter_desc.AdapterLuid;
 
-    const D3D_FEATURE_LEVEL levels[] = {
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-    };
-    D3D_FEATURE_LEVEL selected_level{};
-    ComPtr<ID3D11Device> base_device;
-    ComPtr<ID3D11DeviceContext> base_context;
-    HRESULT hr = D3D11CreateDevice(
-        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
-        static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
-        base_device.GetAddressOf(), &selected_level,
-        base_context.GetAddressOf());
-    if (hr == E_INVALIDARG) {
-      hr = D3D11CreateDevice(
-          adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-          D3D11_CREATE_DEVICE_BGRA_SUPPORT, &levels[1], 1,
-          D3D11_SDK_VERSION, base_device.GetAddressOf(), &selected_level,
-          base_context.GetAddressOf());
-    }
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("D3D11CreateDevice(Flutter adapter)", hr);
-      return;
-    }
-    hr = base_device.As(&device);
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("QueryInterface(ID3D11Device1)", hr);
-      return;
-    }
-    context = std::move(base_context);
-
-    // Create a D3D12 device on the exact adapter Flutter renders with. This is
-    // both a deterministic adapter-identity probe and the producer of a clean
-    // cross-API compatibility carrier. The engine remains the production
-    // renderer; this device only performs GPU-to-GPU presentation copies.
-    hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
-                           IID_PPV_ARGS(d3d12_device.GetAddressOf()));
+    HRESULT hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                                   IID_PPV_ARGS(d3d12_device.GetAddressOf()));
     if (FAILED(hr) || !d3d12_device) {
       diagnostic = HResultDiagnostic("D3D12CreateDevice(Flutter adapter)", hr);
       return;
     }
+
     D3D12_COMMAND_QUEUE_DESC queue_desc{};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     hr = d3d12_device->CreateCommandQueue(
         &queue_desc, IID_PPV_ARGS(d3d12_queue.GetAddressOf()));
-    if (FAILED(hr)) {
+    if (FAILED(hr) || !d3d12_queue) {
       diagnostic = HResultDiagnostic("ID3D12Device::CreateCommandQueue", hr);
       return;
     }
-    hr = d3d12_device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
-        IID_PPV_ARGS(d3d12_allocator.GetAddressOf()));
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("ID3D12Device::CreateCommandAllocator", hr);
+
+    // Use Microsoft's D3D11On12 interop layer instead of asking a native D3D11
+    // device to reopen a D3D12-created resource. The real-machine run at
+    // 0445507 proved that the engine NT handle opens on Flutter's exact D3D12
+    // adapter but native ID3D11Device1::OpenSharedResource1 rejects even a
+    // minimal shared RGBA carrier with E_INVALIDARG.
+    IUnknown* queues[]{d3d12_queue.Get()};
+    D3D_FEATURE_LEVEL selected_level{};
+    hr = D3D11On12CreateDevice(
+        d3d12_device.Get(), D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, queues, 1, 0,
+        d3d11_device.GetAddressOf(), &d3d11_context, &selected_level);
+    if (FAILED(hr) || !d3d11_device || !d3d11_context) {
+      diagnostic = HResultDiagnostic(
+          "D3D11On12CreateDevice(Flutter D3D12 bridge)", hr);
       return;
     }
-    hr = d3d12_device->CreateCommandList(
-        0, D3D12_COMMAND_LIST_TYPE_DIRECT, d3d12_allocator.Get(), nullptr,
-        IID_PPV_ARGS(d3d12_list.GetAddressOf()));
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("ID3D12Device::CreateCommandList", hr);
+    hr = d3d11_device.As(&d3d11on12_device);
+    if (FAILED(hr) || !d3d11on12_device) {
+      diagnostic = HResultDiagnostic("QueryInterface(ID3D11On12Device)", hr);
       return;
     }
-    hr = d3d12_list->Close();
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("ID3D12GraphicsCommandList::Close", hr);
-      return;
-    }
-    hr = d3d12_device->CreateFence(
-        0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(d3d12_fence.GetAddressOf()));
-    if (FAILED(hr)) {
-      diagnostic = HResultDiagnostic("ID3D12Device::CreateFence", hr);
-      return;
-    }
-    d3d12_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    if (!d3d12_fence_event) {
-      diagnostic = "CreateEvent(D3D12 Flutter bridge fence) failed";
-      return;
-    }
+
     diagnostic.clear();
   }
 
-  ~D3D11PreviewBridge() {
-    if (d3d12_fence_event) CloseHandle(d3d12_fence_event);
-  }
-
   bool ready() const noexcept {
-    return device && context && d3d12_device && d3d12_queue &&
-           d3d12_allocator && d3d12_list && d3d12_fence &&
-           d3d12_fence_event;
-  }
-
-  HRESULT BeginD3d12Commands() {
-    HRESULT hr = d3d12_allocator->Reset();
-    if (FAILED(hr)) return hr;
-    return d3d12_list->Reset(d3d12_allocator.Get(), nullptr);
-  }
-
-  HRESULT SubmitD3d12AndWait() {
-    HRESULT hr = d3d12_list->Close();
-    if (FAILED(hr)) return hr;
-    ID3D12CommandList* lists[]{d3d12_list.Get()};
-    d3d12_queue->ExecuteCommandLists(1, lists);
-    const UINT64 value = ++d3d12_fence_value;
-    hr = d3d12_queue->Signal(d3d12_fence.Get(), value);
-    if (FAILED(hr)) return hr;
-    if (d3d12_fence->GetCompletedValue() < value) {
-      hr = d3d12_fence->SetEventOnCompletion(value, d3d12_fence_event);
-      if (FAILED(hr)) return hr;
-      if (WaitForSingleObject(d3d12_fence_event, INFINITE) != WAIT_OBJECT_0) {
-        return HRESULT_FROM_WIN32(GetLastError());
-      }
-    }
-    return S_OK;
+    return d3d11_device && d3d11_context && d3d11on12_device &&
+           d3d12_device && d3d12_queue;
   }
 
   bool CopyD3d12NtHandleToLegacySurface(
@@ -289,9 +206,10 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     std::scoped_lock lock(mutex);
     destination_lease.reset();
     legacy_shared_handle = nullptr;
+
     if (!ready()) {
       error = diagnostic.empty()
-                  ? "Flutter D3D11/D3D12 preview bridge is unavailable"
+                  ? "Flutter D3D11On12 preview bridge is unavailable"
                   : diagnostic;
       return false;
     }
@@ -327,92 +245,25 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
         source12_desc.SampleDesc.Count != 1 ||
         source12_desc.Format != expected_format) {
       error = "Engine D3D12 preview resource metadata is incompatible with "
-              "the Flutter bridge";
+              "the Flutter D3D11On12 bridge";
       return false;
     }
 
-    // Do not ask D3D11 to open the engine's UAV-capable shader output directly.
-    // D3D12/D3D11 interop requires a D3D11-compatible resource description.
-    // Copy into a dedicated, minimal RGBA carrier whose only purpose is
-    // cross-API sharing. ALLOW_SIMULTANEOUS_ACCESS mirrors the semantics D3D11
-    // gives shared resources; no CPU-visible heap or CPU copy is introduced.
-    D3D12_RESOURCE_DESC carrier_desc = source12_desc;
-    carrier_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
-    D3D12_HEAP_PROPERTIES heap{};
-    heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-    ComPtr<ID3D12Resource> carrier;
-    hr = d3d12_device->CreateCommittedResource(
-        &heap, D3D12_HEAP_FLAG_SHARED, &carrier_desc,
-        D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-        IID_PPV_ARGS(carrier.GetAddressOf()));
-    if (FAILED(hr) || !carrier) {
+    // A wrapped resource starts acquired. The engine publishes the shared
+    // preview in COMMON, so use COMMON for both cross-API ownership states.
+    // D3D11On12 translates CopyResource and handles the D3D12 copy-source state
+    // while the wrapper is acquired; ReleaseWrappedResources returns it to
+    // COMMON before the D3D11 command stream is flushed.
+    D3D11_RESOURCE_FLAGS wrapped_flags{};
+    ComPtr<ID3D11Texture2D> wrapped_source;
+    hr = d3d11on12_device->CreateWrappedResource(
+        engine_source.Get(), &wrapped_flags,
+        D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON,
+        IID_PPV_ARGS(wrapped_source.GetAddressOf()));
+    if (FAILED(hr) || !wrapped_source) {
       error = HResultDiagnostic(
-          "ID3D12Device::CreateCommittedResource(Flutter compatibility carrier)",
-          hr);
-      return false;
-    }
-
-    hr = BeginD3d12Commands();
-    if (FAILED(hr)) {
-      error = HResultDiagnostic("Begin D3D12 Flutter carrier copy", hr);
-      return false;
-    }
-    D3D12_RESOURCE_BARRIER source_to_copy{};
-    source_to_copy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    source_to_copy.Transition.pResource = engine_source.Get();
-    source_to_copy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    source_to_copy.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
-    source_to_copy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    d3d12_list->ResourceBarrier(1, &source_to_copy);
-    d3d12_list->CopyResource(carrier.Get(), engine_source.Get());
-
-    D3D12_RESOURCE_BARRIER finish[2]{};
-    finish[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    finish[0].Transition.pResource = engine_source.Get();
-    finish[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    finish[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    finish[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
-    finish[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    finish[1].Transition.pResource = carrier.Get();
-    finish[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    finish[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-    finish[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;
-    d3d12_list->ResourceBarrier(2, finish);
-    hr = SubmitD3d12AndWait();
-    if (FAILED(hr)) {
-      error = HResultDiagnostic("Submit D3D12 Flutter carrier copy", hr);
-      return false;
-    }
-
-    ScopedWin32Handle carrier_handle;
-    hr = d3d12_device->CreateSharedHandle(
-        carrier.Get(), nullptr, GENERIC_ALL, nullptr, &carrier_handle.value);
-    if (FAILED(hr) || !carrier_handle.value) {
-      error = HResultDiagnostic(
-          "ID3D12Device::CreateSharedHandle(Flutter compatibility carrier)", hr);
-      return false;
-    }
-
-    ComPtr<ID3D11Texture2D> source;
-    hr = device->OpenSharedResource1(
-        carrier_handle.value, IID_PPV_ARGS(source.GetAddressOf()));
-    if (FAILED(hr) || !source) {
-      error = HResultDiagnostic(
-                  "ID3D11Device1::OpenSharedResource1(D3D12 compatibility carrier)",
-                  hr) +
-              "; same-adapter D3D12 OpenSharedHandle succeeded; "
-              "carrier=RGBA8+SHARED+ALLOW_SIMULTANEOUS_ACCESS";
-      return false;
-    }
-
-    D3D11_TEXTURE2D_DESC source_desc{};
-    source->GetDesc(&source_desc);
-    if (source_desc.Width != width || source_desc.Height != height ||
-        source_desc.MipLevels != 1 || source_desc.ArraySize != 1 ||
-        source_desc.SampleDesc.Count != 1 ||
-        source_desc.Format != expected_format) {
-      error = "D3D12 compatibility carrier is incompatible with the Flutter "
-              "D3D11 bridge";
+                  "ID3D11On12Device::CreateWrappedResource(engine preview)", hr) +
+              "; FlutterAdapterLuid=" + LuidDiagnostic(flutter_adapter_luid);
       return false;
     }
 
@@ -427,26 +278,29 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     destination_desc.BindFlags =
         D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
     destination_desc.CPUAccessFlags = 0;
-    // Flutter's Windows DXGI external-texture path uses ANGLE's legacy
-    // EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE contract. That contract is fed by
-    // IDXGIResource::GetSharedHandle, not by an NT handle from
-    // ID3D12Device::CreateSharedHandle.
     destination_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
     ComPtr<ID3D11Texture2D> destination;
-    hr = device->CreateTexture2D(&destination_desc, nullptr,
-                                 destination.GetAddressOf());
+    hr = d3d11_device->CreateTexture2D(
+        &destination_desc, nullptr, destination.GetAddressOf());
     if (FAILED(hr) || !destination) {
       error = HResultDiagnostic(
-          "ID3D11Device::CreateTexture2D(Flutter legacy shared surface)", hr);
+          "ID3D11Device(D3D11On12)::CreateTexture2D(Flutter legacy shared surface)",
+          hr);
       return false;
     }
 
-    // Keep the final adaptation entirely GPU-side. Microsoft requires Flush on
-    // a D3D11 device after updating a shared texture before another device uses
-    // it. No Map/staging/readback path exists here.
-    context->CopyResource(destination.Get(), source.Get());
-    context->Flush();
+    d3d11_context->CopyResource(destination.Get(), wrapped_source.Get());
+    ID3D11Resource* wrapped_resources[]{wrapped_source.Get()};
+    d3d11on12_device->ReleaseWrappedResources(wrapped_resources, 1);
+    d3d11_context->Flush();
+
+    hr = d3d11_device->GetDeviceRemovedReason();
+    if (FAILED(hr)) {
+      error = HResultDiagnostic(
+          "D3D11On12 device health after Flutter preview GPU copy", hr);
+      return false;
+    }
 
     ComPtr<IDXGIResource> shared_resource;
     hr = destination.As(&shared_resource);
@@ -454,13 +308,18 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       error = HResultDiagnostic("QueryInterface(IDXGIResource)", hr);
       return false;
     }
+
     HANDLE shared_handle = nullptr;
     hr = shared_resource->GetSharedHandle(&shared_handle);
     if (FAILED(hr) || !shared_handle) {
-      error = HResultDiagnostic("IDXGIResource::GetSharedHandle", hr);
+      error = HResultDiagnostic(
+          "IDXGIResource::GetSharedHandle(D3D11On12 Flutter surface)", hr);
       return false;
     }
 
+    // The legacy handle is intentionally not duplicated or CloseHandle'd.
+    // Keeping the D3D11 creator texture alive keeps the legacy share handle
+    // valid until Flutter's release callback has opened/consumed it.
     auto lease = std::make_unique<HandleLease>();
     lease->kind = HandleLease::Kind::kComObject;
     lease->value = destination.Detach();
@@ -470,15 +329,11 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     return true;
   }
 
-  ComPtr<ID3D11Device1> device;
-  ComPtr<ID3D11DeviceContext> context;
+  ComPtr<ID3D11Device> d3d11_device;
+  ComPtr<ID3D11DeviceContext> d3d11_context;
+  ComPtr<ID3D11On12Device> d3d11on12_device;
   ComPtr<ID3D12Device> d3d12_device;
   ComPtr<ID3D12CommandQueue> d3d12_queue;
-  ComPtr<ID3D12CommandAllocator> d3d12_allocator;
-  ComPtr<ID3D12GraphicsCommandList> d3d12_list;
-  ComPtr<ID3D12Fence> d3d12_fence;
-  HANDLE d3d12_fence_event{};
-  UINT64 d3d12_fence_value{};
   LUID flutter_adapter_luid{};
   std::mutex mutex;
   std::string diagnostic;
@@ -513,9 +368,6 @@ struct DigitorEngineFfiPlugin::TextureState {
     void* flutter_handle = nullptr;
     if (handle_type == kDxgiSharedHandle) {
       if (!flutter_shared_handle) return nullptr;
-      // GetSharedHandle returns a legacy DXGI shared handle. It is deliberately
-      // not duplicated or closed. Keep the creator texture alive instead until
-      // Flutter confirms that it has opened the handle.
       auto* object = static_cast<IUnknown*>(retained_handle->value);
       object->AddRef();
       lease->kind = HandleLease::Kind::kComObject;
@@ -700,15 +552,18 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
     const auto pixel_format = ReadInt(*args, "pixelFormat");
     const auto device_identity = ReadInt(*args, "deviceIdentity");
     const auto context_identity = ReadInt(*args, "contextIdentity");
-    const auto protected_content = ReadBool(*args, "protectedContent").value_or(false);
+    const auto protected_content =
+        ReadBool(*args, "protectedContent").value_or(false);
     if (!backend || !handle_type || !native_handle || !width || !height ||
         !generation || !readiness || !pixel_format || *native_handle == 0 ||
         *generation <= 0 || *readiness != kReady || protected_content ||
         *handle_type != state->handle_type || *width <= 0 || *height <= 0) {
-      result->Error("incompatible_frame",
-                    "Frame is stale, protected, not ready, or incompatible with the registered texture.");
+      result->Error(
+          "incompatible_frame",
+          "Frame is stale, protected, not ready, or incompatible with the registered texture.");
       return;
     }
+
     const auto flutter_pixel_format = FlutterPixelFormat(*pixel_format);
     if (flutter_pixel_format == kFlutterDesktopPixelFormatNone) {
       result->Error("unsupported_pixel_format",
@@ -723,12 +578,14 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
         return;
       }
       if (state->device_identity && device_identity &&
-          static_cast<std::uint64_t>(*device_identity) != state->device_identity) {
+          static_cast<std::uint64_t>(*device_identity) !=
+              state->device_identity) {
         result->Error("device_mismatch", "Preview device identity changed.");
         return;
       }
       if (state->context_identity && context_identity &&
-          static_cast<std::uint64_t>(*context_identity) != state->context_identity) {
+          static_cast<std::uint64_t>(*context_identity) !=
+              state->context_identity) {
         result->Error("context_mismatch", "Preview context identity changed.");
         return;
       }
@@ -738,8 +595,9 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
     HANDLE flutter_shared_handle = nullptr;
     if (*handle_type == kDxgiSharedHandle) {
       if (*backend != kD3d12Backend) {
-        result->Error("unsupported_dxgi_producer",
-                      "Windows DXGI preview bridge currently requires a D3D12 producer.");
+        result->Error(
+            "unsupported_dxgi_producer",
+            "Windows DXGI preview bridge currently requires a D3D12 producer.");
         return;
       }
       std::string bridge_error;
@@ -753,7 +611,8 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
         return;
       }
     } else {
-      retained = RetainD3d11Texture(static_cast<std::uint64_t>(*native_handle));
+      retained = RetainD3d11Texture(
+          static_cast<std::uint64_t>(*native_handle));
       if (!retained) {
         result->Error(
             "frame_handle_retain_failed",
@@ -765,7 +624,6 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
     std::unique_ptr<HandleLease> previous_handle;
     {
       std::scoped_lock lock(state->mutex);
-      // Recheck after the GPU bridge work in case a newer frame won the race.
       if (static_cast<std::uint64_t>(*generation) <= state->generation) {
         result->Error("stale_generation", "Preview generations must increase.");
         return;
@@ -783,6 +641,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
       state->pixel_format = flutter_pixel_format;
     }
     ReleaseOwnedLease(previous_handle);
+
     if (!texture_registrar_->MarkTextureFrameAvailable(*texture_id)) {
       result->Error("frame_signal_failed",
                     "Flutter texture registrar rejected the frame signal.");
