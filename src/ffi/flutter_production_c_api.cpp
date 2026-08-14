@@ -1,5 +1,7 @@
 #include "digitor/flutter_production_c_api.h"
 
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -23,7 +25,17 @@ struct DigitorFlutterProductionSession {
 };
 
 namespace {
-constexpr uint32_t kDiagnosticCapacity = 512;
+// The callback ABI requires caller-owned bounded storage. 16 KiB accommodates
+// API validation messages; non-terminated output is reported explicitly.
+constexpr uint32_t kDiagnosticCapacity = 16 * 1024;
+using DiagnosticBuffer = std::array<char, kDiagnosticCapacity>;
+std::string captured_diagnostic(const DiagnosticBuffer& value, const char* fallback) {
+    const auto end = std::find(value.begin(), value.end(), '\0');
+    if (end == value.end())
+        return std::string(value.data(), value.size()) +
+               " [diagnostic truncated at 16384 bytes]";
+    return end == value.begin() ? std::string(fallback) : std::string(value.begin(), end);
+}
 std::mutex g_flutter_sessions_mutex;
 std::unordered_set<DigitorFlutterProductionSession*> g_flutter_sessions;
 std::mutex g_registered_host_mutex;
@@ -128,13 +140,13 @@ DigitorResult create_session(
         session->host = host;
         session->export_media_v2 = export_media_v2;
 
-        char diagnostic[kDiagnosticCapacity]{};
+        DiagnosticBuffer diagnostic{};
+        diagnostic.back() = static_cast<char>(0x7f);
         const auto result = session->host.open_media(
-            session->host.user_data, utf8_media_path, diagnostic,
+            session->host.user_data, utf8_media_path, diagnostic.data(),
             kDiagnosticCapacity);
         if (result != DIGITOR_RESULT_OK) {
-            session->last_error = diagnostic[0]
-                ? diagnostic : "production media host failed to open media";
+            session->last_error = captured_diagnostic(diagnostic, "production media host failed to open media");
             delete session;
             return result;
         }
@@ -314,12 +326,12 @@ DigitorResult digitor_flutter_production_set_preview_target(
         std::lock_guard session_lock(session->mutex);
         if (session->active_operation || session->has_current_preview)
             return DIGITOR_RESULT_RESOURCE_IN_USE;
-        char diagnostic[kDiagnosticCapacity]{};
+        DiagnosticBuffer diagnostic{};
+        diagnostic.back() = static_cast<char>(0x7f);
         const auto result = session->host.set_preview_target(
-            session->host.user_data, target, diagnostic, kDiagnosticCapacity);
+            session->host.user_data, target, diagnostic.data(), kDiagnosticCapacity);
         if (result != DIGITOR_RESULT_OK) {
-            session->last_error = diagnostic[0]
-                ? diagnostic : "production preview target binding failed";
+            session->last_error = captured_diagnostic(diagnostic, "production preview target binding failed");
             return result;
         }
         session->last_error.clear();
@@ -369,11 +381,12 @@ DigitorResult digitor_flutter_production_preview(
     DigitorNativeGpuTextureDescriptor texture{};
     texture.struct_size = sizeof(texture);
     texture.api_version = DIGITOR_NATIVE_GPU_TEXTURE_DESCRIPTOR_VERSION;
-    char diagnostic[kDiagnosticCapacity]{};
+    DiagnosticBuffer diagnostic{};
+        diagnostic.back() = static_cast<char>(0x7f);
     const auto result = host.render_frame(
         host.user_data, DIGITOR_FLUTTER_RENDER_PREVIEW, graph,
         graph_revision, parameter_revision, timestamp_us, width, height,
-        &texture, diagnostic, kDiagnosticCapacity);
+        &texture, diagnostic.data(), kDiagnosticCapacity);
 
     bool release_failed_texture = false;
     DigitorResult final_result = result;
@@ -386,8 +399,7 @@ DigitorResult digitor_flutter_production_preview(
             std::lock_guard session_lock(session->mutex);
             session->active_operation = false;
             if (result != DIGITOR_RESULT_OK) {
-                session->last_error = diagnostic[0]
-                    ? diagnostic : "production preview host failed";
+                session->last_error = captured_diagnostic(diagnostic, "production preview host failed");
                 release_failed_texture = texture.native_handle != 0;
             } else if (!valid_texture(texture, host, width, height, timestamp_us)) {
                 session->last_error =
@@ -488,10 +500,11 @@ DigitorResult digitor_flutter_production_export(
         parameter_revision = session->parameter_revision;
     }
 
-    char diagnostic[kDiagnosticCapacity]{};
+    DiagnosticBuffer diagnostic{};
+        diagnostic.back() = static_cast<char>(0x7f);
     const auto result = host.export_media(
         host.user_data, graph, graph_revision, parameter_revision, request,
-        progress, progress_user_data, diagnostic, kDiagnosticCapacity);
+        progress, progress_user_data, diagnostic.data(), kDiagnosticCapacity);
 
     {
         std::lock_guard registry_lock(g_flutter_sessions_mutex);
@@ -501,8 +514,7 @@ DigitorResult digitor_flutter_production_export(
         if (result == DIGITOR_RESULT_OK) {
             session->last_error.clear();
         } else {
-            session->last_error = diagnostic[0]
-                ? diagnostic : "production export host failed";
+            session->last_error = captured_diagnostic(diagnostic, "production export host failed");
         }
     }
     return result;
@@ -562,10 +574,11 @@ DigitorResult digitor_flutter_production_export_v2(
         parameter_revision = session->parameter_revision;
     }
 
-    char diagnostic[kDiagnosticCapacity]{};
+    DiagnosticBuffer diagnostic{};
+        diagnostic.back() = static_cast<char>(0x7f);
     const auto result = export_media_v2(
         host.user_data, graph, graph_revision, parameter_revision, request,
-        progress, progress_user_data, diagnostic, kDiagnosticCapacity);
+        progress, progress_user_data, diagnostic.data(), kDiagnosticCapacity);
 
     {
         std::lock_guard registry_lock(g_flutter_sessions_mutex);
@@ -575,8 +588,7 @@ DigitorResult digitor_flutter_production_export_v2(
         if (result == DIGITOR_RESULT_OK) {
             session->last_error.clear();
         } else {
-            session->last_error = diagnostic[0]
-                ? diagnostic : "production V2 export host failed";
+            session->last_error = captured_diagnostic(diagnostic, "production V2 export host failed");
         }
     }
     return result;
