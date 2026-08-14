@@ -4,6 +4,7 @@
 #include <d3d11.h>
 #include <d3d11on12.h>
 #include <d3d12.h>
+#include <d3dcompiler.h>
 #include <dxgi.h>
 #include <windows.h>
 #include <unknwn.h>
@@ -86,6 +87,12 @@ std::string LuidDiagnostic(LUID luid) {
   return value;
 }
 
+std::string BlobMessage(ID3DBlob* blob) {
+  if (!blob || !blob->GetBufferPointer() || !blob->GetBufferSize()) return {};
+  return std::string(static_cast<const char*>(blob->GetBufferPointer()),
+                     blob->GetBufferSize());
+}
+
 struct HandleLease {
   enum class Kind { kNone, kWin32Handle, kComObject } kind{Kind::kNone};
   void* value{};
@@ -165,11 +172,6 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return;
     }
 
-    // Use Microsoft's D3D11On12 interop layer instead of asking a native D3D11
-    // device to reopen a D3D12-created resource. The real-machine run at
-    // 0445507 proved that the engine NT handle opens on Flutter's exact D3D12
-    // adapter but native ID3D11Device1::OpenSharedResource1 rejects even a
-    // minimal shared RGBA carrier with E_INVALIDARG.
     IUnknown* queues[]{d3d12_queue.Get()};
     D3D_FEATURE_LEVEL selected_level{};
     hr = D3D11On12CreateDevice(
@@ -187,12 +189,95 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return;
     }
 
+    // Flutter's own Windows GPU-surface tests create the DXGI shared-handle
+    // texture as BGRA8 on a native D3D11 device. Keep a native D3D11 device on
+    // the exact Flutter adapter as an explicit compatibility probe before a
+    // handle is handed to ANGLE.
+    const D3D_FEATURE_LEVEL probe_levels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+    };
+    D3D_FEATURE_LEVEL probe_level{};
+    ComPtr<ID3D11DeviceContext> probe_context;
+    hr = D3D11CreateDevice(
+        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, probe_levels,
+        static_cast<UINT>(std::size(probe_levels)), D3D11_SDK_VERSION,
+        native_probe_device.GetAddressOf(), &probe_level,
+        probe_context.GetAddressOf());
+    if (hr == E_INVALIDARG) {
+      hr = D3D11CreateDevice(
+          adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+          D3D11_CREATE_DEVICE_BGRA_SUPPORT, &probe_levels[1], 1,
+          D3D11_SDK_VERSION, native_probe_device.GetAddressOf(), &probe_level,
+          probe_context.GetAddressOf());
+    }
+    if (FAILED(hr) || !native_probe_device) {
+      diagnostic = HResultDiagnostic("D3D11CreateDevice(Flutter adapter probe)", hr);
+      return;
+    }
+
+    static constexpr char kVertexShaderSource[] = R"(
+float4 main(uint vertex_id : SV_VertexID) : SV_POSITION {
+  if (vertex_id == 0) return float4(-1.0,  1.0, 0.0, 1.0);
+  if (vertex_id == 1) return float4( 3.0,  1.0, 0.0, 1.0);
+  return                    float4(-1.0, -3.0, 0.0, 1.0);
+}
+)";
+    static constexpr char kPixelShaderSource[] = R"(
+Texture2D<float4> source_texture : register(t0);
+float4 main(float4 position : SV_POSITION) : SV_TARGET {
+  return source_texture.Load(int3(int2(position.xy), 0));
+}
+)";
+
+    ComPtr<ID3DBlob> shader_blob;
+    ComPtr<ID3DBlob> shader_errors;
+    hr = D3DCompile(kVertexShaderSource, sizeof(kVertexShaderSource) - 1,
+                    "DigitorFlutterPreviewVS", nullptr, nullptr, "main",
+                    "vs_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0,
+                    shader_blob.GetAddressOf(), shader_errors.GetAddressOf());
+    if (FAILED(hr)) {
+      diagnostic = HResultDiagnostic("D3DCompile(Flutter preview vertex shader)", hr);
+      const auto details = BlobMessage(shader_errors.Get());
+      if (!details.empty()) diagnostic += "; " + details;
+      return;
+    }
+    hr = d3d11_device->CreateVertexShader(
+        shader_blob->GetBufferPointer(), shader_blob->GetBufferSize(), nullptr,
+        blit_vertex_shader.GetAddressOf());
+    if (FAILED(hr) || !blit_vertex_shader) {
+      diagnostic = HResultDiagnostic("ID3D11Device::CreateVertexShader", hr);
+      return;
+    }
+
+    shader_blob.Reset();
+    shader_errors.Reset();
+    hr = D3DCompile(kPixelShaderSource, sizeof(kPixelShaderSource) - 1,
+                    "DigitorFlutterPreviewPS", nullptr, nullptr, "main",
+                    "ps_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0,
+                    shader_blob.GetAddressOf(), shader_errors.GetAddressOf());
+    if (FAILED(hr)) {
+      diagnostic = HResultDiagnostic("D3DCompile(Flutter preview pixel shader)", hr);
+      const auto details = BlobMessage(shader_errors.Get());
+      if (!details.empty()) diagnostic += "; " + details;
+      return;
+    }
+    hr = d3d11_device->CreatePixelShader(
+        shader_blob->GetBufferPointer(), shader_blob->GetBufferSize(), nullptr,
+        blit_pixel_shader.GetAddressOf());
+    if (FAILED(hr) || !blit_pixel_shader) {
+      diagnostic = HResultDiagnostic("ID3D11Device::CreatePixelShader", hr);
+      return;
+    }
+
     diagnostic.clear();
   }
 
   bool ready() const noexcept {
     return d3d11_device && d3d11_context && d3d11on12_device &&
-           d3d12_device && d3d12_queue;
+           d3d12_device && d3d12_queue && native_probe_device &&
+           blit_vertex_shader && blit_pixel_shader;
   }
 
   bool CopyD3d12NtHandleToLegacySurface(
@@ -218,8 +303,8 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return false;
     }
 
-    const auto expected_format = DxgiFormat(pixel_format);
-    if (expected_format == DXGI_FORMAT_UNKNOWN) {
+    const auto source_format = DxgiFormat(pixel_format);
+    if (source_format == DXGI_FORMAT_UNKNOWN) {
       error = "Flutter preview bridge received an unsupported pixel format";
       return false;
     }
@@ -243,18 +328,17 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
         source12_desc.Width != width || source12_desc.Height != height ||
         source12_desc.MipLevels != 1 || source12_desc.DepthOrArraySize != 1 ||
         source12_desc.SampleDesc.Count != 1 ||
-        source12_desc.Format != expected_format) {
+        source12_desc.Format != source_format) {
       error = "Engine D3D12 preview resource metadata is incompatible with "
               "the Flutter D3D11On12 bridge";
       return false;
     }
 
-    // A wrapped resource starts acquired. The engine publishes the shared
-    // preview in COMMON, so use COMMON for both cross-API ownership states.
-    // D3D11On12 translates CopyResource and handles the D3D12 copy-source state
-    // while the wrapper is acquired; ReleaseWrappedResources returns it to
-    // COMMON before the D3D11 command stream is flushed.
+    // Promote the engine's RGBA/BGRA texture into D3D11On12 as a shader
+    // resource. The final Flutter surface is always BGRA8 because Flutter's
+    // Windows EGL/ANGLE path and its own shared-handle unit test use BGRA8.
     D3D11_RESOURCE_FLAGS wrapped_flags{};
+    wrapped_flags.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     ComPtr<ID3D11Texture2D> wrapped_source;
     hr = d3d11on12_device->CreateWrappedResource(
         engine_source.Get(), &wrapped_flags,
@@ -267,12 +351,26 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
       return false;
     }
 
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = source_format;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MostDetailedMip = 0;
+    srv_desc.Texture2D.MipLevels = 1;
+    ComPtr<ID3D11ShaderResourceView> source_srv;
+    hr = d3d11_device->CreateShaderResourceView(
+        wrapped_source.Get(), &srv_desc, source_srv.GetAddressOf());
+    if (FAILED(hr) || !source_srv) {
+      error = HResultDiagnostic(
+          "ID3D11Device(D3D11On12)::CreateShaderResourceView(engine preview)", hr);
+      return false;
+    }
+
     D3D11_TEXTURE2D_DESC destination_desc{};
     destination_desc.Width = static_cast<UINT>(width);
     destination_desc.Height = static_cast<UINT>(height);
     destination_desc.MipLevels = 1;
     destination_desc.ArraySize = 1;
-    destination_desc.Format = expected_format;
+    destination_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     destination_desc.SampleDesc.Count = 1;
     destination_desc.Usage = D3D11_USAGE_DEFAULT;
     destination_desc.BindFlags =
@@ -285,12 +383,45 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
         &destination_desc, nullptr, destination.GetAddressOf());
     if (FAILED(hr) || !destination) {
       error = HResultDiagnostic(
-          "ID3D11Device(D3D11On12)::CreateTexture2D(Flutter legacy shared surface)",
+          "ID3D11Device(D3D11On12)::CreateTexture2D(Flutter BGRA shared surface)",
           hr);
       return false;
     }
 
-    d3d11_context->CopyResource(destination.Get(), wrapped_source.Get());
+    ComPtr<ID3D11RenderTargetView> destination_rtv;
+    hr = d3d11_device->CreateRenderTargetView(
+        destination.Get(), nullptr, destination_rtv.GetAddressOf());
+    if (FAILED(hr) || !destination_rtv) {
+      error = HResultDiagnostic(
+          "ID3D11Device(D3D11On12)::CreateRenderTargetView(Flutter BGRA surface)",
+          hr);
+      return false;
+    }
+
+    D3D11_VIEWPORT viewport{};
+    viewport.TopLeftX = 0.0f;
+    viewport.TopLeftY = 0.0f;
+    viewport.Width = static_cast<float>(width);
+    viewport.Height = static_cast<float>(height);
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+
+    ID3D11RenderTargetView* rtvs[]{destination_rtv.Get()};
+    ID3D11ShaderResourceView* srvs[]{source_srv.Get()};
+    d3d11_context->OMSetRenderTargets(1, rtvs, nullptr);
+    d3d11_context->RSSetViewports(1, &viewport);
+    d3d11_context->IASetInputLayout(nullptr);
+    d3d11_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    d3d11_context->VSSetShader(blit_vertex_shader.Get(), nullptr, 0);
+    d3d11_context->PSSetShader(blit_pixel_shader.Get(), nullptr, 0);
+    d3d11_context->PSSetShaderResources(0, 1, srvs);
+    d3d11_context->Draw(3, 0);
+
+    ID3D11ShaderResourceView* null_srvs[]{nullptr};
+    ID3D11RenderTargetView* null_rtvs[]{nullptr};
+    d3d11_context->PSSetShaderResources(0, 1, null_srvs);
+    d3d11_context->OMSetRenderTargets(1, null_rtvs, nullptr);
+
     ID3D11Resource* wrapped_resources[]{wrapped_source.Get()};
     d3d11on12_device->ReleaseWrappedResources(wrapped_resources, 1);
     d3d11_context->Flush();
@@ -298,7 +429,7 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     hr = d3d11_device->GetDeviceRemovedReason();
     if (FAILED(hr)) {
       error = HResultDiagnostic(
-          "D3D11On12 device health after Flutter preview GPU copy", hr);
+          "D3D11On12 device health after Flutter BGRA GPU blit", hr);
       return false;
     }
 
@@ -313,13 +444,34 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
     hr = shared_resource->GetSharedHandle(&shared_handle);
     if (FAILED(hr) || !shared_handle) {
       error = HResultDiagnostic(
-          "IDXGIResource::GetSharedHandle(D3D11On12 Flutter surface)", hr);
+          "IDXGIResource::GetSharedHandle(D3D11On12 Flutter BGRA surface)", hr);
       return false;
     }
 
-    // The legacy handle is intentionally not duplicated or CloseHandle'd.
-    // Keeping the D3D11 creator texture alive keeps the legacy share handle
-    // valid until Flutter's release callback has opened/consumed it.
+    // Probe the exact legacy handle through a normal D3D11 device before it is
+    // handed to ANGLE. A failure here is actionable and avoids reducing all
+    // external-texture errors to Flutter's generic "Binding D3D surface failed".
+    ComPtr<ID3D11Texture2D> probe_texture;
+    hr = native_probe_device->OpenSharedResource(
+        shared_handle, IID_PPV_ARGS(probe_texture.GetAddressOf()));
+    if (FAILED(hr) || !probe_texture) {
+      error = HResultDiagnostic(
+                  "ID3D11Device::OpenSharedResource(Flutter legacy BGRA probe)",
+                  hr) +
+              "; FlutterAdapterLuid=" + LuidDiagnostic(flutter_adapter_luid);
+      return false;
+    }
+    D3D11_TEXTURE2D_DESC probe_desc{};
+    probe_texture->GetDesc(&probe_desc);
+    if (probe_desc.Width != width || probe_desc.Height != height ||
+        probe_desc.MipLevels != 1 || probe_desc.ArraySize != 1 ||
+        probe_desc.SampleDesc.Count != 1 ||
+        probe_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+      error = "Flutter legacy BGRA probe opened but returned incompatible "
+              "texture metadata";
+      return false;
+    }
+
     auto lease = std::make_unique<HandleLease>();
     lease->kind = HandleLease::Kind::kComObject;
     lease->value = destination.Detach();
@@ -334,6 +486,9 @@ struct DigitorEngineFfiPlugin::D3D11PreviewBridge {
   ComPtr<ID3D11On12Device> d3d11on12_device;
   ComPtr<ID3D12Device> d3d12_device;
   ComPtr<ID3D12CommandQueue> d3d12_queue;
+  ComPtr<ID3D11Device> native_probe_device;
+  ComPtr<ID3D11VertexShader> blit_vertex_shader;
+  ComPtr<ID3D11PixelShader> blit_pixel_shader;
   LUID flutter_adapter_luid{};
   std::mutex mutex;
   std::string diagnostic;
@@ -362,11 +517,6 @@ struct DigitorEngineFfiPlugin::TextureState {
         !width || !height)
       return nullptr;
 
-    // Flutter passes the intended on-screen texture size here, not a contract
-    // that the producer resource must be allocated at exactly that size. The
-    // native preview remains at its production resolution (for example
-    // 1920x1080); the descriptor below reports the actual surface and visible
-    // dimensions so Flutter can scale it into the viewport.
     auto lease = std::make_unique<HandleLease>();
     void* flutter_handle = nullptr;
     if (handle_type == kDxgiSharedHandle) {
@@ -596,6 +746,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
 
     std::unique_ptr<HandleLease> retained;
     HANDLE flutter_shared_handle = nullptr;
+    FlutterDesktopPixelFormat presented_pixel_format = flutter_pixel_format;
     if (*handle_type == kDxgiSharedHandle) {
       if (*backend != kD3d12Backend) {
         result->Error(
@@ -613,6 +764,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
         result->Error("d3d12_flutter_bridge_failed", bridge_error);
         return;
       }
+      presented_pixel_format = kFlutterDesktopPixelFormatBGRA8888;
     } else {
       retained = RetainD3d11Texture(
           static_cast<std::uint64_t>(*native_handle));
@@ -641,7 +793,7 @@ void DigitorEngineFfiPlugin::HandleMethodCall(
           device_identity ? static_cast<std::uint64_t>(*device_identity) : 0;
       state->context_identity =
           context_identity ? static_cast<std::uint64_t>(*context_identity) : 0;
-      state->pixel_format = flutter_pixel_format;
+      state->pixel_format = presented_pixel_format;
     }
     ReleaseOwnedLease(previous_handle);
 
