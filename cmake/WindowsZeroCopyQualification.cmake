@@ -4,12 +4,25 @@ if(DIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION)
   if(NOT WIN32)
     message(FATAL_ERROR "Windows zero-copy qualification requires Windows")
   endif()
-  # DIGITOR_HAS_FFMPEG is a target compile definition, not a CMake feature
-  # variable. Gate qualification on the actual find_package result so the
-  # module cannot be enabled by a stale -DDIGITOR_HAS_FFMPEG=ON cache value.
-  if(NOT FFmpeg_FOUND)
-    message(FATAL_ERROR "Windows zero-copy qualification requires FFmpeg development libraries")
+  # FFmpeg discovery happens while the engine subdirectory is configured, so
+  # FFmpeg_FOUND is directory-scoped and is not a reliable signal here. Inspect
+  # the engine target's concrete compile contract instead; this cannot be faked
+  # by a stale -DDIGITOR_HAS_FFMPEG=ON cache entry.
+  if(NOT TARGET digitor_engine)
+    message(FATAL_ERROR "Windows zero-copy qualification requires digitor_engine")
   endif()
+  get_target_property(_digitor_engine_compile_definitions
+    digitor_engine COMPILE_DEFINITIONS)
+  if(NOT _digitor_engine_compile_definitions)
+    set(_digitor_engine_compile_definitions "")
+  endif()
+  list(FIND _digitor_engine_compile_definitions "DIGITOR_HAS_FFMPEG=1"
+    _digitor_ffmpeg_definition_index)
+  if(_digitor_ffmpeg_definition_index EQUAL -1)
+    message(FATAL_ERROR "Windows zero-copy qualification requires FFmpeg-enabled digitor_engine")
+  endif()
+  unset(_digitor_engine_compile_definitions)
+  unset(_digitor_ffmpeg_definition_index)
 
   add_library(digitor_windows_zero_copy_qualification STATIC
     ${CMAKE_CURRENT_LIST_DIR}/../src/media/windows_zero_copy_qualification.cpp)
