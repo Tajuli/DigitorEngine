@@ -157,10 +157,14 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   ComPtr<IDXGIKeyedMutex> keyed_mutex;
   assert(SUCCEEDED(destination.As(&keyed_mutex)) && keyed_mutex);
 
-  // Exercise a non-zero decoder slice and preserve the single-slice contract.
+  // The D3D11 creator must own a SHARED_KEYEDMUTEX resource while issuing the
+  // copy. A freshly created resource is unowned, so key 0 succeeds immediately.
+  assert(keyed_mutex->AcquireSync(0, 0) == S_OK);
   context11->CopySubresourceRegion(
       destination.Get(), 0, 0, 0, 0, source.Get(),
       D3D11CalcSubresource(0, 2, source_desc.MipLevels), nullptr);
+  assert(SUCCEEDED(device11->GetDeviceRemovedReason()));
+  assert(SUCCEEDED(keyed_mutex->ReleaseSync(1)));
   assert(SUCCEEDED(device11->GetDeviceRemovedReason()));
 
   ComPtr<IDXGIResource1> dxgi;
