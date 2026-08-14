@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <new>
 #include <stdexcept>
@@ -25,6 +26,24 @@ struct DigitorProductionMediaSource {
 };
 
 namespace {
+
+thread_local std::string g_last_error;
+
+void clear_error() noexcept {
+  g_last_error.clear();
+}
+
+void set_error(const char* text) noexcept {
+  try {
+    g_last_error = text ? text : "";
+  } catch (...) {
+    g_last_error.clear();
+  }
+}
+
+void set_error(const std::exception& error) noexcept {
+  set_error(error.what());
+}
 
 digitor::HardwareDecode decode_mode(uint32_t value) {
   switch (value) {
@@ -60,13 +79,24 @@ uint32_t encode_mode(digitor::HardwareDecode value) {
 
 template <typename Fn>
 int32_t guard(Fn&& fn) noexcept {
+  clear_error();
   try {
-    return static_cast<int32_t>(fn());
-  } catch (const std::bad_alloc&) {
+    const auto result = static_cast<int32_t>(fn());
+    if (result == DIGITOR_RESULT_OK) {
+      clear_error();
+    }
+    return result;
+  } catch (const std::bad_alloc& error) {
+    set_error(error);
     return DIGITOR_RESULT_OUT_OF_MEMORY;
-  } catch (const std::invalid_argument&) {
+  } catch (const std::invalid_argument& error) {
+    set_error(error);
     return DIGITOR_RESULT_INVALID_ARGUMENT;
+  } catch (const std::exception& error) {
+    set_error(error);
+    return DIGITOR_RESULT_INTERNAL_ERROR;
   } catch (...) {
+    set_error("unknown production media failure");
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
 }
@@ -147,15 +177,19 @@ int32_t digitor_production_media_open(
     const char* path,
     const DigitorProductionMediaOptions* options,
     DigitorProductionMediaSource** out_source) {
+  clear_error();
   if (!out_source) {
+    set_error("production media output pointer is required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   *out_source = nullptr;
   if (!path || path[0] == '\0' || !valid_options(options)) {
+    set_error("valid production media path and options are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
 #if !defined(__ANDROID__)
   if (!digitor::ffmpeg_available()) {
+    set_error("FFmpeg production media backend is unavailable");
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 #endif
@@ -175,6 +209,7 @@ int32_t digitor_production_media_open(
 
     auto decoder = digitor::open_video_decoder(path, resolved);
     if (!decoder) {
+      set_error("production video decoder factory returned no decoder");
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
     auto source = std::make_unique<DigitorProductionMediaSource>();
@@ -189,6 +224,7 @@ int32_t digitor_production_media_get_info(
     const DigitorProductionMediaSource* source,
     DigitorProductionDecoderInfo* out_info) {
   if (!source || !source->decoder || !valid_info_output(out_info)) {
+    set_error("valid production media source and decoder-info output are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   return guard([&]() -> DigitorResult {
@@ -212,7 +248,9 @@ int32_t digitor_production_media_get_info(
 int32_t digitor_production_media_get_duration_us(
     const DigitorProductionMediaSource* source,
     int64_t* out_duration_us) {
+  clear_error();
   if (!source || !source->decoder || !out_duration_us) {
+    set_error("valid production media source and duration output are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   *out_duration_us = source->duration_us;
@@ -223,6 +261,7 @@ int32_t digitor_production_media_seek(
     DigitorProductionMediaSource* source,
     int64_t pts_us) {
   if (!source || !source->decoder || pts_us < 0) {
+    set_error("valid production media source and non-negative seek timestamp are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   return guard([&]() -> DigitorResult {
@@ -238,11 +277,13 @@ int32_t digitor_production_media_decode(
     DigitorProductionDecodedFrameInfo* out_frame) {
   if (!source || !source->decoder || frame_number < 0 ||
       !valid_frame_output(out_frame)) {
+    set_error("valid production media source, frame number, and frame output are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   return guard([&]() -> DigitorResult {
     auto frame = source->decoder->decode(frame_number);
     if (!frame) {
+      set_error("production media decoder returned no frame");
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }
     source->current_frame = frame;
@@ -267,9 +308,11 @@ int32_t digitor_production_media_get_native_surface(
     const DigitorProductionMediaSource* source,
     DigitorProductionNativeSurfaceDescriptor* out_surface) {
   if (!source || !source->decoder || !valid_surface_output(out_surface)) {
+    set_error("valid production media source and native-surface output are required");
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
   if (!source->current_frame || !source->current_frame->native_surface) {
+    set_error("current production frame has no native GPU surface");
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -306,6 +349,10 @@ int32_t digitor_production_media_get_native_surface(
     out_surface->chroma_location = descriptor.color.chroma_location;
     return DIGITOR_RESULT_OK;
   });
+}
+
+const char* digitor_production_media_last_error(void) {
+  return g_last_error.c_str();
 }
 
 void digitor_production_media_close(DigitorProductionMediaSource* source) {
