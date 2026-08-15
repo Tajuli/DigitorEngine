@@ -159,9 +159,10 @@ final class DigitorTimelineBindings {
           .lookupFunction<DigitorAttachMediaNative, DigitorAttachMediaDart>(
             'digitor_timeline_session_attach_media',
           ),
-      detachMedia = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
-        'digitor_timeline_session_detach_media',
-      ),
+      detachMedia = library
+          .lookupFunction<DigitorCommandNative, DigitorCommandDart>(
+            'digitor_timeline_session_detach_media',
+          ),
       play = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
         'digitor_timeline_session_play',
       ),
