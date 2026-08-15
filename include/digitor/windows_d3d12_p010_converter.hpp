@@ -34,7 +34,7 @@ struct WindowsP010GpuConstants {
 };
 
 using WindowsP010GpuDispatch = std::function<DigitorResult(
-    void* rgba16f_resource, void* p010_resource,
+    void* rgba_resource, void* p010_resource,
     const WindowsP010GpuConstants&, void* command_queue,
     void* completion_fence, std::uint64_t completion_value)>;
 
@@ -45,6 +45,10 @@ struct WindowsP010ConversionConfig {
   std::uint32_t width{};
   std::uint32_t height{};
   std::uint32_t pool_size{6};
+  DigitorPixelFormat input_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
+  // True only when the input is the shared output-transform texture used by
+  // preview/export. Scene-linear renderer frames keep this false.
+  bool input_transfer_encoded{};
   WindowsOutputMatrix matrix{WindowsOutputMatrix::bt709};
   WindowsOutputTransfer transfer{WindowsOutputTransfer::gamma24};
   bool full_range{};
