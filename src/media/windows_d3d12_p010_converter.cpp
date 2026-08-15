@@ -42,7 +42,8 @@ WindowsP010GpuConstants windows_p010_gpu_constants(
   o.mastering_peak_nits=c.mastering_peak_nits;
   o.width=c.width; o.height=c.height;
   o.transfer=static_cast<std::uint32_t>(c.transfer);
-  o.flags=(c.full_range?1u:0u)|(c.preserve_superwhites?2u:0u);
+  o.flags=(c.full_range?1u:0u)|(c.preserve_superwhites?2u:0u)|
+          (c.input_transfer_encoded?4u:0u);
   return o;
 }
 
@@ -83,6 +84,10 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(!i.config.d3d12_device||!i.config.command_queue||!i.config.d3d11_device||
        !i.config.width||!i.config.height||!i.config.pool_size||!i.config.gpu_dispatch)
       return DIGITOR_RESULT_INVALID_ARGUMENT;
+    if(i.config.input_format!=DIGITOR_PIXEL_FORMAT_RGBA8_UNORM &&
+       i.config.input_format!=DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT &&
+       i.config.input_format!=DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
+      return DIGITOR_RESULT_UNSUPPORTED;
     if((i.config.width&1u)||(i.config.height&1u)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     i.device12=static_cast<ID3D12Device*>(i.config.d3d12_device);
     i.queue12=static_cast<ID3D12CommandQueue*>(i.config.command_queue);
@@ -137,7 +142,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
   (void)input; return DIGITOR_RESULT_UNSUPPORTED;
 #else
   auto& i=*impl_;
-  if(!input.resource||input.format!=DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT||
+  if(!input.resource||input.format!=i.config.input_format||
      input.width!=i.config.width||input.height!=i.config.height)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   try {
@@ -167,7 +172,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     output.frame_identity=input.frame_identity;
     output.lifetime=std::move(lifetime);
     {std::scoped_lock lock(i.mutex);++i.telemetry.completed;
-      i.telemetry.diagnostic="RGBA16F converted to shared P010 on GPU";}
+      i.telemetry.diagnostic="GPU RGBA converted to shared P010 without CPU pixel staging";}
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
     catch(...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
