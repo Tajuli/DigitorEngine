@@ -8,6 +8,37 @@ import 'native_production_api.dart';
 import 'node_graph.dart';
 import 'production.dart';
 
+final class DigitorDefaultExportFrameContract {
+  const DigitorDefaultExportFrameContract({
+    required this.workingFormat,
+    required this.colorMetadata,
+  });
+
+  final int workingFormat;
+  final String colorMetadata;
+}
+
+/// Resolves the default frozen frame contract for a renderer.
+///
+/// D3D12 production media is decoded/processed as canonical RGBA32F and
+/// carries the `linear-rgba32f` color identity. Keep the legacy defaults for
+/// other renderers until their platform export contracts opt into a different
+/// canonical working representation.
+DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
+  int rendererBackend,
+) {
+  if (rendererBackend == DigitorBackend.direct3D12.nativeValue) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: DigitorPixelFormat.rgba32Float.nativeValue,
+      colorMetadata: 'linear-rgba32f',
+    );
+  }
+  return DigitorDefaultExportFrameContract(
+    workingFormat: DigitorPixelFormat.rgba16Float.nativeValue,
+    colorMetadata: 'linear-rgba',
+  );
+}
+
 /// Package-internal production session that resolves the native host installed
 /// by the Flutter platform plugin. Applications never provide callback pointers.
 final class DigitorRegisteredProductionSession {
@@ -233,8 +264,8 @@ final class DigitorRegisteredProductionSession {
     required int colorPipelineRevision,
     required int audioRevision,
     required String graphRecipeIdentity,
-    int workingFormat = 4, // DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT
-    String colorMetadata = 'linear-rgba',
+    int? workingFormat,
+    String? colorMetadata,
     int fpsNum = 30,
     int fpsDen = 1,
     int videoBitrate = 12000000,
@@ -250,6 +281,13 @@ final class DigitorRegisteredProductionSession {
     if (firstFrame < 0 || lastFrame < firstFrame || width <= 0 || height <= 0) {
       throw ArgumentError('Invalid frozen export frame range or dimensions.');
     }
+    final defaultFrameContract = digitorDefaultExportFrameContract(
+      rendererBackend,
+    );
+    final resolvedWorkingFormat =
+        workingFormat ?? defaultFrameContract.workingFormat;
+    final resolvedColorMetadata =
+        colorMetadata ?? defaultFrameContract.colorMetadata;
     if (snapshotIdentity <= 0 ||
         timelineRevision <= 0 ||
         renderRevision <= 0 ||
@@ -257,7 +295,7 @@ final class DigitorRegisteredProductionSession {
         colorPipelineRevision <= 0 ||
         audioRevision <= 0 ||
         graphRecipeIdentity.isEmpty ||
-        colorMetadata.isEmpty ||
+        resolvedColorMetadata.isEmpty ||
         fpsNum <= 0 ||
         fpsDen <= 0 ||
         videoBitrate <= 0) {
@@ -270,7 +308,7 @@ final class DigitorRegisteredProductionSession {
     }
 
     final nativePath = path.toNativeUtf8();
-    final nativeColorMetadata = colorMetadata.toNativeUtf8();
+    final nativeColorMetadata = resolvedColorMetadata.toNativeUtf8();
     final nativeGraphIdentity = graphRecipeIdentity.toNativeUtf8();
     final request = calloc<DigitorFlutterExportRequestV2Native>();
     NativeCallable<DigitorProgressNative>? callback;
@@ -291,7 +329,7 @@ final class DigitorRegisteredProductionSession {
         ..nodeGraphRevision = nodeGraphRevision
         ..colorPipelineRevision = colorPipelineRevision
         ..audioRevision = audioRevision
-        ..workingFormat = workingFormat
+        ..workingFormat = resolvedWorkingFormat
         ..alphaPolicy = 1
         ..fpsNum = fpsNum
         ..fpsDen = fpsDen
