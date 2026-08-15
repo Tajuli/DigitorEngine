@@ -45,6 +45,13 @@ struct FlutterProductionHostAdapterInputs {
   std::uint64_t required_context_identity{};
 };
 
+// Windows D3D12 can construct the production encoder lazily from the exact
+// final-frame descriptor builder. The function is a no-op unless the inputs
+// describe the strict D3D12 shared-resource path and no explicit encoder factory
+// has already been supplied.
+void install_windows_default_export_factory(
+    FlutterProductionHostAdapterInputs& inputs) noexcept;
+
 // Owns the callback state behind DigitorFlutterProductionHost. Flutter/Dart only
 // drives the stable production-session C ABI; decode, graph execution, preview
 // processing, hardware export and cancellation stay inside DigitorEngine.
@@ -97,6 +104,9 @@ class RegisteredFlutterProductionHost final {
 inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
     FlutterProductionHostAdapterInputs inputs) {
   try {
+#if defined(_WIN32)
+    install_windows_default_export_factory(inputs);
+#endif
     adapter_ = std::make_unique<FlutterProductionHostAdapter>(std::move(inputs));
     if (!adapter_ || !adapter_->valid()) {
       result_ = DIGITOR_RESULT_NOT_INITIALIZED;
