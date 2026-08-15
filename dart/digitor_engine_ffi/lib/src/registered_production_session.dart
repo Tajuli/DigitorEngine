@@ -39,6 +39,19 @@ DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   );
 }
 
+int digitorCurrentRendererBackendForExport() {
+  final renderer = calloc<DigitorRendererInfoNative>();
+  try {
+    final result = digitorGetRendererInfo(renderer);
+    if (result != 0) {
+      throw DigitorProductionException('getRendererInfoForExport', result);
+    }
+    return renderer.ref.backend;
+  } finally {
+    calloc.free(renderer);
+  }
+}
+
 /// Package-internal production session that resolves the native host installed
 /// by the Flutter platform plugin. Applications never provide callback pointers.
 final class DigitorRegisteredProductionSession {
@@ -282,7 +295,7 @@ final class DigitorRegisteredProductionSession {
       throw ArgumentError('Invalid frozen export frame range or dimensions.');
     }
     final defaultFrameContract = digitorDefaultExportFrameContract(
-      rendererBackend,
+      digitorCurrentRendererBackendForExport(),
     );
     final resolvedWorkingFormat =
         workingFormat ?? defaultFrameContract.workingFormat;
