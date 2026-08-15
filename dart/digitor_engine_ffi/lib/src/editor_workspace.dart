@@ -143,6 +143,7 @@ final class DigitorEditorWorkspace {
         nodeGraph: _graph,
       );
     }
+    _timeline.attachMedia(path);
     _timelineRevision += 1;
     _timeline.publish(
       revision: _timelineRevision,
@@ -179,6 +180,7 @@ final class DigitorEditorWorkspace {
       mediaPath: path,
       nodeGraph: _graph,
     );
+    _timeline.attachMedia(path);
     _timelineRevision += 1;
     _timeline.publish(
       revision: _timelineRevision,
@@ -575,6 +577,7 @@ final class DigitorEditorWorkspace {
 
   Future<void> releaseProductionSession() async {
     if (_closed) return;
+    _timeline.detachMedia();
     _productionSession?.dispose();
     _productionSession = null;
     final previewTexture = _previewTexture;
