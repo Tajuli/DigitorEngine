@@ -104,6 +104,15 @@ public:
         position_us_ = timestamp;
     }
 
+    digitor::DecoderInfo info() const override {
+        digitor::DecoderInfo value{};
+        value.selected = digitor::HardwareDecode::automatic;
+        value.hardware_accelerated = false;
+        value.implementation = "Digitor ProductionAudioMediaPipeline";
+        value.native_surface_output = false;
+        return value;
+    }
+
 private:
     std::shared_ptr<digitor::ProductionAudioMediaPipeline> pipeline_;
     std::int64_t position_us_{};
