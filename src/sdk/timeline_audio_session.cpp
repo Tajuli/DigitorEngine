@@ -1,6 +1,8 @@
 #include "digitor/timeline_audio_session.h"
 
+#include <chrono>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <new>
 
@@ -8,9 +10,14 @@ struct DigitorTimelineAudioSession {
     std::mutex mutex;
     DigitorTimelineSessionStatus status{};
     DigitorTimelineSessionTelemetry telemetry{};
+    std::chrono::steady_clock::time_point playback_anchor_time{};
+    int64_t playback_anchor_position_us = 0;
+    bool playback_anchor_valid = false;
 };
 
 namespace {
+
+using PlaybackClock = std::chrono::steady_clock;
 
 bool valid_config(const DigitorTimelineSessionConfig& config) noexcept {
     return config.sample_rate >= 8000 && config.sample_rate <= 384000 &&
@@ -21,6 +28,61 @@ bool valid_controls(const DigitorAudioSessionControls& controls) noexcept {
     return std::isfinite(controls.master_gain_db) && controls.master_gain_db >= -120.0 &&
            controls.master_gain_db <= 24.0 && std::isfinite(controls.playback_rate) &&
            controls.playback_rate >= 0.25 && controls.playback_rate <= 4.0;
+}
+
+void anchor_playback_locked(
+    DigitorTimelineAudioSession* session,
+    PlaybackClock::time_point now) noexcept {
+    session->playback_anchor_position_us = session->status.position_us;
+    session->playback_anchor_time = now;
+    session->playback_anchor_valid = true;
+}
+
+void materialize_playback_position_locked(
+    DigitorTimelineAudioSession* session,
+    PlaybackClock::time_point now) noexcept {
+    if (session->status.playback_state != DIGITOR_PLAYBACK_PLAYING ||
+        !session->playback_anchor_valid) {
+        return;
+    }
+
+    const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                now - session->playback_anchor_time)
+                                .count();
+    if (elapsed_us <= 0) return;
+
+    const long double advance =
+        static_cast<long double>(elapsed_us) * session->status.playback_rate;
+    const long double candidate =
+        static_cast<long double>(session->playback_anchor_position_us) + advance;
+    const long double max_position =
+        static_cast<long double>(std::numeric_limits<int64_t>::max());
+
+    int64_t position_us = candidate >= max_position
+                              ? std::numeric_limits<int64_t>::max()
+                              : static_cast<int64_t>(candidate);
+
+    // duration_us == 0 explicitly means that media duration is not known yet.
+    // The playhead must still advance while the production media provider is
+    // resolving metadata, otherwise editor playback remains permanently at t=0.
+    if (session->status.duration_us > 0 && position_us >= session->status.duration_us) {
+        position_us = session->status.duration_us;
+        session->status.position_us = position_us;
+        session->status.playback_state = DIGITOR_PLAYBACK_PAUSED;
+        session->playback_anchor_valid = false;
+        return;
+    }
+
+    session->status.position_us = position_us;
+}
+
+void materialize_and_reanchor_locked(
+    DigitorTimelineAudioSession* session,
+    PlaybackClock::time_point now) noexcept {
+    materialize_playback_position_locked(session, now);
+    if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+        anchor_playback_locked(session, now);
+    }
 }
 
 } // namespace
@@ -71,14 +133,23 @@ DigitorResult digitor_timeline_session_publish(
             ++session->telemetry.rejected_publications;
             return DIGITOR_RESULT_RESOURCE_IN_USE;
         }
+        const auto now = PlaybackClock::now();
+        materialize_and_reanchor_locked(session, now);
         session->status.revision = publication->revision;
         session->status.duration_us = publication->duration_us;
         // Zero is the SDK's explicit "duration not known yet" value. Do not
         // collapse an already valid playhead back to zero while metadata or a
         // registered platform session is still resolving the media duration.
         if (publication->duration_us > 0 &&
-            session->status.position_us > publication->duration_us)
+            session->status.position_us > publication->duration_us) {
             session->status.position_us = publication->duration_us;
+            if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+                session->status.playback_state = DIGITOR_PLAYBACK_PAUSED;
+                session->playback_anchor_valid = false;
+            }
+        } else if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+            anchor_playback_locked(session, now);
+        }
         ++session->telemetry.publications;
         return DIGITOR_RESULT_OK;
     } catch (...) {
@@ -91,7 +162,10 @@ DigitorResult digitor_timeline_session_play(DigitorTimelineAudioSession* session
     try {
         std::lock_guard<std::mutex> lock(session->mutex);
         if (session->status.revision == 0) return DIGITOR_RESULT_NOT_INITIALIZED;
-        session->status.playback_state = DIGITOR_PLAYBACK_PLAYING;
+        if (session->status.playback_state != DIGITOR_PLAYBACK_PLAYING) {
+            session->status.playback_state = DIGITOR_PLAYBACK_PLAYING;
+            anchor_playback_locked(session, PlaybackClock::now());
+        }
         ++session->telemetry.play_commands;
         return DIGITOR_RESULT_OK;
     } catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
@@ -101,7 +175,9 @@ DigitorResult digitor_timeline_session_pause(DigitorTimelineAudioSession* sessio
     if (!session) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
         std::lock_guard<std::mutex> lock(session->mutex);
+        materialize_playback_position_locked(session, PlaybackClock::now());
         session->status.playback_state = DIGITOR_PLAYBACK_PAUSED;
+        session->playback_anchor_valid = false;
         ++session->telemetry.pause_commands;
         return DIGITOR_RESULT_OK;
     } catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
@@ -113,6 +189,7 @@ DigitorResult digitor_timeline_session_stop(DigitorTimelineAudioSession* session
         std::lock_guard<std::mutex> lock(session->mutex);
         session->status.playback_state = DIGITOR_PLAYBACK_STOPPED;
         session->status.position_us = 0;
+        session->playback_anchor_valid = false;
         ++session->status.seek_epoch;
         ++session->telemetry.stop_commands;
         return DIGITOR_RESULT_OK;
@@ -133,6 +210,11 @@ DigitorResult digitor_timeline_session_seek(
             position_us > session->status.duration_us)
             return DIGITOR_RESULT_INVALID_ARGUMENT;
         session->status.position_us = position_us;
+        if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+            anchor_playback_locked(session, PlaybackClock::now());
+        } else {
+            session->playback_anchor_valid = false;
+        }
         ++session->status.seek_epoch;
         ++session->telemetry.seek_commands;
         return DIGITOR_RESULT_OK;
@@ -145,10 +227,15 @@ DigitorResult digitor_timeline_session_set_audio_controls(
     if (!session || !controls || !valid_controls(*controls)) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
         std::lock_guard<std::mutex> lock(session->mutex);
+        const auto now = PlaybackClock::now();
+        materialize_and_reanchor_locked(session, now);
         session->status.master_gain_db = controls->master_gain_db;
         session->status.playback_rate = controls->playback_rate;
         session->status.preserve_pitch = controls->preserve_pitch ? 1 : 0;
         session->status.enable_dynamics = controls->enable_dynamics ? 1 : 0;
+        if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+            anchor_playback_locked(session, now);
+        }
         ++session->telemetry.control_updates;
         return DIGITOR_RESULT_OK;
     } catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
@@ -161,6 +248,7 @@ DigitorResult digitor_timeline_session_get_status(
     if (!session || !out_status) return DIGITOR_RESULT_INVALID_ARGUMENT;
     try {
         std::lock_guard<std::mutex> lock(session->mutex);
+        materialize_playback_position_locked(session, PlaybackClock::now());
         *out_status = session->status;
         return DIGITOR_RESULT_OK;
     } catch (...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
