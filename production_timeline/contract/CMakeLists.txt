@@ -23,6 +23,7 @@ target_compile_definitions(digitor_production_timeline PUBLIC DIGITOR_ENGINE_STA
 target_link_libraries(digitor_production_timeline PUBLIC Threads::Threads)
 
 if(MSVC)
+    target_compile_definitions(digitor_production_timeline PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(digitor_production_timeline PRIVATE /W4 /permissive- /WX)
 else()
     target_compile_options(digitor_production_timeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
