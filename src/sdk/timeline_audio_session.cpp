@@ -264,9 +264,6 @@ private:
 
     DigitorResult apply_controls_locked() {
         if (!source_voice_) return DIGITOR_RESULT_OK;
-        // Gain/effects are intentionally not applied in XAudio2. They are
-        // already produced by the shared ProfessionalAudioEngine graph used by
-        // both playback and export. XAudio2 owns transport-rate presentation only.
         if (FAILED(source_voice_->SetVolume(1.0f)))
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         if (FAILED(source_voice_->SetFrequencyRatio(static_cast<float>(playback_rate_))))
@@ -459,7 +456,7 @@ struct DigitorTimelineAudioSession {
 
 namespace {
 
-std::uint64_t audio_revision_locked(const DigitorTimelineAudioSession* session) noexcept {
+[[maybe_unused]] std::uint64_t audio_revision_locked(const DigitorTimelineAudioSession* session) noexcept {
     return session ? session->telemetry.control_updates + 1 : 0;
 }
 
