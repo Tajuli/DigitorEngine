@@ -1,5 +1,7 @@
 import 'dart:ffi';
 
+import 'package:ffi/ffi.dart';
+
 final class DigitorTimelineAudioSession extends Opaque {}
 
 final class DigitorTimelineSessionConfigNative extends Struct {
@@ -98,6 +100,10 @@ typedef DigitorPublishDart =
       Pointer<DigitorTimelineAudioSession>,
       Pointer<DigitorTimelinePublicationNative>,
     );
+typedef DigitorAttachMediaNative =
+    Int32 Function(Pointer<DigitorTimelineAudioSession>, Pointer<Utf8>);
+typedef DigitorAttachMediaDart =
+    int Function(Pointer<DigitorTimelineAudioSession>, Pointer<Utf8>);
 typedef DigitorCommandNative =
     Int32 Function(Pointer<DigitorTimelineAudioSession>);
 typedef DigitorCommandDart = int Function(Pointer<DigitorTimelineAudioSession>);
@@ -149,6 +155,13 @@ final class DigitorTimelineBindings {
           .lookupFunction<DigitorPublishNative, DigitorPublishDart>(
             'digitor_timeline_session_publish',
           ),
+      attachMedia = library
+          .lookupFunction<DigitorAttachMediaNative, DigitorAttachMediaDart>(
+            'digitor_timeline_session_attach_media',
+          ),
+      detachMedia = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
+        'digitor_timeline_session_detach_media',
+      ),
       play = library.lookupFunction<DigitorCommandNative, DigitorCommandDart>(
         'digitor_timeline_session_play',
       ),
@@ -177,6 +190,8 @@ final class DigitorTimelineBindings {
   final DigitorCreateDart create;
   final DigitorDestroyDart destroy;
   final DigitorPublishDart publish;
+  final DigitorAttachMediaDart attachMedia;
+  final DigitorCommandDart detachMedia;
   final DigitorCommandDart play;
   final DigitorCommandDart pause;
   final DigitorCommandDart stop;

@@ -68,6 +68,11 @@ DIGITOR_API DigitorResult digitor_timeline_session_destroy(
 DIGITOR_API DigitorResult digitor_timeline_session_publish(
     DigitorTimelineAudioSession* session,
     const DigitorTimelinePublication* publication);
+DIGITOR_API DigitorResult digitor_timeline_session_attach_media(
+    DigitorTimelineAudioSession* session,
+    const char* utf8_media_path);
+DIGITOR_API DigitorResult digitor_timeline_session_detach_media(
+    DigitorTimelineAudioSession* session);
 DIGITOR_API DigitorResult digitor_timeline_session_play(DigitorTimelineAudioSession* session);
 DIGITOR_API DigitorResult digitor_timeline_session_pause(DigitorTimelineAudioSession* session);
 DIGITOR_API DigitorResult digitor_timeline_session_stop(DigitorTimelineAudioSession* session);

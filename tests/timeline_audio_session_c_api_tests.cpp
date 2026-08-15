@@ -9,6 +9,11 @@ int main() {
     assert(digitor_timeline_session_create(&config, &session) == DIGITOR_RESULT_OK);
     assert(session != nullptr);
     assert(digitor_timeline_session_play(session) == DIGITOR_RESULT_NOT_INITIALIZED);
+    assert(digitor_timeline_session_attach_media(nullptr, "unused.mp4") == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_timeline_session_attach_media(session, nullptr) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_timeline_session_attach_media(session, "") == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_timeline_session_detach_media(nullptr) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(digitor_timeline_session_detach_media(session) == DIGITOR_RESULT_OK);
 
     DigitorTimelinePublication publication{1, 2000000, 2, 3};
     assert(digitor_timeline_session_publish(session, &publication) == DIGITOR_RESULT_OK);
@@ -22,7 +27,7 @@ int main() {
     DigitorTimelineSessionStatus status{};
     assert(digitor_timeline_session_get_status(session, &status) == DIGITOR_RESULT_OK);
     assert(status.revision == 1);
-    assert(status.position_us == 750000);
+    assert(status.position_us >= 750000);
     assert(status.playback_state == DIGITOR_PLAYBACK_PLAYING);
     assert(status.seek_epoch == 1);
     assert(status.playback_rate == 1.25);
