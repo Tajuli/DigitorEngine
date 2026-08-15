@@ -24,6 +24,7 @@
 #include <xaudio2.h>
 
 #include "digitor/media.hpp"
+#include "digitor/production_audio_media_pipeline.hpp"
 #endif
 
 namespace {
@@ -31,6 +32,82 @@ namespace {
 using PlaybackClock = std::chrono::steady_clock;
 
 #if defined(_WIN32)
+
+class PipelinePlaybackDecoder final : public digitor::AudioDecoder {
+public:
+    explicit PipelinePlaybackDecoder(
+        std::shared_ptr<digitor::ProductionAudioMediaPipeline> pipeline)
+        : pipeline_(std::move(pipeline)) {
+        if (!pipeline_ || !pipeline_->sample_rate() || !pipeline_->channels())
+            throw std::invalid_argument("canonical production audio pipeline is required");
+    }
+
+    std::shared_ptr<digitor::AudioFrame> decode(digitor::FrameNumber) override {
+        constexpr std::uint32_t kBlockFrames = 1024;
+        auto frame = std::make_shared<digitor::AudioFrame>();
+        frame->sample_rate = pipeline_->sample_rate();
+        frame->channels = pipeline_->channels();
+        frame->pts = position_us_;
+        frame->duration = static_cast<std::int64_t>(
+            (static_cast<std::uint64_t>(kBlockFrames) * 1'000'000ULL) /
+            frame->sample_rate);
+
+        bool had_source_audio = false;
+        std::string diagnostic;
+        const auto result = pipeline_->render_playback(
+            position_us_, kBlockFrames,
+            [frame](digitor::ConstAudioBufferView source, std::int64_t,
+                    std::string& sink_diagnostic) {
+                if (!source.channels || source.channel_count != frame->channels ||
+                    source.frame_count != kBlockFrames) {
+                    sink_diagnostic = "canonical playback block format changed";
+                    return DIGITOR_RESULT_UNSUPPORTED;
+                }
+                try {
+                    frame->samples.assign(
+                        static_cast<std::size_t>(source.frame_count) * source.channel_count,
+                        0.0f);
+                    for (std::uint32_t sample = 0; sample < source.frame_count; ++sample) {
+                        for (std::uint32_t channel = 0; channel < source.channel_count; ++channel) {
+                            if (!source.channels[channel]) {
+                                sink_diagnostic = "canonical playback channel is null";
+                                return DIGITOR_RESULT_INTERNAL_ERROR;
+                            }
+                            frame->samples[static_cast<std::size_t>(sample) * source.channel_count + channel] =
+                                source.channels[channel][sample];
+                        }
+                    }
+                    sink_diagnostic.clear();
+                    return DIGITOR_RESULT_OK;
+                } catch (const std::bad_alloc&) {
+                    sink_diagnostic = "out of memory interleaving canonical playback block";
+                    return DIGITOR_RESULT_OUT_OF_MEMORY;
+                } catch (...) {
+                    sink_diagnostic = "failed to interleave canonical playback block";
+                    return DIGITOR_RESULT_INTERNAL_ERROR;
+                }
+            },
+            &had_source_audio, &diagnostic);
+        if (result != DIGITOR_RESULT_OK)
+            throw std::runtime_error(diagnostic.empty()
+                                         ? "canonical playback render failed"
+                                         : diagnostic);
+        if (!had_source_audio) return {};
+        if (position_us_ > (std::numeric_limits<std::int64_t>::max)() - frame->duration)
+            throw std::overflow_error("canonical playback timestamp overflow");
+        position_us_ += frame->duration;
+        return frame;
+    }
+
+    void seek(std::int64_t timestamp) override {
+        if (timestamp < 0) throw std::invalid_argument("negative canonical audio seek");
+        position_us_ = timestamp;
+    }
+
+private:
+    std::shared_ptr<digitor::ProductionAudioMediaPipeline> pipeline_;
+    std::int64_t position_us_{};
+};
 
 class WindowsPreviewAudioOutput final {
 public:
@@ -69,9 +146,8 @@ public:
     WindowsPreviewAudioOutput(const WindowsPreviewAudioOutput&) = delete;
     WindowsPreviewAudioOutput& operator=(const WindowsPreviewAudioOutput&) = delete;
 
-    DigitorResult prime(std::int64_t position_us, double gain_db, double playback_rate) {
+    DigitorResult prime(std::int64_t position_us, double playback_rate) {
         std::lock_guard<std::mutex> lock(mutex_);
-        gain_db_ = gain_db;
         playback_rate_ = playback_rate;
         return seek_locked(position_us, false);
     }
@@ -123,10 +199,9 @@ public:
         return result;
     }
 
-    DigitorResult set_controls(double gain_db, double playback_rate) {
+    DigitorResult set_playback_rate(double playback_rate) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (failure_ != DIGITOR_RESULT_OK) return failure_;
-        gain_db_ = gain_db;
         playback_rate_ = playback_rate;
         return apply_controls_locked();
     }
@@ -189,10 +264,10 @@ private:
 
     DigitorResult apply_controls_locked() {
         if (!source_voice_) return DIGITOR_RESULT_OK;
-        const float volume = gain_db_ <= -120.0
-                                 ? 0.0f
-                                 : static_cast<float>(std::pow(10.0, gain_db_ / 20.0));
-        if (FAILED(source_voice_->SetVolume(volume)))
+        // Gain/effects are intentionally not applied in XAudio2. They are
+        // already produced by the shared ProfessionalAudioEngine graph used by
+        // both playback and export. XAudio2 owns transport-rate presentation only.
+        if (FAILED(source_voice_->SetVolume(1.0f)))
             return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         if (FAILED(source_voice_->SetFrequencyRatio(static_cast<float>(playback_rate_))))
             return DIGITOR_RESULT_UNSUPPORTED;
@@ -347,17 +422,12 @@ private:
     digitor::FrameNumber next_frame_number_{};
     std::uint32_t source_sample_rate_{};
     std::uint32_t source_channels_{};
-    double gain_db_{};
     double playback_rate_{1.0};
     DigitorResult failure_{DIGITOR_RESULT_OK};
     bool playing_{};
     bool eof_{};
     bool shutting_down_{};
 };
-
-bool no_audio_stream_error(const std::exception& error) {
-    return std::string(error.what()).find("no decodable audio stream") != std::string::npos;
-}
 
 #endif
 
@@ -382,11 +452,16 @@ struct DigitorTimelineAudioSession {
     int64_t playback_anchor_position_us = 0;
     bool playback_anchor_valid = false;
 #if defined(_WIN32)
+    std::shared_ptr<digitor::ProductionAudioMediaPipeline> audio_pipeline;
     std::unique_ptr<WindowsPreviewAudioOutput> preview_audio;
 #endif
 };
 
 namespace {
+
+std::uint64_t audio_revision_locked(const DigitorTimelineAudioSession* session) noexcept {
+    return session ? session->telemetry.control_updates + 1 : 0;
+}
 
 void anchor_playback_locked(
     DigitorTimelineAudioSession* session,
@@ -491,6 +566,16 @@ DigitorResult digitor_timeline_session_publish(
             ++session->telemetry.rejected_publications;
             return DIGITOR_RESULT_RESOURCE_IN_USE;
         }
+#if defined(_WIN32)
+        if (session->audio_pipeline) {
+            std::string diagnostic;
+            const auto audio_result = session->audio_pipeline->publish_single_source_snapshot(
+                audio_revision_locked(session), publication->duration_us,
+                session->status.master_gain_db,
+                session->status.enable_dynamics != 0, &diagnostic);
+            if (audio_result != DIGITOR_RESULT_OK) return audio_result;
+        }
+#endif
         const auto now = PlaybackClock::now();
         materialize_and_reanchor_locked(session, now);
         session->status.revision = publication->revision;
@@ -524,23 +609,30 @@ DigitorResult digitor_timeline_session_attach_media(
         std::lock_guard<std::mutex> lock(session->mutex);
 #if defined(_WIN32)
         session->preview_audio.reset();
-        try {
-            auto decoder = digitor::open_audio_decoder(utf8_media_path);
-            auto output = std::make_unique<WindowsPreviewAudioOutput>(std::move(decoder));
-            auto result = output->prime(
-                session->status.position_us,
-                session->status.master_gain_db,
-                session->status.playback_rate);
+        session->audio_pipeline.reset();
+        const auto acquired =
+            digitor::acquire_production_audio_media_pipeline(utf8_media_path);
+        if (acquired.no_audio_stream && acquired.result == DIGITOR_RESULT_OK)
+            return DIGITOR_RESULT_OK;
+        if (!acquired) return acquired.result;
+        std::string diagnostic;
+        const auto publish_result = acquired.pipeline->publish_single_source_snapshot(
+            audio_revision_locked(session), session->status.duration_us,
+            session->status.master_gain_db,
+            session->status.enable_dynamics != 0, &diagnostic);
+        if (publish_result != DIGITOR_RESULT_OK) return publish_result;
+
+        auto decoder = std::make_unique<PipelinePlaybackDecoder>(acquired.pipeline);
+        auto output = std::make_unique<WindowsPreviewAudioOutput>(std::move(decoder));
+        auto result = output->prime(
+            session->status.position_us, session->status.playback_rate);
+        if (result != DIGITOR_RESULT_OK) return result;
+        if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
+            result = output->play();
             if (result != DIGITOR_RESULT_OK) return result;
-            if (session->status.playback_state == DIGITOR_PLAYBACK_PLAYING) {
-                result = output->play();
-                if (result != DIGITOR_RESULT_OK) return result;
-            }
-            session->preview_audio = std::move(output);
-        } catch (const std::exception& error) {
-            if (no_audio_stream_error(error)) return DIGITOR_RESULT_OK;
-            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
         }
+        session->audio_pipeline = acquired.pipeline;
+        session->preview_audio = std::move(output);
 #else
         (void)utf8_media_path;
 #endif
@@ -558,6 +650,7 @@ DigitorResult digitor_timeline_session_detach_media(DigitorTimelineAudioSession*
         std::lock_guard<std::mutex> lock(session->mutex);
 #if defined(_WIN32)
         session->preview_audio.reset();
+        session->audio_pipeline.reset();
 #endif
         return DIGITOR_RESULT_OK;
     } catch (...) {
@@ -658,10 +751,29 @@ DigitorResult digitor_timeline_session_set_audio_controls(
         const auto now = PlaybackClock::now();
         materialize_and_reanchor_locked(session, now);
 #if defined(_WIN32)
+        const auto previous_rate = session->status.playback_rate;
         if (session->preview_audio) {
-            const auto audio_result = session->preview_audio->set_controls(
-                controls->master_gain_db, controls->playback_rate);
+            const auto audio_result = session->preview_audio->set_playback_rate(
+                controls->playback_rate);
             if (audio_result != DIGITOR_RESULT_OK) return audio_result;
+        }
+        if (session->audio_pipeline) {
+            const auto current_revision = audio_revision_locked(session);
+            if (current_revision == (std::numeric_limits<std::uint64_t>::max)()) {
+                if (session->preview_audio)
+                    (void)session->preview_audio->set_playback_rate(previous_rate);
+                return DIGITOR_RESULT_INVALID_ARGUMENT;
+            }
+            std::string diagnostic;
+            const auto audio_result = session->audio_pipeline->publish_single_source_snapshot(
+                current_revision + 1, session->status.duration_us,
+                controls->master_gain_db, controls->enable_dynamics != 0,
+                &diagnostic);
+            if (audio_result != DIGITOR_RESULT_OK) {
+                if (session->preview_audio)
+                    (void)session->preview_audio->set_playback_rate(previous_rate);
+                return audio_result;
+            }
         }
 #endif
         session->status.master_gain_db = controls->master_gain_db;
