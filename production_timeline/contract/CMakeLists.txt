@@ -13,7 +13,10 @@ add_library(digitor_production_timeline STATIC
     ../../src/audio/audio_mixer.cpp
     ../../src/audio/audio_time_transform.cpp
     ../../src/audio/audio_dynamics.cpp
-    ../../src/sdk/timeline_audio_session.cpp)
+    ../../src/audio/professional_audio_engine.cpp
+    ../../src/audio/production_audio_media_pipeline.cpp
+    ../../src/sdk/timeline_audio_session.cpp
+    production_audio_media_contract_stubs.cpp)
 target_include_directories(digitor_production_timeline PUBLIC ../../include)
 target_compile_features(digitor_production_timeline PUBLIC cxx_std_20)
 target_compile_definitions(digitor_production_timeline PUBLIC DIGITOR_ENGINE_STATIC)
