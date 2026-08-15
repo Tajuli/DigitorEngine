@@ -1,6 +1,10 @@
 #ifndef DIGITOR_TIMELINE_AUDIO_SESSION_H
 #define DIGITOR_TIMELINE_AUDIO_SESSION_H
 
+#if defined(_WIN32) && defined(DIGITOR_ENGINE_BUILD) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+
 #include <stdint.h>
 #include "digitor/digitor.h"
 
