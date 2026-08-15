@@ -129,7 +129,9 @@ final class DigitorTimelineSession {
 
   void attachMedia(String path) {
     _ensureAlive();
-    if (path.isEmpty) throw ArgumentError.value(path, 'path', 'must not be empty');
+    if (path.isEmpty) {
+      throw ArgumentError.value(path, 'path', 'must not be empty');
+    }
     final nativePath = path.toNativeUtf8();
     try {
       _check('attachMedia', _bindings.attachMedia(_handle, nativePath));
