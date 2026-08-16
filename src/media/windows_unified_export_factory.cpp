@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -280,6 +281,13 @@ DigitorResult initialize_writer(
       descriptor.width, descriptor.height, diagnostic);
   if (result != DIGITOR_RESULT_OK) return result;
 
+  const bool ten_bit_video =
+      state.config.profile.ten_bit || state.snapshot->data().hdr;
+  if (state.config.profile.codec == ExportCodec::h264 && ten_bit_video) {
+    diagnostic = "Windows Media Foundation H.264 export requires 8-bit NV12 input";
+    return DIGITOR_RESULT_UNSUPPORTED;
+  }
+
   WindowsD3D12P010DispatchConfig dispatch_config{};
   dispatch_config.device = state.device12.Get();
   dispatch_config.input_format = DIGITOR_PIXEL_FORMAT_RGBA8_UNORM;
@@ -288,7 +296,7 @@ DigitorResult initialize_writer(
       std::make_unique<WindowsD3D12P010Dispatch>(std::move(dispatch_config));
   result = state.dispatch->initialize();
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "embedded D3D12 RGBA-to-P010 dispatch initialization failed";
+    diagnostic = "embedded D3D12 RGBA-to-YUV dispatch initialization failed";
     return result;
   }
 
@@ -308,12 +316,13 @@ DigitorResult initialize_writer(
                             : WindowsOutputTransfer::gamma24;
   conversion.mastering_peak_nits =
       state.snapshot->data().hdr ? 1000.0f : 100.0f;
+  conversion.ten_bit_output = ten_bit_video;
   conversion.gpu_dispatch = state.dispatch->callback();
   state.converter =
       std::make_unique<WindowsD3D12P010Converter>(std::move(conversion));
   result = state.converter->initialize();
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "shared D3D12/D3D11 P010 converter initialization failed";
+    diagnostic = "shared D3D12/D3D11 encoder YUV converter initialization failed";
     return result;
   }
 
@@ -365,9 +374,11 @@ DigitorResult initialize_writer(
   }
 
   ComPtr<IMFMediaType> video_input;
+  const GUID input_subtype =
+      ten_bit_video ? MFVideoFormat_P010 : MFVideoFormat_NV12;
   if (FAILED(MFCreateMediaType(&video_input)) ||
       FAILED(video_input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)) ||
-      FAILED(video_input->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_P010)) ||
+      FAILED(video_input->SetGUID(MF_MT_SUBTYPE, input_subtype)) ||
       FAILED(MFSetAttributeSize(video_input.Get(), MF_MT_FRAME_SIZE,
                                 descriptor.width, descriptor.height)) ||
       FAILED(MFSetAttributeRatio(
@@ -380,7 +391,9 @@ DigitorResult initialize_writer(
                                     MFVideoInterlace_Progressive)) ||
       FAILED(state.writer->SetInputMediaType(state.video_stream,
                                              video_input.Get(), nullptr))) {
-    diagnostic = "failed to configure P010 hardware video input";
+    diagnostic = ten_bit_video
+                     ? "failed to configure P010 hardware video input"
+                     : "failed to configure NV12 hardware video input";
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -555,22 +568,39 @@ DigitorResult write_video_sample(
   WindowsP010EncoderSurface surface;
   auto result = state.converter->convert(lease, surface);
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "GPU RGBA-to-P010 conversion failed";
+    diagnostic = "GPU RGBA-to-encoder-YUV conversion failed";
     return result;
   }
   if (!surface.resource || surface.width != descriptor.width ||
       surface.height != descriptor.height ||
       surface.timestamp_us != input.pts_us ||
       surface.frame_identity != input.frame->identity()) {
-    diagnostic = "P010 surface identity/timestamp differs from final GPU frame";
+    diagnostic = "encoder YUV surface identity/timestamp differs from final GPU frame";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
+
+  const bool ten_bit_video =
+      state.config.profile.ten_bit || state.snapshot->data().hdr;
+  const DXGI_FORMAT expected_format =
+      ten_bit_video ? DXGI_FORMAT_P010 : DXGI_FORMAT_NV12;
+  auto* texture = static_cast<ID3D11Texture2D*>(surface.resource);
+  D3D11_TEXTURE2D_DESC texture_desc{};
+  texture->GetDesc(&texture_desc);
+  if (texture_desc.Format != expected_format ||
+      texture_desc.Width != descriptor.width ||
+      texture_desc.Height != descriptor.height) {
+    diagnostic = ten_bit_video
+                     ? "encoder surface is not the required P010 GPU texture"
+                     : "encoder surface is not the required NV12 GPU texture";
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
 
   ComPtr<IMFMediaBuffer> buffer;
-  auto* texture = static_cast<ID3D11Texture2D*>(surface.resource);
   if (FAILED(MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0,
                                        FALSE, &buffer))) {
-    diagnostic = "Media Foundation could not wrap P010 GPU surface";
+    diagnostic = ten_bit_video
+                     ? "Media Foundation could not wrap P010 GPU surface"
+                     : "Media Foundation could not wrap NV12 GPU surface";
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -594,10 +624,15 @@ DigitorResult write_video_sample(
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
 
-  if (FAILED(sample->SetSampleTime(normalized_pts * 10)) ||
-      FAILED(sample->SetSampleDuration(input.duration_us * 10)) ||
-      FAILED(state.writer->WriteSample(state.video_stream, sample.Get()))) {
-    diagnostic = "Media Foundation rejected final graded GPU video sample";
+  HRESULT hr = sample->SetSampleTime(normalized_pts * 10);
+  if (SUCCEEDED(hr)) hr = sample->SetSampleDuration(input.duration_us * 10);
+  if (SUCCEEDED(hr)) hr = state.writer->WriteSample(state.video_stream, sample.Get());
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation rejected final graded GPU video sample: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -648,6 +683,12 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
   if (data.profile.codec != ExportCodec::h264 &&
       data.profile.codec != ExportCodec::hevc) {
     result.diagnostic = "unified Windows exporter supports H.264 and HEVC";
+    return result;
+  }
+  if (data.profile.codec == ExportCodec::h264 &&
+      (data.profile.ten_bit || data.hdr)) {
+    result.diagnostic =
+        "Windows Media Foundation H.264 export does not accept the required 10-bit P010 input";
     return result;
   }
   if (data.output_path.empty() || !descriptor_builder) {
