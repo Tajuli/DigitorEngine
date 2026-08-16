@@ -219,9 +219,12 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(FAILED(hr)||!i.completion_query)
       return fail_hr("ID3D11Device::CreateQuery(video processor completion)",hr);
 
-    // Video-processor output resources require RENDER_TARGET. VIDEO_ENCODER is
-    // explicitly allowed with it. Do not add UNORDERED_ACCESS: real hardware
-    // rejected the old P010 UAV+encoder combination with E_INVALIDARG.
+    // A video-processor output resource requires RENDER_TARGET. Do not add
+    // VIDEO_ENCODER here: Media Foundation wraps this DXGI surface directly,
+    // and a physical Windows adapter rejected P010+VIDEO_ENCODER with
+    // E_INVALIDARG even though CheckVideoProcessorFormat(P010) reported output
+    // support. RENDER_TARGET-only is the documented minimum for the output
+    // view and preserves a fully GPU-resident conversion/encode handoff.
     D3D11_TEXTURE2D_DESC output_desc{};
     output_desc.Width=i.config.width;
     output_desc.Height=i.config.height;
@@ -230,7 +233,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     output_desc.Format=DXGI_FORMAT_P010;
     output_desc.SampleDesc.Count=1;
     output_desc.Usage=D3D11_USAGE_DEFAULT;
-    output_desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_VIDEO_ENCODER;
+    output_desc.BindFlags=D3D11_BIND_RENDER_TARGET;
     output_desc.CPUAccessFlags=0;
     output_desc.MiscFlags=0;
 
@@ -255,7 +258,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
 
     std::scoped_lock lock(i.mutex);
     i.telemetry.diagnostic=
-        "D3D11 video-processor P010 encoder pool initialized; no CPU pixel staging";
+        "D3D11 video-processor P010 render-target pool initialized; no CPU pixel staging";
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) {
     return DIGITOR_RESULT_OUT_OF_MEMORY;
