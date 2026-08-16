@@ -1012,7 +1012,7 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
           return write_video_sample(*state, input, descriptor, diagnostic);
         } catch (const std::bad_alloc&) {
           diagnostic = "out of memory encoding final Windows GPU frame";
-          return DIGITOR_RESULT_OUTOFMEMORY;
+          return DIGITOR_RESULT_OUT_OF_MEMORY;
         } catch (...) {
           diagnostic = "unexpected unified Windows final-frame encode failure";
           return DIGITOR_RESULT_INTERNAL_ERROR;
