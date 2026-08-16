@@ -147,7 +147,7 @@ final class DigitorEditorWorkspace {
     _timelineRevision += 1;
     _timeline.publish(
       revision: _timelineRevision,
-      durationUs: 0,
+      durationUs: snapshot.duration.inMicroseconds,
       videoTrackCount: 1,
       audioTrackCount: 1,
     );
@@ -361,6 +361,9 @@ final class DigitorEditorWorkspace {
   }) {
     _ensureProductionReady();
     final snapshotIdentity = ++_exportSnapshotIdentity;
+    final sourceFrameDurationUs = _media?.firstFrame.duration.inMicroseconds ?? 0;
+    final fpsNum = sourceFrameDurationUs > 0 ? 1000000 : 30;
+    final fpsDen = sourceFrameDurationUs > 0 ? sourceFrameDurationUs : 1;
     _productionSession!.export(
       path: path,
       firstFrame: firstFrame,
@@ -374,6 +377,8 @@ final class DigitorEditorWorkspace {
       colorPipelineRevision: _graph.parameterRevision,
       audioRevision: _audioRevision,
       graphRecipeIdentity: _graph.recipeIdentity,
+      fpsNum: fpsNum,
+      fpsDen: fpsDen,
       format: format,
       codec: codec,
       onProgress: onProgress,
