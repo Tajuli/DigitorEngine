@@ -352,11 +352,21 @@ DigitorResult initialize_writer(
 
   const auto output_wide = state.staged_path.wstring();
   ComPtr<IMFAttributes> attributes;
-  hr = MFCreateAttributes(&attributes, 3);
+  hr = MFCreateAttributes(&attributes, 4);
   if (FAILED(hr)) {
     char message[192]{};
     std::snprintf(message, sizeof(message),
                   "Media Foundation sink attributes creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE,
+                           MFTranscodeContainerType_MPEG4);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation MP4 container attribute failed: HRESULT=0x%08lX",
                   static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
     diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
@@ -392,9 +402,9 @@ DigitorResult initialize_writer(
   hr = MFCreateSinkWriterFromURL(output_wide.c_str(), nullptr,
                                  attributes.Get(), &state.writer);
   if (FAILED(hr) || !state.writer) {
-    char message[224]{};
+    char message[256]{};
     std::snprintf(message, sizeof(message),
-                  "Media Foundation sink writer creation failed: HRESULT=0x%08lX",
+                  "Media Foundation MP4 sink writer creation failed: HRESULT=0x%08lX",
                   static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
     diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
@@ -1002,7 +1012,7 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
           return write_video_sample(*state, input, descriptor, diagnostic);
         } catch (const std::bad_alloc&) {
           diagnostic = "out of memory encoding final Windows GPU frame";
-          return DIGITOR_RESULT_OUT_OF_MEMORY;
+          return DIGITOR_RESULT_OUTOFMEMORY;
         } catch (...) {
           diagnostic = "unexpected unified Windows final-frame encode failure";
           return DIGITOR_RESULT_INTERNAL_ERROR;
