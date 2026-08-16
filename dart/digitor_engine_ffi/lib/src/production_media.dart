@@ -292,10 +292,7 @@ final class DigitorProductionMediaSource {
     _ensureOpen();
     final out = calloc<Int64>();
     try {
-      _check(
-        'productionMediaGetDuration',
-        _mediaGetDurationUs(_handle, out),
-      );
+      _check('productionMediaGetDuration', _mediaGetDurationUs(_handle, out));
       return Duration(microseconds: out.value);
     } finally {
       calloc.free(out);
@@ -602,12 +599,9 @@ external int _mediaGetInfo(
   Pointer<_ProductionDecoderInfoNative> outInfo,
 );
 
-@Native<
-  Int32 Function(
-    Pointer<_ProductionMediaSourceNative>,
-    Pointer<Int64>,
-  )
->(symbol: 'digitor_production_media_get_duration_us')
+@Native<Int32 Function(Pointer<_ProductionMediaSourceNative>, Pointer<Int64>)>(
+  symbol: 'digitor_production_media_get_duration_us',
+)
 external int _mediaGetDurationUs(
   Pointer<_ProductionMediaSourceNative> source,
   Pointer<Int64> outDurationUs,
