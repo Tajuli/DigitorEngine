@@ -20,7 +20,10 @@ void main() {
       DigitorBackend.openGles,
     ]) {
       final contract = digitorDefaultExportFrameContract(backend.nativeValue);
-      expect(contract.workingFormat, DigitorPixelFormat.rgba16Float.nativeValue);
+      expect(
+        contract.workingFormat,
+        DigitorPixelFormat.rgba16Float.nativeValue,
+      );
       expect(contract.colorMetadata, 'linear-rgba');
     }
   });
