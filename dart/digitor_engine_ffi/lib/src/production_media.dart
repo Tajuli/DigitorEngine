@@ -286,6 +286,22 @@ final class DigitorProductionMediaSource {
     }
   }
 
+  /// Container/video-stream duration probed by the native media facade.
+  /// A zero duration means the platform decoder could not expose duration.
+  Duration get duration {
+    _ensureOpen();
+    final out = calloc<Int64>();
+    try {
+      _check(
+        'productionMediaGetDuration',
+        _mediaGetDurationUs(_handle, out),
+      );
+      return Duration(microseconds: out.value);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   void seek(Duration position) {
     _ensureOpen();
     if (position.isNegative) {
@@ -584,6 +600,17 @@ external int _mediaOpen(
 external int _mediaGetInfo(
   Pointer<_ProductionMediaSourceNative> source,
   Pointer<_ProductionDecoderInfoNative> outInfo,
+);
+
+@Native<
+  Int32 Function(
+    Pointer<_ProductionMediaSourceNative>,
+    Pointer<Int64>,
+  )
+>(symbol: 'digitor_production_media_get_duration_us')
+external int _mediaGetDurationUs(
+  Pointer<_ProductionMediaSourceNative> source,
+  Pointer<Int64> outDurationUs,
 );
 
 @Native<Int32 Function(Pointer<_ProductionMediaSourceNative>, Int64)>(
