@@ -121,6 +121,13 @@ struct ProductionAudioMediaPipeline::Impl {
         config, std::move(source), std::move(playback), std::move(exported));
   }
 
+  void reset_decoder_streaming_state() noexcept {
+    decoder_streaming = false;
+    next_decode_frame_number = 0;
+    next_request_sample = 0;
+    carry_frame.reset();
+  }
+
   DigitorResult render_source(const AudioClipState&,
                               std::int64_t source_start_us,
                               std::uint32_t requested_sample_rate,
@@ -141,7 +148,6 @@ struct ProductionAudioMediaPipeline::Impl {
     }
 
     try {
-      decoder->seek(source_start_us);
       const auto request_start = sample_index_at_or_after(source_start_us, sample_rate);
       if (request_start >
           (std::numeric_limits<std::uint64_t>::max)() - destination.frame_count) {
@@ -150,14 +156,35 @@ struct ProductionAudioMediaPipeline::Impl {
       }
       const auto request_end = request_start + destination.frame_count;
 
-      FrameNumber frame_number = 0;
+      // Export and real-time playback ask for audio in many small adjacent
+      // blocks. Seeking the compressed decoder for every block flushes codec
+      // history (and FFmpeg's audio resampler state), which can create audible
+      // discontinuities even though the muxed AAC packet timestamps are
+      // perfectly monotonic. Keep one sequential decoder cursor while source
+      // sample ranges are contiguous; seek only for an actual timeline jump.
+      if (!decoder_streaming || request_start != next_request_sample) {
+        decoder->seek(source_start_us);
+        next_decode_frame_number = 0;
+        carry_frame.reset();
+        decoder_streaming = true;
+      }
+
       bool copied_any = false;
       for (std::uint32_t decoded = 0; decoded < 4096; ++decoded) {
-        auto frame = decoder->decode(frame_number++);
-        if (!frame) break;
+        std::shared_ptr<AudioFrame> frame;
+        if (carry_frame) {
+          frame = std::move(carry_frame);
+        } else {
+          frame = decoder->decode(next_decode_frame_number++);
+        }
+        if (!frame) {
+          decoder_streaming = false;
+          break;
+        }
         if (frame->sample_rate != sample_rate || frame->channels != channels ||
             frame->channels == 0 ||
             frame->samples.size() % frame->channels != 0) {
+          reset_decoder_streaming_state();
           diagnostic = "production audio source format changed during render";
           return DIGITOR_RESULT_UNSUPPORTED;
         }
@@ -171,7 +198,10 @@ struct ProductionAudioMediaPipeline::Impl {
             ? (std::numeric_limits<std::uint64_t>::max)()
             : frame_start + source_frames;
         if (frame_end <= request_start) continue;
-        if (frame_start >= request_end) break;
+        if (frame_start >= request_end) {
+          carry_frame = std::move(frame);
+          break;
+        }
 
         const auto overlap_start = (std::max)(request_start, frame_start);
         const auto overlap_end = (std::min)(request_end, frame_end);
@@ -186,6 +216,7 @@ struct ProductionAudioMediaPipeline::Impl {
             overlap_frames >
                 static_cast<std::uint64_t>(destination.frame_count) -
                     destination_offset) {
+          reset_decoder_streaming_state();
           diagnostic = "production audio sample overlap is outside render bounds";
           return DIGITOR_RESULT_INTERNAL_ERROR;
         }
@@ -198,18 +229,29 @@ struct ProductionAudioMediaPipeline::Impl {
           }
         }
         copied_any = true;
+
+        // A decoded packet can straddle two engine render blocks. Preserve the
+        // decoded frame so the next adjacent request consumes the exact tail
+        // rather than decoding/seeking it again.
+        if (frame_end > request_end) {
+          carry_frame = std::move(frame);
+        }
         if (destination_offset + overlap_frames >= destination.frame_count) break;
       }
+      next_request_sample = request_end;
       had_source_audio = had_source_audio || copied_any;
       diagnostic.clear();
       return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
+      reset_decoder_streaming_state();
       diagnostic = "out of memory rendering canonical production audio";
       return DIGITOR_RESULT_OUT_OF_MEMORY;
     } catch (const std::exception& error) {
+      reset_decoder_streaming_state();
       diagnostic = std::string("production audio decode failed: ") + error.what();
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     } catch (...) {
+      reset_decoder_streaming_state();
       diagnostic = "production audio decode failed";
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }
@@ -259,6 +301,8 @@ struct ProductionAudioMediaPipeline::Impl {
       if (result == DIGITOR_RESULT_OK) {
         revision_value = new_revision;
         duration_value = new_duration_us;
+        reset_decoder_streaming_state();
+        render_mode_known = false;
       }
       return result;
     } catch (const std::bad_alloc&) {
@@ -287,6 +331,11 @@ struct ProductionAudioMediaPipeline::Impl {
       if (diagnostic) *diagnostic = "production audio export revision is not frozen";
       return DIGITOR_RESULT_NOT_INITIALIZED;
     }
+    if (!render_mode_known || last_render_playback != playback) {
+      reset_decoder_streaming_state();
+      last_render_playback = playback;
+      render_mode_known = true;
+    }
     had_source_audio = false;
     if (playback) active_playback_sink = std::move(sink);
     else active_export_sink = std::move(sink);
@@ -308,6 +357,12 @@ struct ProductionAudioMediaPipeline::Impl {
   mutable std::mutex render_mutex;
   AudioPlaybackSink active_playback_sink;
   AudioExportSink active_export_sink;
+  std::shared_ptr<AudioFrame> carry_frame;
+  FrameNumber next_decode_frame_number{};
+  std::uint64_t next_request_sample{};
+  bool decoder_streaming{};
+  bool render_mode_known{};
+  bool last_render_playback{};
   bool had_source_audio{};
   bool export_revision_locked{};
   std::uint64_t revision_value{1};
@@ -362,6 +417,8 @@ DigitorResult ProductionAudioMediaPipeline::begin_export_revision(
         "production audio revision differs from frozen export snapshot";
     return DIGITOR_RESULT_RESOURCE_IN_USE;
   }
+  impl_->reset_decoder_streaming_state();
+  impl_->render_mode_known = false;
   impl_->export_revision_locked = true;
   if (diagnostic) diagnostic->clear();
   return DIGITOR_RESULT_OK;
@@ -372,6 +429,8 @@ void ProductionAudioMediaPipeline::end_export_revision() noexcept {
   std::scoped_lock lock(impl_->render_mutex);
   impl_->active_export_sink = {};
   impl_->export_revision_locked = false;
+  impl_->reset_decoder_streaming_state();
+  impl_->render_mode_known = false;
 }
 
 DigitorResult ProductionAudioMediaPipeline::render_playback(
