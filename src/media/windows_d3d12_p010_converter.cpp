@@ -54,8 +54,10 @@ struct WindowsD3D12P010Converter::Impl {
   WindowsP010ConverterTelemetry telemetry;
 #ifdef _WIN32
   struct Slot {
-    Microsoft::WRL::ComPtr<ID3D12Resource> d3d12;
+    // Media Foundation consumes the D3D11 texture. D3D12 opens the exact same
+    // NT-shared allocation and writes the P010 planes with the compute shader.
     Microsoft::WRL::ComPtr<ID3D11Texture2D> d3d11;
+    Microsoft::WRL::ComPtr<ID3D12Resource> d3d12;
     std::atomic_bool in_use{false};
   };
   Microsoft::WRL::ComPtr<ID3D12Device> device12;
@@ -118,11 +120,8 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(FAILED(hr)||!i.device11_1)
       return fail_hr("QueryInterface(ID3D11Device1)",hr);
 
-    // Do not require D3D11.5 shared-fence interop here. Some otherwise-valid
-    // hardware/driver combinations can open the shared P010 resource but fail
-    // ID3D11Device5/OpenSharedFence. Pixel conversion still runs entirely on
-    // D3D12; the CPU only waits for producer completion and never stages or
-    // reads video pixels.
+    // Conversion remains entirely on D3D12. The CPU only waits for producer
+    // completion before the same shared allocation is submitted to MF.
     hr=i.device12->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&i.fence12));
     if(FAILED(hr)||!i.fence12)
       return fail_hr("ID3D12Device::CreateFence(P010 completion)",hr);
@@ -130,33 +129,55 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(!i.fence_event)
       return fail_message("CreateEventW(P010 completion) failed");
 
-    D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_DEFAULT;
-    D3D12_RESOURCE_DESC desc{};
-    desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    desc.Width=i.config.width; desc.Height=i.config.height;
-    desc.DepthOrArraySize=1; desc.MipLevels=1;
-    desc.Format=DXGI_FORMAT_P010; desc.SampleDesc.Count=1;
-    desc.Layout=D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    // IMPORTANT: create the encoder-facing P010 allocation on D3D11 first.
+    // OpenSharedResource1 on a D3D12-created P010 allocation returned
+    // E_INVALIDARG on a real Windows adapter. D3D11's NT-handle sharing
+    // contract is explicit and lets D3D12 open the same allocation instead.
+    D3D11_TEXTURE2D_DESC texture_desc{};
+    texture_desc.Width=i.config.width;
+    texture_desc.Height=i.config.height;
+    texture_desc.MipLevels=1;
+    texture_desc.ArraySize=1;
+    texture_desc.Format=DXGI_FORMAT_P010;
+    texture_desc.SampleDesc.Count=1;
+    texture_desc.Usage=D3D11_USAGE_DEFAULT;
+    texture_desc.BindFlags=D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_VIDEO_ENCODER;
+    texture_desc.CPUAccessFlags=0;
+    texture_desc.MiscFlags=D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+
     i.slots.clear(); i.slots.reserve(i.config.pool_size);
     for(std::uint32_t n=0;n<i.config.pool_size;++n){
       auto slot=std::make_shared<Impl::Slot>();
-      hr=i.device12->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_SHARED,&desc,
-          D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&slot->d3d12));
-      if(FAILED(hr)||!slot->d3d12)
-        return fail_hr("ID3D12Device::CreateCommittedResource(shared P010 UAV)",hr);
+      hr=raw11->CreateTexture2D(&texture_desc,nullptr,&slot->d3d11);
+      if(FAILED(hr)||!slot->d3d11)
+        return fail_hr("ID3D11Device::CreateTexture2D(shared P010 encoder/UAV)",hr);
+
+      Microsoft::WRL::ComPtr<IDXGIResource1> dxgi_resource;
+      hr=slot->d3d11.As(&dxgi_resource);
+      if(FAILED(hr)||!dxgi_resource)
+        return fail_hr("QueryInterface(IDXGIResource1 shared P010)",hr);
+
       HANDLE shared{};
-      hr=i.device12->CreateSharedHandle(slot->d3d12.Get(),nullptr,GENERIC_ALL,nullptr,&shared);
+      hr=dxgi_resource->CreateSharedHandle(nullptr,GENERIC_ALL,nullptr,&shared);
       if(FAILED(hr)||!shared)
-        return fail_hr("ID3D12Device::CreateSharedHandle(P010)",hr);
-      const HRESULT opened=i.device11_1->OpenSharedResource1(shared,IID_PPV_ARGS(&slot->d3d11));
+        return fail_hr("IDXGIResource1::CreateSharedHandle(P010)",hr);
+
+      hr=i.device12->OpenSharedHandle(shared,IID_PPV_ARGS(&slot->d3d12));
       CloseHandle(shared);
-      if(FAILED(opened)||!slot->d3d11)
-        return fail_hr("ID3D11Device1::OpenSharedResource1(P010)",opened);
+      if(FAILED(hr)||!slot->d3d12)
+        return fail_hr("ID3D12Device::OpenSharedHandle(D3D11 P010)",hr);
+
+      const auto opened_desc=slot->d3d12->GetDesc();
+      if(opened_desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+         opened_desc.Width!=i.config.width || opened_desc.Height!=i.config.height ||
+         opened_desc.Format!=DXGI_FORMAT_P010 ||
+         !(opened_desc.Flags&D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) {
+        return fail_message("D3D11-created P010 resource is not a D3D12 UAV-compatible shared texture");
+      }
       i.slots.push_back(std::move(slot));
     }
     std::scoped_lock lock(i.mutex);
-    i.telemetry.diagnostic="shared P010 GPU surface pool initialized with D3D12 fence completion";
+    i.telemetry.diagnostic="D3D11-owned P010 encoder pool opened on D3D12 for GPU conversion";
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
     catch(...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
@@ -191,9 +212,8 @@ DigitorResult WindowsD3D12P010Converter::convert(
                                             i.queue12.Get(),i.fence12.Get(),value);
     if(result!=DIGITOR_RESULT_OK){release_on_error();return result;}
 
-    // The producer queue has signaled fence12 for this exact conversion. A
-    // bounded CPU wait is used only for synchronization; video pixels remain
-    // GPU-resident from the D3D12 shader through the shared D3D11 P010 surface.
+    // The D3D12 queue has signaled fence12 for this exact conversion. This is
+    // synchronization only; no P010/RGBA pixel ever enters CPU memory.
     if(i.fence12->GetCompletedValue()<value){
       const HRESULT wait_hr=i.fence12->SetEventOnCompletion(value,i.fence_event);
       if(FAILED(wait_hr)){
@@ -228,7 +248,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     output.frame_identity=input.frame_identity;
     output.lifetime=std::move(lifetime);
     {std::scoped_lock lock(i.mutex);++i.telemetry.completed;
-      i.telemetry.diagnostic="GPU RGBA converted to shared P010; CPU used for fence wait only";}
+      i.telemetry.diagnostic="GPU RGBA converted into D3D11-owned shared P010; CPU used for fence wait only";}
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
     catch(...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
