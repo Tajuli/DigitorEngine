@@ -1,6 +1,7 @@
 #include "digitor/windows_d3d12_p010_converter.hpp"
 
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <new>
 #include <utility>
@@ -60,14 +61,11 @@ struct WindowsD3D12P010Converter::Impl {
   Microsoft::WRL::ComPtr<ID3D12Device> device12;
   Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue12;
   Microsoft::WRL::ComPtr<ID3D11Device1> device11_1;
-  Microsoft::WRL::ComPtr<ID3D11Device5> device11_5;
-  Microsoft::WRL::ComPtr<ID3D11DeviceContext4> context11_4;
   Microsoft::WRL::ComPtr<ID3D12Fence> fence12;
-  Microsoft::WRL::ComPtr<ID3D11Fence> fence11;
-  HANDLE fence_handle{};
+  HANDLE fence_event{};
   std::atomic_uint64_t sequence{1};
   std::vector<std::shared_ptr<Slot>> slots;
-  ~Impl(){ if(fence_handle) CloseHandle(fence_handle); }
+  ~Impl(){ if(fence_event) CloseHandle(fence_event); }
 #endif
 };
 
@@ -81,6 +79,29 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
 #else
   try {
     auto& i=*impl_;
+    auto fail_hr=[&i](const char* operation,HRESULT hr) noexcept {
+      char message[224]{};
+      std::snprintf(message,sizeof(message),"%s failed: HRESULT=0x%08lX",
+                    operation,
+                    static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+      {
+        std::scoped_lock lock(i.mutex);
+        i.telemetry.diagnostic=message;
+      }
+      std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+      std::fflush(stderr);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    };
+    auto fail_message=[&i](const char* message) noexcept {
+      {
+        std::scoped_lock lock(i.mutex);
+        i.telemetry.diagnostic=message;
+      }
+      std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+      std::fflush(stderr);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    };
+
     if(!i.config.d3d12_device||!i.config.command_queue||!i.config.d3d11_device||
        !i.config.width||!i.config.height||!i.config.pool_size||!i.config.gpu_dispatch)
       return DIGITOR_RESULT_INVALID_ARGUMENT;
@@ -89,21 +110,25 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
        i.config.input_format!=DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT)
       return DIGITOR_RESULT_UNSUPPORTED;
     if((i.config.width&1u)||(i.config.height&1u)) return DIGITOR_RESULT_INVALID_ARGUMENT;
+
     i.device12=static_cast<ID3D12Device*>(i.config.d3d12_device);
     i.queue12=static_cast<ID3D12CommandQueue*>(i.config.command_queue);
     auto* raw11=static_cast<ID3D11Device*>(i.config.d3d11_device);
-    if(FAILED(raw11->QueryInterface(IID_PPV_ARGS(&i.device11_1)))||
-       FAILED(raw11->QueryInterface(IID_PPV_ARGS(&i.device11_5))))
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> base_context;
-    raw11->GetImmediateContext(&base_context);
-    if(FAILED(base_context.As(&i.context11_4))) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    if(FAILED(i.device12->CreateFence(0,D3D12_FENCE_FLAG_SHARED,IID_PPV_ARGS(&i.fence12))))
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    if(FAILED(i.device12->CreateSharedHandle(i.fence12.Get(),nullptr,GENERIC_ALL,nullptr,&i.fence_handle)))
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    if(FAILED(i.device11_5->OpenSharedFence(i.fence_handle,IID_PPV_ARGS(&i.fence11))))
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    HRESULT hr=raw11->QueryInterface(IID_PPV_ARGS(&i.device11_1));
+    if(FAILED(hr)||!i.device11_1)
+      return fail_hr("QueryInterface(ID3D11Device1)",hr);
+
+    // Do not require D3D11.5 shared-fence interop here. Some otherwise-valid
+    // hardware/driver combinations can open the shared P010 resource but fail
+    // ID3D11Device5/OpenSharedFence. Pixel conversion still runs entirely on
+    // D3D12; the CPU only waits for producer completion and never stages or
+    // reads video pixels.
+    hr=i.device12->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&i.fence12));
+    if(FAILED(hr)||!i.fence12)
+      return fail_hr("ID3D12Device::CreateFence(P010 completion)",hr);
+    i.fence_event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    if(!i.fence_event)
+      return fail_message("CreateEventW(P010 completion) failed");
 
     D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_DEFAULT;
     D3D12_RESOURCE_DESC desc{};
@@ -116,19 +141,22 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     i.slots.clear(); i.slots.reserve(i.config.pool_size);
     for(std::uint32_t n=0;n<i.config.pool_size;++n){
       auto slot=std::make_shared<Impl::Slot>();
-      if(FAILED(i.device12->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_SHARED,&desc,
-          D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&slot->d3d12))))
-        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      hr=i.device12->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_SHARED,&desc,
+          D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&slot->d3d12));
+      if(FAILED(hr)||!slot->d3d12)
+        return fail_hr("ID3D12Device::CreateCommittedResource(shared P010 UAV)",hr);
       HANDLE shared{};
-      if(FAILED(i.device12->CreateSharedHandle(slot->d3d12.Get(),nullptr,GENERIC_ALL,nullptr,&shared)))
-        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      hr=i.device12->CreateSharedHandle(slot->d3d12.Get(),nullptr,GENERIC_ALL,nullptr,&shared);
+      if(FAILED(hr)||!shared)
+        return fail_hr("ID3D12Device::CreateSharedHandle(P010)",hr);
       const HRESULT opened=i.device11_1->OpenSharedResource1(shared,IID_PPV_ARGS(&slot->d3d11));
       CloseHandle(shared);
-      if(FAILED(opened)) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      if(FAILED(opened)||!slot->d3d11)
+        return fail_hr("ID3D11Device1::OpenSharedResource1(P010)",opened);
       i.slots.push_back(std::move(slot));
     }
     std::scoped_lock lock(i.mutex);
-    i.telemetry.diagnostic="shared P010 GPU surface pool initialized";
+    i.telemetry.diagnostic="shared P010 GPU surface pool initialized with D3D12 fence completion";
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
     catch(...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
@@ -162,7 +190,35 @@ DigitorResult WindowsD3D12P010Converter::convert(
     const auto result=i.config.gpu_dispatch(input.resource,slot->d3d12.Get(),constants,
                                             i.queue12.Get(),i.fence12.Get(),value);
     if(result!=DIGITOR_RESULT_OK){release_on_error();return result;}
-    i.context11_4->Wait(i.fence11.Get(),value);
+
+    // The producer queue has signaled fence12 for this exact conversion. A
+    // bounded CPU wait is used only for synchronization; video pixels remain
+    // GPU-resident from the D3D12 shader through the shared D3D11 P010 surface.
+    if(i.fence12->GetCompletedValue()<value){
+      const HRESULT wait_hr=i.fence12->SetEventOnCompletion(value,i.fence_event);
+      if(FAILED(wait_hr)){
+        release_on_error();
+        std::scoped_lock lock(i.mutex);++i.telemetry.synchronization_failures;
+        i.telemetry.diagnostic="ID3D12Fence::SetEventOnCompletion(P010) failed";
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+      const DWORD wait=WaitForSingleObject(i.fence_event,30'000);
+      if(wait!=WAIT_OBJECT_0){
+        release_on_error();
+        std::scoped_lock lock(i.mutex);++i.telemetry.synchronization_failures;
+        const HRESULT removed=i.device12->GetDeviceRemovedReason();
+        if(FAILED(removed)){
+          ++i.telemetry.device_lost_events;
+          i.telemetry.diagnostic="D3D12 device was removed while waiting for P010 conversion";
+        } else if(wait==WAIT_TIMEOUT){
+          i.telemetry.diagnostic="timed out waiting for GPU P010 conversion completion";
+        } else {
+          i.telemetry.diagnostic="failed waiting for GPU P010 conversion completion";
+        }
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+    }
+
     auto lifetime=std::shared_ptr<void>(slot.get(),[slot](void*){
       slot->in_use.store(false,std::memory_order_release);
     });
@@ -172,7 +228,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     output.frame_identity=input.frame_identity;
     output.lifetime=std::move(lifetime);
     {std::scoped_lock lock(i.mutex);++i.telemetry.completed;
-      i.telemetry.diagnostic="GPU RGBA converted to shared P010 without CPU pixel staging";}
+      i.telemetry.diagnostic="GPU RGBA converted to shared P010; CPU used for fence wait only";}
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) { return DIGITOR_RESULT_OUT_OF_MEMORY; }
     catch(...) { return DIGITOR_RESULT_INTERNAL_ERROR; }
