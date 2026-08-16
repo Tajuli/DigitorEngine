@@ -15,6 +15,8 @@ public:
     explicit FakeDecoder(bool cpu_pixels = false) : cpu_pixels_(cpu_pixels) {}
 
     std::shared_ptr<VideoFrame> decode(FrameNumber number) override {
+        if (cached_frame_ && cached_frame_->number == number) return cached_frame_;
+
         auto frame = std::make_shared<VideoFrame>();
         frame->number = number;
         frame->pts = number * 33333;
@@ -36,6 +38,7 @@ public:
         descriptor.timestamp_us = frame->pts;
         frame->native_surface = std::make_shared<NativeMediaSurface>(
             descriptor, std::static_pointer_cast<void>(std::make_shared<int>(1)));
+        cached_frame_ = frame;
         return frame;
     }
 
@@ -46,6 +49,7 @@ public:
     }
 private:
     bool cpu_pixels_{};
+    std::shared_ptr<VideoFrame> cached_frame_;
 };
 
 class RandomAccessFakeDecoder final : public VideoDecoder {
@@ -57,7 +61,10 @@ public:
         ++timestamp_decodes;
         // Model VFR selection: the first source PTS at or after the request.
         const std::int64_t selected = ((pts + 9'999) / 10'000) * 10'000;
-        return frame(0, selected);
+        if (cached_timestamp_frame_ && cached_timestamp_frame_->pts == selected)
+            return cached_timestamp_frame_;
+        cached_timestamp_frame_ = frame(0, selected);
+        return cached_timestamp_frame_;
     }
     void seek(std::int64_t pts) override { seeks.push_back(pts); }
     DecoderInfo info() const override {
@@ -89,6 +96,8 @@ private:
             descriptor, std::static_pointer_cast<void>(std::make_shared<int>(1)));
         return result;
     }
+
+    std::shared_ptr<VideoFrame> cached_timestamp_frame_;
 };
 
 ProcessedGpuFramePtr make_gpu_frame(std::int64_t timestamp) {
@@ -121,6 +130,15 @@ int main() {
     assert(session.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
     assert(frame.gpu_frame);
     assert(frame.decoder_surface);
+    const auto first_decoder_surface = frame.decoder_surface;
+
+    // Production decode must not consume native_surface from a cached
+    // VideoFrame. The same frame may be requested again by playback/preview.
+    ProductionDecodedFrame repeated_frame{};
+    assert(session.decode(0, repeated_frame, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(repeated_frame.gpu_frame);
+    assert(repeated_frame.decoder_surface == first_decoder_surface);
+
     const auto q = session.qualification();
     assert(q.status == HardwareDecodeQualificationStatus::passed);
     assert(q.hardware_frame_received);
@@ -161,7 +179,7 @@ int main() {
             return DIGITOR_RESULT_OK;
         }, options);
     for (const auto requested : {0LL, 250'000LL, 600'000LL, 50'000LL,
-                                 590'001LL, 50'000LL, 0LL}) {
+                                 590'001LL, 50'000LL, 0LL, 0LL}) {
         diagnostic = "stale";
         assert(random_access.decode_at_timestamp(requested, frame, &diagnostic) ==
                DIGITOR_RESULT_OK);
@@ -170,7 +188,7 @@ int main() {
         assert(diagnostic.empty());
         assert(frame.gpu_frame && frame.decoder_surface);
     }
-    assert(random_observer->timestamp_decodes == 7);
+    assert(random_observer->timestamp_decodes == 8);
     const auto random_q = random_access.qualification();
     assert(random_q.hardware_frame_received);
     assert(random_q.native_surface_exported);

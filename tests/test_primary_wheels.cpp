@@ -11,6 +11,7 @@ namespace {class ChainBackend final:public digitor::IRenderBackend{std::uint64_t
 void test_primary_wheels(){using namespace digitor;
  reset_primary_wheels_reference_count();
  auto identity=PrimaryWheelsParameters::create();assert(identity->is_identity()&&identity->serialize()==identity->identity());
+ PrimaryWheelsDescriptor legacy_ffi_identity;legacy_ffi_identity.gamma={0,0,0};legacy_ffi_identity.gamma_master=0;legacy_ffi_identity.gain={0,0,0};legacy_ffi_identity.gain_master=0;auto legacy=PrimaryWheelsParameters::create(legacy_ffi_identity);assert(legacy->is_identity());assert(legacy->values().gamma.r==1&&legacy->values().gamma.g==1&&legacy->values().gamma.b==1&&legacy->values().gamma_master==1);assert(legacy->values().gain.r==1&&legacy->values().gain.g==1&&legacy->values().gain.b==1&&legacy->values().gain_master==1);
  Color a{-.25f,1.5f,.5f,.37f};auto b=apply_primary_wheels_reference(a,*identity);assert(b.r==a.r&&b.g==a.g&&b.b==a.b&&b.a==a.a);
  assert(primary_wheels_reference_count()==1);
  PrimaryWheelsDescriptor d;d.lift={.1f,0,0};d.gamma={2,1,1};d.gain={1,2,1};d.offset={0,0,.25f};auto p=PrimaryWheelsParameters::create(d);b=apply_primary_wheels_reference(a,*p);

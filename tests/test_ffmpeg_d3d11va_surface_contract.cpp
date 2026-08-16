@@ -32,7 +32,7 @@ void verify_descriptor(DXGI_FORMAT format) {
   assert(normalized.MipLevels == 1 && normalized.ArraySize == 1);
   assert(normalized.Format == format && normalized.SampleDesc.Count == 1);
   assert(normalized.Usage == D3D11_USAGE_DEFAULT);
-  assert(normalized.BindFlags == 0);
+  assert(normalized.BindFlags == D3D11_BIND_SHADER_RESOURCE);
   assert(normalized.CPUAccessFlags == 0);
   assert(normalized.MiscFlags ==
          (D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
@@ -85,6 +85,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
                     ? static_cast<int>(options5.SharedResourceTier)
                     : -1)
             << '\n';
+
   D3D11_TEXTURE2D_DESC source_desc{};
   source_desc.Width = 1920;
   source_desc.Height = 1152;
@@ -99,20 +100,30 @@ void verify_gpu_interop(DXGI_FORMAT format) {
     std::cout << "SKIP: device cannot create source planar array\n";
     return;
   }
+
   const auto production_desc =
       digitor::normalized_d3d11va_interop_desc(source_desc);
-  auto destination_desc = production_desc;
-  destination_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-  auto shader_desc = destination_desc;
+  assert(production_desc.BindFlags == D3D11_BIND_SHADER_RESOURCE);
+  assert(production_desc.MiscFlags ==
+         (D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+          D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX));
+
+  auto bind0_desc = production_desc;
+  bind0_desc.BindFlags = 0;
+  bind0_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  auto shader_desc = bind0_desc;
   shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  auto keyed_desc = production_desc;
+  auto keyed_desc = bind0_desc;
+  keyed_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+                         D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
   auto keyed_shader_desc = keyed_desc;
   keyed_shader_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  auto legacy_desc = destination_desc;
+  auto legacy_desc = bind0_desc;
   legacy_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-  ComPtr<ID3D11Texture2D> destination;
+
+  ComPtr<ID3D11Texture2D> bind0_destination;
   const HRESULT bind0_hr =
-      device11->CreateTexture2D(&destination_desc, nullptr, &destination);
+      device11->CreateTexture2D(&bind0_desc, nullptr, &bind0_destination);
   ComPtr<ID3D11Texture2D> shader_destination;
   const HRESULT shader_hr =
       device11->CreateTexture2D(&shader_desc, nullptr, &shader_destination);
@@ -125,6 +136,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   ComPtr<ID3D11Texture2D> legacy_destination;
   const HRESULT legacy_hr =
       device11->CreateTexture2D(&legacy_desc, nullptr, &legacy_destination);
+
   std::cout << "format=" << format << " A_nthandle_bind0_hresult=0x" << std::hex
             << static_cast<unsigned long>(bind0_hr)
             << " B_nthandle_shader_resource_hresult=0x"
@@ -135,17 +147,25 @@ void verify_gpu_interop(DXGI_FORMAT format) {
             << static_cast<unsigned long>(keyed_shader_hr)
             << " E_legacy_shared_bind0_hresult=0x"
             << static_cast<unsigned long>(legacy_hr) << std::dec << '\n';
-  if (FAILED(keyed_hr)) {
-    std::cout << "SKIP: production Case C unavailable; matrix results recorded\n";
-    return;
-  }
-  destination = keyed_destination;
+
+  // Once the physical adapter reports the planar format as a texture and can
+  // create the decoder-shaped source allocation, Case D is a production
+  // requirement. Do not silently turn a failed production carrier into a
+  // passing test.
+  assert(SUCCEEDED(keyed_shader_hr) && keyed_shader_destination);
+  ComPtr<ID3D11Texture2D> destination = keyed_shader_destination;
   ComPtr<IDXGIKeyedMutex> keyed_mutex;
   assert(SUCCEEDED(destination.As(&keyed_mutex)) && keyed_mutex);
-  // Exercise a non-zero decoder slice and preserve the single-slice contract.
+
+  // The D3D11 creator must own a SHARED_KEYEDMUTEX resource while issuing the
+  // copy. A freshly created resource is unowned, so key 0 succeeds immediately.
+  assert(keyed_mutex->AcquireSync(0, 0) == S_OK);
   context11->CopySubresourceRegion(
       destination.Get(), 0, 0, 0, 0, source.Get(),
       D3D11CalcSubresource(0, 2, source_desc.MipLevels), nullptr);
+  assert(SUCCEEDED(device11->GetDeviceRemovedReason()));
+  assert(SUCCEEDED(keyed_mutex->ReleaseSync(1)));
+  assert(SUCCEEDED(device11->GetDeviceRemovedReason()));
 
   ComPtr<IDXGIResource1> dxgi;
   assert(SUCCEEDED(destination.As(&dxgi)));
@@ -153,8 +173,16 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   assert(SUCCEEDED(dxgi->CreateSharedHandle(
       nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
       &texture_handle)));
+
+  // Create D3D12 on the exact adapter that owns the D3D11 decoder resource.
+  // Passing nullptr here can select a different default adapter on hybrid-GPU
+  // systems and would turn a test bug into an interop failure.
+  ComPtr<IDXGIDevice> dxgi_device11;
+  assert(SUCCEEDED(device11.As(&dxgi_device11)) && dxgi_device11);
+  ComPtr<IDXGIAdapter> adapter;
+  assert(SUCCEEDED(dxgi_device11->GetAdapter(&adapter)) && adapter);
   ComPtr<ID3D12Device> device12;
-  assert(SUCCEEDED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0,
+  assert(SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
                                      IID_PPV_ARGS(&device12))));
   D3D12_FEATURE_DATA_D3D12_OPTIONS4 d3d12_options4{};
   const HRESULT d3d12_options4_hr = device12->CheckFeatureSupport(
@@ -165,11 +193,15 @@ void verify_gpu_interop(DXGI_FORMAT format) {
                           d3d12_options4.SharedResourceCompatibilityTier)
                     : -1)
             << '\n';
+
   ComPtr<ID3D12Resource> imported;
   assert(SUCCEEDED(
       device12->OpenSharedHandle(texture_handle, IID_PPV_ARGS(&imported))));
   assert(imported->GetDesc().DepthOrArraySize == 1);
   assert(imported->GetDesc().Format == format);
+  assert((imported->GetDesc().Flags &
+          D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) == 0);
+
   const DXGI_FORMAT y_format =
       format == DXGI_FORMAT_P010 ? DXGI_FORMAT_R16_UNORM : DXGI_FORMAT_R8_UNORM;
   const DXGI_FORMAT uv_format = format == DXGI_FORMAT_P010
@@ -184,6 +216,7 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
   const auto increment = device12->GetDescriptorHandleIncrementSize(
       D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
   D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
   srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
   srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -191,13 +224,17 @@ void verify_gpu_interop(DXGI_FORMAT format) {
   srv.Format = y_format;
   srv.Texture2D.PlaneSlice = 0;
   device12->CreateShaderResourceView(imported.Get(), &srv, cpu);
+  assert(SUCCEEDED(device12->GetDeviceRemovedReason()));
+
   cpu.ptr += increment;
   srv.Format = uv_format;
   srv.Texture2D.PlaneSlice = 1;
   device12->CreateShaderResourceView(imported.Get(), &srv, cpu);
+  assert(SUCCEEDED(device12->GetDeviceRemovedReason()));
+
   std::cout << "opened_desc width=" << imported->GetDesc().Width
             << " height=" << imported->GetDesc().Height
-            << " y_plane_srv=created uv_plane_srv=created\n";
+            << " y_plane_srv=created uv_plane_srv=created device_healthy=true\n";
   CloseHandle(texture_handle);
 
   ComPtr<ID3D11Device5> device11_5;

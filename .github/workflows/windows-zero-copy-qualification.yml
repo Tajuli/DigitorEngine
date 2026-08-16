@@ -16,16 +16,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure qualification build
         shell: pwsh
+        run: cmake -S qualification/windows -B build-zero-copy -A x64
+      - name: Build qualification and D3D11VA interop contracts
+        shell: pwsh
         run: >-
-          cmake -S . -B build-zero-copy -A x64
-          -DDIGITOR_BUILD_WINDOWS_ZERO_COPY_QUALIFICATION=ON
-          -DDIGITOR_HAS_FFMPEG=ON
-      - name: Build
+          cmake --build build-zero-copy --config Release --parallel
+          --target digitor_zero_copy_qualify
+          digitor_zero_copy_qualification_contract
+          digitor_ffmpeg_d3d11va_surface_contract
+      - name: Run zero-copy and planar-SRV contracts
         shell: pwsh
-        run: cmake --build build-zero-copy --config Release --target digitor_zero_copy_qualify digitor_zero_copy_qualification_contract
-      - name: Contract tests
-        shell: pwsh
-        run: ctest --test-dir build-zero-copy -C Release --output-on-failure -R windows_zero_copy_qualification_contract
+        run: >-
+          ctest --test-dir build-zero-copy -C Release --output-on-failure
+          -R "windows_(zero_copy_qualification|ffmpeg_d3d11va_surface)_contract"
       - name: Qualify NV12
         shell: pwsh
         run: build-zero-copy/Release/digitor_zero_copy_qualify.exe "${{ inputs.media_root }}/nv12.mp4" nv12-report.json

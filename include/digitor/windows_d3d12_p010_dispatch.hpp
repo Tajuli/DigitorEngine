@@ -10,10 +10,17 @@ namespace digitor {
 
 struct WindowsD3D12P010DispatchConfig {
   void* device{};                 // ID3D12Device*
-  std::string shader_path;        // RGBA16F -> P010 compute shader
+  DigitorPixelFormat input_format{DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT};
+  // Optional source-file override retained for qualification tools. Runtime
+  // production may leave this empty and use the embedded shader source.
+  std::string shader_path;
   std::string entry_point{"main"};
   std::uint32_t descriptor_count{3};
   bool require_typed_uav_loads{true};
+  // Final renderer output is already shader-readable; shared presentation
+  // output is returned in COMMON. Keep this explicit so the dispatch never
+  // guesses a resource state or silently performs a CPU staging copy.
+  bool source_starts_shader_readable{};
 };
 
 struct WindowsD3D12P010DispatchTelemetry {
@@ -37,7 +44,7 @@ public:
 
   [[nodiscard]] DigitorResult initialize() noexcept;
   [[nodiscard]] DigitorResult dispatch(
-      void* rgba16f_resource,
+      void* rgba_resource,
       void* p010_resource,
       const WindowsP010GpuConstants&,
       void* command_queue,

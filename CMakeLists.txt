@@ -67,6 +67,7 @@ target_sources(digitor_engine PRIVATE
     src/audio/audio_latency_probe.cpp
     src/audio/audio_sync_compensation.cpp
     src/audio/professional_audio_engine.cpp
+    src/audio/production_audio_media_pipeline.cpp
     src/sdk/timeline_audio_session.cpp
     src/ffi/audio_sync_c_api.cpp
     src/audio/live_playback_sync.cpp
@@ -118,6 +119,7 @@ if(WIN32)
         src/media/ffmpeg_d3d11va_zero_copy_decoder.cpp
         src/media/windows_d3d12_p010_converter.cpp
         src/media/windows_d3d12_p010_dispatch.cpp
+        src/media/windows_unified_export_factory.cpp
         src/media/windows_zero_copy.cpp
         src/media/windows_zero_copy_concrete_bindings.cpp
         src/media/windows_zero_copy_frame_broker.cpp

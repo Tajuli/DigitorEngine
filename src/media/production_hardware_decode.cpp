@@ -104,7 +104,11 @@ DigitorResult ProductionHardwareDecodeSession::decode(
     output.pts = frame->pts;
     output.duration = frame->duration;
     output.gpu_frame = std::move(imported);
-    output.decoder_surface = std::move(frame->native_surface);
+    // VideoDecoder caches VideoFrame instances. Keep shared ownership of the
+    // decoder surface in both the cache and the production output so a repeated
+    // timestamp/frame can be imported again without destructively emptying the
+    // cached frame's native_surface.
+    output.decoder_surface = frame->native_surface;
     last_timestamp_ = output.pts;
     have_timestamp_ = true;
     if (diagnostic) diagnostic->clear();
@@ -198,7 +202,8 @@ DigitorResult ProductionHardwareDecodeSession::decode_at_timestamp(
     output.pts = frame->pts;
     output.duration = frame->duration;
     output.gpu_frame = std::move(imported);
-    output.decoder_surface = std::move(frame->native_surface);
+    // Preserve the decoder cache's ownership for repeated/random-access preview.
+    output.decoder_surface = frame->native_surface;
     last_timestamp_ = output.pts;
     have_timestamp_ = true;
     if (diagnostic) diagnostic->clear();

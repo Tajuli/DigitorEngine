@@ -24,6 +24,7 @@ class DigitorEngineFfiPlugin : public flutter::Plugin {
 
  private:
   struct TextureState;
+  struct D3D11PreviewBridge;
 
   void HandleMethodCall(
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
@@ -32,6 +33,7 @@ class DigitorEngineFfiPlugin : public flutter::Plugin {
 
   flutter::TextureRegistrar* texture_registrar_{};
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
+  std::unique_ptr<D3D11PreviewBridge> d3d11_preview_bridge_;
   std::mutex mutex_;
   std::map<std::int64_t, std::shared_ptr<TextureState>> textures_;
 };

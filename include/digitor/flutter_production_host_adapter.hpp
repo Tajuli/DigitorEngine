@@ -5,6 +5,9 @@
 #include "digitor/production_hardware_decode.hpp"
 #include "digitor/production_media_graph_runtime.hpp"
 #include "digitor/production_encoder_factory.hpp"
+#if defined(_WIN32)
+#include "digitor/windows_unified_export_factory.hpp"
+#endif
 
 #include <cstdint>
 #include <functional>
@@ -29,9 +32,6 @@ struct FlutterProductionHostAdapterInputs {
   ProductionDecoderFactory decoder_factory;
   ProductionTimestampFrameResolver frame_resolver;
   std::shared_ptr<NativePreviewPresentationSession> preview_session;
-  // Legacy eager encoder callbacks remain supported for V1 callers. New
-  // production Flutter attachment supplies encoder_factory and creates the
-  // snapshot-bound adapter only from export_v2().
   HardwareEncoderCallbacks encoder_callbacks;
   ProductionEncoderFactory encoder_factory;
   ProductionTextureDescriptorBuilder texture_descriptor_builder;
@@ -45,9 +45,9 @@ struct FlutterProductionHostAdapterInputs {
   std::uint64_t required_context_identity{};
 };
 
-// Owns the callback state behind DigitorFlutterProductionHost. Flutter/Dart only
-// drives the stable production-session C ABI; decode, graph execution, preview
-// processing, hardware export and cancellation stay inside DigitorEngine.
+void install_windows_default_export_factory(
+    FlutterProductionHostAdapterInputs& inputs) noexcept;
+
 class FlutterProductionHostAdapter final {
  public:
   explicit FlutterProductionHostAdapter(FlutterProductionHostAdapterInputs inputs);
@@ -65,10 +65,6 @@ class FlutterProductionHostAdapter final {
   std::unique_ptr<Impl> impl_;
 };
 
-// Production plugin-owned RAII registration. This turns a complete concrete
-// adapter input set into the one process-wide host consumed by Dart's
-// digitor_flutter_production_create_registered() path. Destruction unregisters
-// only after all production sessions have been released.
 class RegisteredFlutterProductionHost final {
  public:
   explicit RegisteredFlutterProductionHost(FlutterProductionHostAdapterInputs inputs);
@@ -82,10 +78,6 @@ class RegisteredFlutterProductionHost final {
            digitor_flutter_production_host_registered() != 0;
   }
   [[nodiscard]] DigitorResult result() const noexcept { return result_; }
-  // Explicitly releases the process-wide registration.  A live production
-  // session makes the C host reject unregistration; in that case this object
-  // deliberately retains both the adapter and its registration identity so a
-  // later detach retry can succeed safely.
   DigitorResult unregister() noexcept;
 
  private:
@@ -97,6 +89,36 @@ class RegisteredFlutterProductionHost final {
 inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
     FlutterProductionHostAdapterInputs inputs) {
   try {
+#if defined(_WIN32)
+    auto media_source =
+        std::make_shared<windows_unified_export_detail::MediaSourcePathState>();
+    if (inputs.decoder_factory) {
+      auto decoder_factory = std::move(inputs.decoder_factory);
+      inputs.decoder_factory =
+          [decoder_factory = std::move(decoder_factory), media_source](
+              const std::string& media_path,
+              std::string& diagnostic) mutable
+          -> std::unique_ptr<ProductionHardwareDecodeSession> {
+        auto decoder = decoder_factory(media_path, diagnostic);
+        if (decoder) media_source->set(media_path);
+        return decoder;
+      };
+    }
+
+    if (!inputs.encoder_factory && inputs.texture_descriptor_builder &&
+        inputs.preview_capabilities.backend ==
+            DIGITOR_NATIVE_TEXTURE_BACKEND_D3D12 &&
+        inputs.preview_capabilities.handle_type ==
+            DIGITOR_NATIVE_TEXTURE_HANDLE_DXGI_SHARED_HANDLE &&
+        inputs.preview_capabilities.native_gpu_preview_available) {
+      inputs.encoder_backend = EncoderBackend::quick_sync;
+      inputs.encoder_factory = make_windows_unified_export_factory(
+          inputs.texture_descriptor_builder,
+          [media_source]() { return media_source->get(); });
+    }
+
+    install_windows_default_export_factory(inputs);
+#endif
     adapter_ = std::make_unique<FlutterProductionHostAdapter>(std::move(inputs));
     if (!adapter_ || !adapter_->valid()) {
       result_ = DIGITOR_RESULT_NOT_INITIALIZED;

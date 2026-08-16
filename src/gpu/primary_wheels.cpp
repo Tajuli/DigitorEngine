@@ -32,6 +32,23 @@ std::string encode(const PrimaryWheelsDescriptor& p) {
   wheel(p.gain,p.gain_master,p.gain_enabled); wheel(p.offset,p.offset_master,p.offset_enabled);
   return s;
 }
+bool zero_rgb(PrimaryRgb value) noexcept {
+  return value.r == 0.0f && value.g == 0.0f && value.b == 0.0f;
+}
+PrimaryWheelsDescriptor normalize_legacy_ffi_identity(PrimaryWheelsDescriptor p) noexcept {
+  // Early Dart/FFI callers encoded every wheel with additive zero defaults.
+  // Gamma and Gain are multiplicative controls whose native identity is 1.
+  // Normalize only the exact legacy pair so the production grading algorithm
+  // and all valid modern descriptors keep their documented semantics.
+  if (p.gamma_enabled && p.gain_enabled && zero_rgb(p.gamma) && zero_rgb(p.gain) &&
+      p.gamma_master == 0.0f && p.gain_master == 0.0f) {
+    p.gamma = {1.0f, 1.0f, 1.0f};
+    p.gamma_master = 1.0f;
+    p.gain = {1.0f, 1.0f, 1.0f};
+    p.gain_master = 1.0f;
+  }
+  return p;
+}
 float signed_pow(float x, float exponent) noexcept {
   if (!std::isfinite(x)) return x;
   return std::copysign(std::pow(std::abs(x), exponent), x);
@@ -51,16 +68,17 @@ PrimaryWheelsParameters::PrimaryWheelsParameters(PrimaryWheelsDescriptor p)
     : values_(p), serialization_(encode(p)), identity_(serialization_) {}
 std::shared_ptr<const PrimaryWheelsParameters> PrimaryWheelsParameters::create(
     const PrimaryWheelsDescriptor& p) {
-  if (p.schema_version != primary_wheels_parameter_version)
+  const auto normalized = normalize_legacy_ffi_identity(p);
+  if (normalized.schema_version != primary_wheels_parameter_version)
     throw std::invalid_argument("unsupported primary wheels schema version");
-  validate_rgb(p.lift,-4,4,"lift RGB"); validate_rgb(p.offset,-4,4,"offset RGB");
-  validate_rgb(p.gamma,.01f,10,"gamma RGB"); validate_rgb(p.gain,0,16,"gain RGB");
-  if (!std::isfinite(p.lift_master)||p.lift_master < -4||p.lift_master > 4 ||
-      !std::isfinite(p.offset_master)||p.offset_master < -4||p.offset_master > 4 ||
-      !std::isfinite(p.gamma_master)||p.gamma_master < .01f||p.gamma_master > 10 ||
-      !std::isfinite(p.gain_master)||p.gain_master < 0||p.gain_master > 16)
+  validate_rgb(normalized.lift,-4,4,"lift RGB"); validate_rgb(normalized.offset,-4,4,"offset RGB");
+  validate_rgb(normalized.gamma,.01f,10,"gamma RGB"); validate_rgb(normalized.gain,0,16,"gain RGB");
+  if (!std::isfinite(normalized.lift_master)||normalized.lift_master < -4||normalized.lift_master > 4 ||
+      !std::isfinite(normalized.offset_master)||normalized.offset_master < -4||normalized.offset_master > 4 ||
+      !std::isfinite(normalized.gamma_master)||normalized.gamma_master < .01f||normalized.gamma_master > 10 ||
+      !std::isfinite(normalized.gain_master)||normalized.gain_master < 0||normalized.gain_master > 16)
     throw std::invalid_argument("primary wheels master outside documented range");
-  return std::shared_ptr<const PrimaryWheelsParameters>(new PrimaryWheelsParameters(p));
+  return std::shared_ptr<const PrimaryWheelsParameters>(new PrimaryWheelsParameters(normalized));
 }
 bool PrimaryWheelsParameters::is_identity() const noexcept {
   const auto& p=values_;
