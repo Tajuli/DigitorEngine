@@ -278,7 +278,10 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     output_desc.Format=encoder_format;
     output_desc.SampleDesc.Count=1;
     output_desc.Usage=D3D11_USAGE_DEFAULT;
-    output_desc.BindFlags=D3D11_BIND_RENDER_TARGET;
+    // The surface is both the D3D11 video-processor destination and the
+    // hardware encoder input. Advertise both usages so strict drivers/MFTs do
+    // not reject the DXGI-backed sample at WriteSample.
+    output_desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_VIDEO_ENCODER;
     output_desc.CPUAccessFlags=0;
     output_desc.MiscFlags=0;
 
