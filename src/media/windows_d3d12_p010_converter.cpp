@@ -53,16 +53,30 @@ WindowsP010GpuConstants windows_p010_gpu_constants(
 struct WindowsD3D12P010Converter::Impl {
   WindowsP010ConversionConfig config;
   mutable std::mutex mutex;
+  std::mutex conversion_mutex;
   WindowsP010ConverterTelemetry telemetry;
 #ifdef _WIN32
   struct Slot {
+    // Cross-API bridge ownership intentionally starts on D3D11. A physical
+    // adapter rejected opening the renderer-owned D3D12 RGBA8 allocation on
+    // D3D11. RGBA8 is a basic cross-API shared-resource format, so D3D12 opens
+    // this D3D11 NT-handle allocation instead and copies the final frame into
+    // it entirely on GPU before the D3D11 video processor consumes it.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> rgba11;
+    Microsoft::WRL::ComPtr<ID3D12Resource> rgba12;
+    Microsoft::WRL::ComPtr<ID3D11VideoProcessorInputView> input_view;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> p010;
     Microsoft::WRL::ComPtr<ID3D11VideoProcessorOutputView> output_view;
     std::atomic_bool in_use{false};
   };
   Microsoft::WRL::ComPtr<ID3D12Device> device12;
+  Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue12;
+  Microsoft::WRL::ComPtr<ID3D12CommandAllocator> copy_allocator;
+  Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> copy_list;
+  Microsoft::WRL::ComPtr<ID3D12Fence> copy_fence;
+  HANDLE copy_event{};
+  std::uint64_t copy_fence_value{};
   Microsoft::WRL::ComPtr<ID3D11Device> device11;
-  Microsoft::WRL::ComPtr<ID3D11Device1> device11_1;
   Microsoft::WRL::ComPtr<ID3D11DeviceContext> context11;
   Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device;
   Microsoft::WRL::ComPtr<ID3D11VideoContext> video_context;
@@ -72,6 +86,9 @@ struct WindowsD3D12P010Converter::Impl {
   Microsoft::WRL::ComPtr<ID3D11Query> completion_query;
   std::atomic_uint32_t next_slot{0};
   std::vector<std::shared_ptr<Slot>> slots;
+  ~Impl() {
+    if(copy_event) CloseHandle(copy_event);
+  }
 #endif
 };
 
@@ -108,7 +125,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     };
 
-    if(!i.config.d3d12_device||!i.config.d3d11_device||
+    if(!i.config.d3d12_device||!i.config.command_queue||!i.config.d3d11_device||
        !i.config.width||!i.config.height||!i.config.pool_size)
       return DIGITOR_RESULT_INVALID_ARGUMENT;
     if(i.config.input_format!=DIGITOR_PIXEL_FORMAT_RGBA8_UNORM)
@@ -117,11 +134,28 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
       return DIGITOR_RESULT_INVALID_ARGUMENT;
 
     i.device12=static_cast<ID3D12Device*>(i.config.d3d12_device);
+    i.queue12=static_cast<ID3D12CommandQueue*>(i.config.command_queue);
     i.device11=static_cast<ID3D11Device*>(i.config.d3d11_device);
 
-    HRESULT hr=i.device11.As(&i.device11_1);
-    if(FAILED(hr)||!i.device11_1)
-      return fail_hr("QueryInterface(ID3D11Device1)",hr);
+    HRESULT hr=i.device12->CreateCommandAllocator(
+        D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&i.copy_allocator));
+    if(FAILED(hr)||!i.copy_allocator)
+      return fail_hr("ID3D12Device::CreateCommandAllocator(RGBA8 bridge)",hr);
+    hr=i.device12->CreateCommandList(
+        0,D3D12_COMMAND_LIST_TYPE_DIRECT,i.copy_allocator.Get(),nullptr,
+        IID_PPV_ARGS(&i.copy_list));
+    if(FAILED(hr)||!i.copy_list)
+      return fail_hr("ID3D12Device::CreateCommandList(RGBA8 bridge)",hr);
+    hr=i.copy_list->Close();
+    if(FAILED(hr))
+      return fail_hr("ID3D12GraphicsCommandList::Close(initial RGBA8 bridge)",hr);
+    hr=i.device12->CreateFence(0,D3D12_FENCE_FLAG_NONE,
+                               IID_PPV_ARGS(&i.copy_fence));
+    if(FAILED(hr)||!i.copy_fence)
+      return fail_hr("ID3D12Device::CreateFence(RGBA8 bridge)",hr);
+    i.copy_event=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    if(!i.copy_event)
+      return fail_message("CreateEventW(RGBA8 bridge) failed");
 
     i.device11->GetImmediateContext(&i.context11);
     if(!i.context11)
@@ -167,11 +201,6 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(FAILED(hr)||!i.processor)
       return fail_hr("ID3D11VideoDevice::CreateVideoProcessor",hr);
 
-    // The renderer output transform is an encoded RGBA8 surface. Use the
-    // video processor's explicit color-space conversion rather than treating
-    // P010 as a D3D11 unordered-access texture. On Windows 10 the v1 context
-    // carries the complete BT.709/BT.2020/PQ contract. Older contexts retain
-    // an SDR BT.709 fallback only.
     if(i.video_context1) {
       DXGI_COLOR_SPACE_TYPE input_space=DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
       DXGI_COLOR_SPACE_TYPE output_space=i.config.full_range
@@ -219,12 +248,20 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(FAILED(hr)||!i.completion_query)
       return fail_hr("ID3D11Device::CreateQuery(video processor completion)",hr);
 
-    // A video-processor output resource requires RENDER_TARGET. Do not add
-    // VIDEO_ENCODER here: Media Foundation wraps this DXGI surface directly,
-    // and a physical Windows adapter rejected P010+VIDEO_ENCODER with
-    // E_INVALIDARG even though CheckVideoProcessorFormat(P010) reported output
-    // support. RENDER_TARGET-only is the documented minimum for the output
-    // view and preserves a fully GPU-resident conversion/encode handoff.
+    D3D11_TEXTURE2D_DESC bridge_desc{};
+    bridge_desc.Width=i.config.width;
+    bridge_desc.Height=i.config.height;
+    bridge_desc.MipLevels=1;
+    bridge_desc.ArraySize=1;
+    bridge_desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+    bridge_desc.SampleDesc.Count=1;
+    bridge_desc.Usage=D3D11_USAGE_DEFAULT;
+    // BindFlags=0 is explicitly valid for a video-processor input view and
+    // avoids imposing unrelated render/encoder capabilities on the bridge.
+    bridge_desc.BindFlags=0;
+    bridge_desc.CPUAccessFlags=0;
+    bridge_desc.MiscFlags=D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+
     D3D11_TEXTURE2D_DESC output_desc{};
     output_desc.Width=i.config.width;
     output_desc.Height=i.config.height;
@@ -237,6 +274,12 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     output_desc.CPUAccessFlags=0;
     output_desc.MiscFlags=0;
 
+    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_view_desc{};
+    input_view_desc.FourCC=0;
+    input_view_desc.ViewDimension=D3D11_VPIV_DIMENSION_TEXTURE2D;
+    input_view_desc.Texture2D.MipSlice=0;
+    input_view_desc.Texture2D.ArraySlice=0;
+
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output_view_desc{};
     output_view_desc.ViewDimension=D3D11_VPOV_DIMENSION_TEXTURE2D;
     output_view_desc.Texture2D.MipSlice=0;
@@ -245,6 +288,36 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     i.slots.reserve(i.config.pool_size);
     for(std::uint32_t n=0;n<i.config.pool_size;++n) {
       auto slot=std::make_shared<Impl::Slot>();
+
+      hr=i.device11->CreateTexture2D(&bridge_desc,nullptr,&slot->rgba11);
+      if(FAILED(hr)||!slot->rgba11)
+        return fail_hr("ID3D11Device::CreateTexture2D(shared RGBA8 bridge)",hr);
+      Microsoft::WRL::ComPtr<IDXGIResource1> bridge_dxgi;
+      hr=slot->rgba11.As(&bridge_dxgi);
+      if(FAILED(hr)||!bridge_dxgi)
+        return fail_hr("QueryInterface(IDXGIResource1 RGBA8 bridge)",hr);
+      HANDLE bridge_handle{};
+      hr=bridge_dxgi->CreateSharedHandle(nullptr,GENERIC_ALL,nullptr,&bridge_handle);
+      if(FAILED(hr)||!bridge_handle)
+        return fail_hr("IDXGIResource1::CreateSharedHandle(RGBA8 bridge)",hr);
+      const HRESULT opened=i.device12->OpenSharedHandle(
+          bridge_handle,IID_PPV_ARGS(&slot->rgba12));
+      CloseHandle(bridge_handle);
+      if(FAILED(opened)||!slot->rgba12)
+        return fail_hr("ID3D12Device::OpenSharedHandle(D3D11 RGBA8 bridge)",opened);
+      const auto bridge12_desc=slot->rgba12->GetDesc();
+      if(bridge12_desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+         bridge12_desc.Width!=i.config.width ||
+         bridge12_desc.Height!=i.config.height ||
+         bridge12_desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM ||
+         bridge12_desc.SampleDesc.Count!=1) {
+        return fail_message("D3D11-owned RGBA8 bridge opened on D3D12 with incompatible metadata");
+      }
+      hr=i.video_device->CreateVideoProcessorInputView(
+          slot->rgba11.Get(),i.enumerator.Get(),&input_view_desc,&slot->input_view);
+      if(FAILED(hr)||!slot->input_view)
+        return fail_hr("ID3D11VideoDevice::CreateVideoProcessorInputView(RGBA8 bridge)",hr);
+
       hr=i.device11->CreateTexture2D(&output_desc,nullptr,&slot->p010);
       if(FAILED(hr)||!slot->p010)
         return fail_hr("ID3D11Device::CreateTexture2D(P010 video-processor output)",hr);
@@ -258,7 +331,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
 
     std::scoped_lock lock(i.mutex);
     i.telemetry.diagnostic=
-        "D3D11 video-processor P010 render-target pool initialized; no CPU pixel staging";
+        "D3D11-owned RGBA8 bridge and P010 video-processor pool initialized; no CPU pixel staging";
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) {
     return DIGITOR_RESULT_OUT_OF_MEMORY;
@@ -279,8 +352,9 @@ DigitorResult WindowsD3D12P010Converter::convert(
   auto& i=*impl_;
   if(!input.resource||input.format!=DIGITOR_PIXEL_FORMAT_RGBA8_UNORM||
      input.width!=i.config.width||input.height!=i.config.height||
-     !i.device12||!i.device11_1||!i.video_device||!i.video_context||
-     !i.enumerator||!i.processor||!i.completion_query||i.slots.empty())
+     !i.device12||!i.queue12||!i.copy_allocator||!i.copy_list||!i.copy_fence||
+     !i.device11||!i.video_device||!i.video_context||!i.enumerator||
+     !i.processor||!i.completion_query||i.slots.empty())
     return DIGITOR_RESULT_INVALID_ARGUMENT;
 
   auto set_diagnostic=[&i](const char* message) {
@@ -322,52 +396,111 @@ DigitorResult WindowsD3D12P010Converter::convert(
       slot->in_use.store(false,std::memory_order_release);
     };
 
-    // The final renderer output transform is already a shareable RGBA8 D3D12
-    // resource. Re-export its NT handle and open that exact allocation on the
-    // same-adapter D3D11 device. No intermediate CPU image is created.
+    // One immediate D3D11 context and one D3D12 command list are owned by this
+    // converter. Serialize their use while still retaining the surface pool's
+    // lifetime semantics for Media Foundation samples.
+    std::scoped_lock conversion_lock(i.conversion_mutex);
+
     auto* source12=static_cast<ID3D12Resource*>(input.resource);
-    HANDLE shared_source{};
-    HRESULT hr=i.device12->CreateSharedHandle(
-        source12,nullptr,GENERIC_ALL,nullptr,&shared_source);
-    if(FAILED(hr)||!shared_source) {
-      release_on_error();
-      set_hr_diagnostic("ID3D12Device::CreateSharedHandle(final RGBA8)",hr);
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    }
-
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> source11;
-    hr=i.device11_1->OpenSharedResource1(
-        shared_source,IID_PPV_ARGS(&source11));
-    CloseHandle(shared_source);
-    if(FAILED(hr)||!source11) {
-      release_on_error();
-      set_hr_diagnostic("ID3D11Device1::OpenSharedResource1(final RGBA8)",hr);
-      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
-    }
-
-    D3D11_TEXTURE2D_DESC source_desc{};
-    source11->GetDesc(&source_desc);
-    if(source_desc.Width!=i.config.width||
-       source_desc.Height!=i.config.height||
-       source_desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM||
+    const auto source_desc=source12->GetDesc();
+    if(source_desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+       source_desc.Width!=i.config.width ||
+       source_desc.Height!=i.config.height ||
+       source_desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM ||
        source_desc.SampleDesc.Count!=1) {
       release_on_error();
-      set_diagnostic("shared final RGBA8 resource metadata is incompatible with D3D11 video processing");
+      set_diagnostic("final RGBA8 D3D12 resource metadata is incompatible with bridge copy");
       return DIGITOR_RESULT_UNSUPPORTED;
     }
 
-    D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input_view_desc{};
-    input_view_desc.FourCC=0;
-    input_view_desc.ViewDimension=D3D11_VPIV_DIMENSION_TEXTURE2D;
-    input_view_desc.Texture2D.MipSlice=0;
-    input_view_desc.Texture2D.ArraySlice=0;
-    Microsoft::WRL::ComPtr<ID3D11VideoProcessorInputView> input_view;
-    hr=i.video_device->CreateVideoProcessorInputView(
-        source11.Get(),i.enumerator.Get(),&input_view_desc,&input_view);
-    if(FAILED(hr)||!input_view) {
+    HRESULT hr=i.copy_allocator->Reset();
+    if(FAILED(hr)) {
       release_on_error();
-      set_hr_diagnostic("ID3D11VideoDevice::CreateVideoProcessorInputView(RGBA8)",hr);
+      set_hr_diagnostic("ID3D12CommandAllocator::Reset(RGBA8 bridge)",hr);
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    hr=i.copy_list->Reset(i.copy_allocator.Get(),nullptr);
+    if(FAILED(hr)) {
+      release_on_error();
+      set_hr_diagnostic("ID3D12GraphicsCommandList::Reset(RGBA8 bridge)",hr);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    D3D12_RESOURCE_BARRIER before[2]{};
+    before[0].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    before[0].Transition.pResource=source12;
+    before[0].Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    before[0].Transition.StateBefore=D3D12_RESOURCE_STATE_COMMON;
+    before[0].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_SOURCE;
+    before[1].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    before[1].Transition.pResource=slot->rgba12.Get();
+    before[1].Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    before[1].Transition.StateBefore=D3D12_RESOURCE_STATE_COMMON;
+    before[1].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;
+    i.copy_list->ResourceBarrier(2,before);
+    i.copy_list->CopyResource(slot->rgba12.Get(),source12);
+
+    D3D12_RESOURCE_BARRIER after[2]{};
+    after[0].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    after[0].Transition.pResource=source12;
+    after[0].Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    after[0].Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_SOURCE;
+    after[0].Transition.StateAfter=D3D12_RESOURCE_STATE_COMMON;
+    after[1].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    after[1].Transition.pResource=slot->rgba12.Get();
+    after[1].Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    after[1].Transition.StateBefore=D3D12_RESOURCE_STATE_COPY_DEST;
+    after[1].Transition.StateAfter=D3D12_RESOURCE_STATE_COMMON;
+    i.copy_list->ResourceBarrier(2,after);
+
+    hr=i.copy_list->Close();
+    if(FAILED(hr)) {
+      release_on_error();
+      set_hr_diagnostic("ID3D12GraphicsCommandList::Close(RGBA8 bridge)",hr);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    ID3D12CommandList* lists[]{i.copy_list.Get()};
+    i.queue12->ExecuteCommandLists(1,lists);
+    const auto fence_value=++i.copy_fence_value;
+    hr=i.queue12->Signal(i.copy_fence.Get(),fence_value);
+    if(FAILED(hr)) {
+      release_on_error();
+      set_hr_diagnostic("ID3D12CommandQueue::Signal(RGBA8 bridge)",hr);
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    }
+    if(i.copy_fence->GetCompletedValue()<fence_value) {
+      hr=i.copy_fence->SetEventOnCompletion(fence_value,i.copy_event);
+      if(FAILED(hr)) {
+        release_on_error();
+        {
+          std::scoped_lock lock(i.mutex);
+          ++i.telemetry.synchronization_failures;
+        }
+        set_hr_diagnostic("ID3D12Fence::SetEventOnCompletion(RGBA8 bridge)",hr);
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
+      const DWORD wait=WaitForSingleObject(i.copy_event,30'000);
+      if(wait!=WAIT_OBJECT_0) {
+        release_on_error();
+        std::scoped_lock lock(i.mutex);
+        ++i.telemetry.synchronization_failures;
+        const HRESULT removed=i.device12->GetDeviceRemovedReason();
+        if(FAILED(removed)) {
+          ++i.telemetry.device_lost_events;
+          char message[192]{};
+          std::snprintf(message,sizeof(message),
+                        "D3D12 device removed during RGBA8 bridge copy: HRESULT=0x%08lX",
+                        static_cast<unsigned long>(static_cast<std::uint32_t>(removed)));
+          i.telemetry.diagnostic=message;
+          std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+          std::fflush(stderr);
+        } else if(wait==WAIT_TIMEOUT) {
+          i.telemetry.diagnostic="timed out waiting for D3D12 RGBA8 bridge copy";
+        } else {
+          i.telemetry.diagnostic="failed waiting for D3D12 RGBA8 bridge copy";
+        }
+        return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+      }
     }
 
     D3D11_VIDEO_PROCESSOR_STREAM stream{};
@@ -376,7 +509,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     stream.InputFrameOrField=0;
     stream.PastFrames=0;
     stream.FutureFrames=0;
-    stream.pInputSurface=input_view.Get();
+    stream.pInputSurface=slot->input_view.Get();
 
     {
       std::scoped_lock lock(i.mutex);
@@ -386,12 +519,12 @@ DigitorResult WindowsD3D12P010Converter::convert(
         i.processor.Get(),slot->output_view.Get(),0,1,&stream);
     if(FAILED(hr)) {
       release_on_error();
-      set_hr_diagnostic("ID3D11VideoContext::VideoProcessorBlt(RGBA8->P010)",hr);
+      set_hr_diagnostic("ID3D11VideoContext::VideoProcessorBlt(RGBA8 bridge->P010)",hr);
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
 
-    // Completion wait is synchronization only. No RGBA/P010 bytes are mapped,
-    // read, or staged through CPU memory.
+    // Completion waits synchronize GPU engines only. No RGBA/P010 bytes are
+    // mapped, read, or staged through CPU memory.
     i.context11->End(i.completion_query.Get());
     i.context11->Flush();
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(30);
@@ -432,7 +565,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
       std::scoped_lock lock(i.mutex);
       ++i.telemetry.completed;
       i.telemetry.diagnostic=
-          "final RGBA8 converted to encoder P010 by D3D11 video processor on GPU";
+          "final D3D12 RGBA8 copied on GPU into D3D11-owned bridge and converted to P010";
     }
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) {
