@@ -54,6 +54,10 @@ struct WindowsP010ConversionConfig {
   bool full_range{};
   bool preserve_superwhites{true};
   float mastering_peak_nits{100.0f};
+  // Hardware H.264/8-bit export requires NV12. Main10/HDR paths use P010.
+  // Default true preserves the historical P010 contract for direct callers;
+  // production export selects this explicitly from the frozen export profile.
+  bool ten_bit_output{true};
   WindowsP010GpuDispatch gpu_dispatch;
 };
 
