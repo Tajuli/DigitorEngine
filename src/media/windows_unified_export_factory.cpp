@@ -20,6 +20,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -105,6 +106,10 @@ struct State final {
       mf_started = false;
     }
     release_audio_revision();
+    if (!finalized && !staged_path.empty()) {
+      std::error_code error;
+      std::filesystem::remove(staged_path, error);
+    }
   }
 };
 
@@ -125,7 +130,14 @@ bool utf8_to_wide(const std::string& value, std::wstring& output) {
 }
 
 std::filesystem::path staged_output_path(const std::filesystem::path& final_path) {
-  const auto stem = final_path.stem().wstring() + L".digitor-partial";
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto tag = std::to_wstring(static_cast<unsigned long long>(GetCurrentProcessId())) +
+                   L"-" +
+                   std::to_wstring(static_cast<unsigned long long>(GetTickCount64())) +
+                   L"-" +
+                   std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed));
+  const auto stem =
+      final_path.stem().wstring() + L".digitor-partial-" + tag;
   return final_path.parent_path() / (stem + final_path.extension().wstring());
 }
 
@@ -327,23 +339,64 @@ DigitorResult initialize_writer(
     return result;
   }
 
-  if (FAILED(MFStartup(MF_VERSION))) {
-    diagnostic = "Media Foundation startup failed";
+  HRESULT hr = MFStartup(MF_VERSION);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation startup failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   state.mf_started = true;
 
   const auto output_wide = state.staged_path.wstring();
   ComPtr<IMFAttributes> attributes;
-  if (FAILED(MFCreateAttributes(&attributes, 3)) ||
-      FAILED(attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
-                                   TRUE)) ||
-      FAILED(attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE)) ||
-      FAILED(attributes->SetUnknown(MF_SINK_WRITER_D3D_MANAGER,
-                                    state.device_manager.Get())) ||
-      FAILED(MFCreateSinkWriterFromURL(output_wide.c_str(), nullptr,
-                                       attributes.Get(), &state.writer))) {
-    diagnostic = "Media Foundation sink writer creation failed";
+  hr = MFCreateAttributes(&attributes, 3);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation sink attributes creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation hardware transform attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation sink throttling attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUnknown(MF_SINK_WRITER_D3D_MANAGER,
+                              state.device_manager.Get());
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation D3D manager attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = MFCreateSinkWriterFromURL(output_wide.c_str(), nullptr,
+                                 attributes.Get(), &state.writer);
+  if (FAILED(hr) || !state.writer) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation sink writer creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -872,11 +925,18 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
             std::filesystem::create_directories(
                 state->final_path.parent_path(), error);
             if (error) {
-              diagnostic = "failed to create Windows export directory";
+              diagnostic = "failed to create Windows export directory: " +
+                           error.message();
               return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             }
           }
+          error.clear();
           std::filesystem::remove(state->staged_path, error);
+          if (error) {
+            diagnostic = "failed to clear Windows export staging file: " +
+                         error.message();
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+          }
           state->opened = true;
           state->cancelled = false;
           diagnostic.clear();
