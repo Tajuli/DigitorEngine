@@ -12,9 +12,11 @@ using namespace digitor;
 
 class FakeDecoder final : public VideoDecoder {
 public:
-    explicit FakeDecoder(bool cpu_pixels = false) : cpu_pixels_(cpu_pixels) {}
+    explicit FakeDecoder(bool cpu_pixels = false, FrameNumber frame_count = -1)
+        : cpu_pixels_(cpu_pixels), frame_count_(frame_count) {}
 
     std::shared_ptr<VideoFrame> decode(FrameNumber number) override {
+        if (frame_count_ >= 0 && number >= frame_count_) return {};
         if (cached_frame_ && cached_frame_->number == number) return cached_frame_;
 
         auto frame = std::make_shared<VideoFrame>();
@@ -42,13 +44,18 @@ public:
         return frame;
     }
 
-    void seek(std::int64_t) override {}
+    void seek(std::int64_t) override {
+        ++seeks;
+        cached_frame_.reset();
+    }
     DecoderInfo info() const override {
         return {HardwareDecode::dxva, true, "fake D3D11VA", true,
                 NativeMediaHandleType::d3d11_texture2d};
     }
+    int seeks{};
 private:
     bool cpu_pixels_{};
+    FrameNumber frame_count_{-1};
     std::shared_ptr<VideoFrame> cached_frame_;
 };
 
@@ -130,6 +137,7 @@ int main() {
     assert(session.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
     assert(frame.gpu_frame);
     assert(frame.decoder_surface);
+    assert(!session.end_of_stream());
     const auto first_decoder_surface = frame.decoder_surface;
 
     // Production decode must not consume native_surface from a cached
@@ -168,6 +176,29 @@ int main() {
     assert(import_failure.qualification().diagnostic == diagnostic);
 
     assert(session.seek(1000000, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(!session.end_of_stream());
+
+    // A duration-derived export range may probe exactly one frame beyond the
+    // real decoder EOS. EOS is a structured state, not a zero-copy
+    // qualification failure, and seek() must reset it for a deterministic
+    // subsequent export.
+    auto finite_decoder = std::make_unique<FakeDecoder>(false, 2);
+    auto* finite_observer = finite_decoder.get();
+    ProductionHardwareDecodeSession finite(
+        std::move(finite_decoder),
+        [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
+            output = make_gpu_frame(request.surface->descriptor().timestamp_us);
+            return DIGITOR_RESULT_OK;
+        }, options);
+    assert(finite.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(finite.decode(1, frame, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(finite.decode(2, frame, &diagnostic) == DIGITOR_RESULT_INVALID_ARGUMENT);
+    assert(finite.end_of_stream());
+    assert(finite.qualification().status == HardwareDecodeQualificationStatus::passed);
+    assert(finite.seek(0, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(finite_observer->seeks == 1);
+    assert(!finite.end_of_stream());
+    assert(finite.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
 
     auto random_decoder = std::make_unique<RandomAccessFakeDecoder>();
     auto* random_observer = random_decoder.get();

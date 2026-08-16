@@ -24,13 +24,34 @@ AudioChannelLayout channel_layout(std::uint32_t channels) {
   }
 }
 
-std::int64_t frame_duration_us(const AudioFrame& frame) noexcept {
-  if (frame.duration > 0) return frame.duration;
-  if (!frame.sample_rate || !frame.channels) return 0;
-  const auto sample_frames = frame.samples.size() / frame.channels;
-  return static_cast<std::int64_t>(
-      (static_cast<long double>(sample_frames) * 1'000'000.0L) /
-      static_cast<long double>(frame.sample_rate));
+std::uint64_t sample_index_at_or_after(std::int64_t time_us,
+                                       std::uint32_t sample_rate) noexcept {
+  if (time_us <= 0 || sample_rate == 0) return 0;
+  const auto value = static_cast<std::uint64_t>(time_us);
+  const auto whole_seconds = value / 1'000'000ULL;
+  const auto remainder_us = value % 1'000'000ULL;
+  const auto remainder_product = remainder_us * sample_rate;
+  const auto partial = (remainder_product + 999'999ULL) / 1'000'000ULL;
+  if (whole_seconds >
+      ((std::numeric_limits<std::uint64_t>::max)() - partial) / sample_rate) {
+    return (std::numeric_limits<std::uint64_t>::max)();
+  }
+  return whole_seconds * sample_rate + partial;
+}
+
+std::uint64_t sample_index_nearest(std::int64_t time_us,
+                                   std::uint32_t sample_rate) noexcept {
+  if (time_us <= 0 || sample_rate == 0) return 0;
+  const auto value = static_cast<std::uint64_t>(time_us);
+  const auto whole_seconds = value / 1'000'000ULL;
+  const auto remainder_us = value % 1'000'000ULL;
+  const auto remainder_product = remainder_us * sample_rate;
+  const auto partial = (remainder_product + 500'000ULL) / 1'000'000ULL;
+  if (whole_seconds >
+      ((std::numeric_limits<std::uint64_t>::max)() - partial) / sample_rate) {
+    return (std::numeric_limits<std::uint64_t>::max)();
+  }
+  return whole_seconds * sample_rate + partial;
 }
 
 bool no_audio_stream_error(const std::exception& error) {
@@ -121,13 +142,13 @@ struct ProductionAudioMediaPipeline::Impl {
 
     try {
       decoder->seek(source_start_us);
-      const auto block_duration = static_cast<std::int64_t>(
-          (static_cast<long double>(destination.frame_count) * 1'000'000.0L) /
-          static_cast<long double>(sample_rate));
-      const auto max_value = (std::numeric_limits<std::int64_t>::max)();
-      const auto block_end = source_start_us > max_value - block_duration
-                                 ? max_value
-                                 : source_start_us + block_duration;
+      const auto request_start = sample_index_at_or_after(source_start_us, sample_rate);
+      if (request_start >
+          (std::numeric_limits<std::uint64_t>::max)() - destination.frame_count) {
+        diagnostic = "production audio source sample range overflow";
+        return DIGITOR_RESULT_INVALID_ARGUMENT;
+      }
+      const auto request_end = request_start + destination.frame_count;
 
       FrameNumber frame_number = 0;
       bool copied_any = false;
@@ -141,39 +162,33 @@ struct ProductionAudioMediaPipeline::Impl {
           return DIGITOR_RESULT_UNSUPPORTED;
         }
 
-        const auto source_frames = frame->samples.size() / frame->channels;
+        const auto source_frames = static_cast<std::uint64_t>(
+            frame->samples.size() / frame->channels);
         if (source_frames == 0) continue;
-        const auto duration = frame_duration_us(*frame);
-        if (duration <= 0) continue;
-        const auto frame_end = frame->pts > max_value - duration
-                                   ? max_value
-                                   : frame->pts + duration;
-        if (frame_end <= source_start_us) continue;
-        if (frame->pts >= block_end) break;
+        const auto frame_start = sample_index_nearest(frame->pts, sample_rate);
+        const auto frame_end = frame_start >
+                (std::numeric_limits<std::uint64_t>::max)() - source_frames
+            ? (std::numeric_limits<std::uint64_t>::max)()
+            : frame_start + source_frames;
+        if (frame_end <= request_start) continue;
+        if (frame_start >= request_end) break;
 
-        const auto overlap_start = (std::max)(source_start_us, frame->pts);
-        const auto overlap_end = (std::min)(block_end, frame_end);
+        const auto overlap_start = (std::max)(request_start, frame_start);
+        const auto overlap_end = (std::min)(request_end, frame_end);
         if (overlap_end <= overlap_start) continue;
 
-        auto source_offset = static_cast<std::uint64_t>(
-            (static_cast<long double>(overlap_start - frame->pts) * sample_rate) /
-            1'000'000.0L);
-        auto destination_offset = static_cast<std::uint64_t>(
-            (static_cast<long double>(overlap_start - source_start_us) * sample_rate) /
-            1'000'000.0L);
-        auto overlap_frames = static_cast<std::uint64_t>(
-            (static_cast<long double>(overlap_end - overlap_start) * sample_rate) /
-            1'000'000.0L);
-        if (overlap_frames == 0) overlap_frames = 1;
-        source_offset = (std::min<std::uint64_t>)(source_offset, source_frames);
-        destination_offset = (std::min<std::uint64_t>)(
-            destination_offset, destination.frame_count);
-        const auto available_source = source_frames - source_offset;
-        const auto available_destination =
-            static_cast<std::uint64_t>(destination.frame_count) - destination_offset;
-        overlap_frames = (std::min)({overlap_frames, available_source,
-                                     available_destination});
-        if (overlap_frames == 0) continue;
+        const auto source_offset = overlap_start - frame_start;
+        const auto destination_offset = overlap_start - request_start;
+        const auto overlap_frames = overlap_end - overlap_start;
+        if (source_offset > source_frames ||
+            destination_offset > destination.frame_count ||
+            overlap_frames > source_frames - source_offset ||
+            overlap_frames >
+                static_cast<std::uint64_t>(destination.frame_count) -
+                    destination_offset) {
+          diagnostic = "production audio sample overlap is outside render bounds";
+          return DIGITOR_RESULT_INTERNAL_ERROR;
+        }
 
         for (std::uint32_t channel = 0; channel < channels; ++channel) {
           auto* output = destination.channels[channel] + destination_offset;

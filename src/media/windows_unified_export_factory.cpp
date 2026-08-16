@@ -20,8 +20,10 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -71,6 +73,7 @@ struct State final {
   std::uint64_t video_frames{};
   std::uint64_t audio_sample_frames{};
   std::int64_t timeline_origin_us{-1};
+  std::uint32_t video_sample_size{};
 
   ComPtr<IDXGIAdapter1> adapter;
   ComPtr<ID3D12Device> device12;
@@ -103,6 +106,10 @@ struct State final {
       mf_started = false;
     }
     release_audio_revision();
+    if (!finalized && !staged_path.empty()) {
+      std::error_code error;
+      std::filesystem::remove(staged_path, error);
+    }
   }
 };
 
@@ -123,7 +130,14 @@ bool utf8_to_wide(const std::string& value, std::wstring& output) {
 }
 
 std::filesystem::path staged_output_path(const std::filesystem::path& final_path) {
-  const auto stem = final_path.stem().wstring() + L".digitor-partial";
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto tag = std::to_wstring(static_cast<unsigned long long>(GetCurrentProcessId())) +
+                   L"-" +
+                   std::to_wstring(static_cast<unsigned long long>(GetTickCount64())) +
+                   L"-" +
+                   std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed));
+  const auto stem =
+      final_path.stem().wstring() + L".digitor-partial-" + tag;
   return final_path.parent_path() / (stem + final_path.extension().wstring());
 }
 
@@ -280,6 +294,13 @@ DigitorResult initialize_writer(
       descriptor.width, descriptor.height, diagnostic);
   if (result != DIGITOR_RESULT_OK) return result;
 
+  const bool ten_bit_video =
+      state.config.profile.ten_bit || state.snapshot->data().hdr;
+  if (state.config.profile.codec == ExportCodec::h264 && ten_bit_video) {
+    diagnostic = "Windows Media Foundation H.264 export requires 8-bit NV12 input";
+    return DIGITOR_RESULT_UNSUPPORTED;
+  }
+
   WindowsD3D12P010DispatchConfig dispatch_config{};
   dispatch_config.device = state.device12.Get();
   dispatch_config.input_format = DIGITOR_PIXEL_FORMAT_RGBA8_UNORM;
@@ -288,7 +309,7 @@ DigitorResult initialize_writer(
       std::make_unique<WindowsD3D12P010Dispatch>(std::move(dispatch_config));
   result = state.dispatch->initialize();
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "embedded D3D12 RGBA-to-P010 dispatch initialization failed";
+    diagnostic = "embedded D3D12 RGBA-to-YUV dispatch initialization failed";
     return result;
   }
 
@@ -308,32 +329,84 @@ DigitorResult initialize_writer(
                             : WindowsOutputTransfer::gamma24;
   conversion.mastering_peak_nits =
       state.snapshot->data().hdr ? 1000.0f : 100.0f;
+  conversion.ten_bit_output = ten_bit_video;
   conversion.gpu_dispatch = state.dispatch->callback();
   state.converter =
       std::make_unique<WindowsD3D12P010Converter>(std::move(conversion));
   result = state.converter->initialize();
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "shared D3D12/D3D11 P010 converter initialization failed";
+    diagnostic = "shared D3D12/D3D11 encoder YUV converter initialization failed";
     return result;
   }
 
-  if (FAILED(MFStartup(MF_VERSION))) {
-    diagnostic = "Media Foundation startup failed";
+  HRESULT hr = MFStartup(MF_VERSION);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation startup failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
   state.mf_started = true;
 
   const auto output_wide = state.staged_path.wstring();
   ComPtr<IMFAttributes> attributes;
-  if (FAILED(MFCreateAttributes(&attributes, 3)) ||
-      FAILED(attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
-                                   TRUE)) ||
-      FAILED(attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE)) ||
-      FAILED(attributes->SetUnknown(MF_SINK_WRITER_D3D_MANAGER,
-                                    state.device_manager.Get())) ||
-      FAILED(MFCreateSinkWriterFromURL(output_wide.c_str(), nullptr,
-                                       attributes.Get(), &state.writer))) {
-    diagnostic = "Media Foundation sink writer creation failed";
+  hr = MFCreateAttributes(&attributes, 4);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation sink attributes creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE,
+                           MFTranscodeContainerType_MPEG4);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation MP4 container attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation hardware transform attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation sink throttling attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = attributes->SetUnknown(MF_SINK_WRITER_D3D_MANAGER,
+                              state.device_manager.Get());
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation D3D manager attribute failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = MFCreateSinkWriterFromURL(output_wide.c_str(), nullptr,
+                                 attributes.Get(), &state.writer);
+  if (FAILED(hr) || !state.writer) {
+    char message[256]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation MP4 sink writer creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -365,9 +438,25 @@ DigitorResult initialize_writer(
   }
 
   ComPtr<IMFMediaType> video_input;
+  const GUID input_subtype =
+      ten_bit_video ? MFVideoFormat_P010 : MFVideoFormat_NV12;
+  UINT32 sample_size = 0;
+  const HRESULT sample_size_hr = MFCalculateImageSize(
+      input_subtype, descriptor.width, descriptor.height, &sample_size);
+  if (FAILED(sample_size_hr) || sample_size == 0) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation could not calculate encoder input sample size: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(
+                      static_cast<std::uint32_t>(sample_size_hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  state.video_sample_size = sample_size;
+
   if (FAILED(MFCreateMediaType(&video_input)) ||
       FAILED(video_input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)) ||
-      FAILED(video_input->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_P010)) ||
+      FAILED(video_input->SetGUID(MF_MT_SUBTYPE, input_subtype)) ||
       FAILED(MFSetAttributeSize(video_input.Get(), MF_MT_FRAME_SIZE,
                                 descriptor.width, descriptor.height)) ||
       FAILED(MFSetAttributeRatio(
@@ -378,9 +467,14 @@ DigitorResult initialize_writer(
                                  1, 1)) ||
       FAILED(video_input->SetUINT32(MF_MT_INTERLACE_MODE,
                                     MFVideoInterlace_Progressive)) ||
+      FAILED(video_input->SetUINT32(MF_MT_SAMPLE_SIZE, sample_size)) ||
+      FAILED(video_input->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE)) ||
+      FAILED(video_input->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE)) ||
       FAILED(state.writer->SetInputMediaType(state.video_stream,
                                              video_input.Get(), nullptr))) {
-    diagnostic = "failed to configure P010 hardware video input";
+    diagnostic = ten_bit_video
+                     ? "failed to configure complete P010 hardware video input"
+                     : "failed to configure complete NV12 hardware video input";
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -555,28 +649,114 @@ DigitorResult write_video_sample(
   WindowsP010EncoderSurface surface;
   auto result = state.converter->convert(lease, surface);
   if (result != DIGITOR_RESULT_OK) {
-    diagnostic = "GPU RGBA-to-P010 conversion failed";
+    diagnostic = "GPU RGBA-to-encoder-YUV conversion failed";
     return result;
   }
   if (!surface.resource || surface.width != descriptor.width ||
       surface.height != descriptor.height ||
       surface.timestamp_us != input.pts_us ||
       surface.frame_identity != input.frame->identity()) {
-    diagnostic = "P010 surface identity/timestamp differs from final GPU frame";
+    diagnostic = "encoder YUV surface identity/timestamp differs from final GPU frame";
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
+
+  const bool ten_bit_video =
+      state.config.profile.ten_bit || state.snapshot->data().hdr;
+  const DXGI_FORMAT expected_format =
+      ten_bit_video ? DXGI_FORMAT_P010 : DXGI_FORMAT_NV12;
+  auto* texture = static_cast<ID3D11Texture2D*>(surface.resource);
+  D3D11_TEXTURE2D_DESC texture_desc{};
+  texture->GetDesc(&texture_desc);
+  if (texture_desc.Format != expected_format ||
+      texture_desc.Width != descriptor.width ||
+      texture_desc.Height != descriptor.height) {
+    diagnostic = ten_bit_video
+                     ? "encoder surface is not the required P010 GPU texture"
+                     : "encoder surface is not the required NV12 GPU texture";
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
 
   ComPtr<IMFMediaBuffer> buffer;
-  auto* texture = static_cast<ID3D11Texture2D*>(surface.resource);
-  if (FAILED(MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0,
-                                       FALSE, &buffer))) {
-    diagnostic = "Media Foundation could not wrap P010 GPU surface";
+  HRESULT hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0,
+                                         FALSE, &buffer);
+  if (FAILED(hr) || !buffer) {
+    char message[224]{};
+    std::snprintf(
+        message, sizeof(message),
+        "%s: HRESULT=0x%08lX",
+        ten_bit_video ? "Media Foundation could not wrap P010 GPU surface"
+                      : "Media Foundation could not wrap NV12 GPU surface",
+        static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  if (state.video_sample_size == 0) {
+    diagnostic = "Media Foundation encoder input sample size was not initialized";
+    return DIGITOR_RESULT_NOT_INITIALIZED;
+  }
+
+  DWORD maximum_length = 0;
+  hr = buffer->GetMaxLength(&maximum_length);
+  if (FAILED(hr)) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer GetMaxLength failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  if (maximum_length < state.video_sample_size) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer is smaller than the negotiated frame: max=%lu required=%u",
+                  static_cast<unsigned long>(maximum_length),
+                  state.video_sample_size);
+    diagnostic = message;
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+
+  hr = buffer->SetCurrentLength(static_cast<DWORD>(state.video_sample_size));
+  if (FAILED(hr)) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer SetCurrentLength(%u) failed: HRESULT=0x%08lX",
+                  state.video_sample_size,
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  DWORD current_length = 0;
+  hr = buffer->GetCurrentLength(&current_length);
+  if (FAILED(hr) || current_length != state.video_sample_size) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer valid length mismatch: current=%lu required=%u HRESULT=0x%08lX",
+                  static_cast<unsigned long>(current_length),
+                  state.video_sample_size,
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
   ComPtr<IMFSample> sample;
-  if (FAILED(MFCreateSample(&sample)) || FAILED(sample->AddBuffer(buffer.Get()))) {
-    diagnostic = "Media Foundation video sample creation failed";
+  hr = MFCreateSample(&sample);
+  if (FAILED(hr) || !sample) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation video sample creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = sample->AddBuffer(buffer.Get());
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation video sample AddBuffer failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -594,10 +774,36 @@ DigitorResult write_video_sample(
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
 
-  if (FAILED(sample->SetSampleTime(normalized_pts * 10)) ||
-      FAILED(sample->SetSampleDuration(input.duration_us * 10)) ||
-      FAILED(state.writer->WriteSample(state.video_stream, sample.Get()))) {
-    diagnostic = "Media Foundation rejected final graded GPU video sample";
+  hr = sample->SetSampleTime(normalized_pts * 10);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation SetSampleTime failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  hr = sample->SetSampleDuration(input.duration_us * 10);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation SetSampleDuration failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  hr = state.writer->WriteSample(state.video_stream, sample.Get());
+  if (FAILED(hr)) {
+    char message[256]{};
+    std::snprintf(
+        message, sizeof(message),
+        "Media Foundation WriteSample rejected final graded GPU video sample: HRESULT=0x%08lX validBytes=%lu maxBytes=%lu",
+        static_cast<unsigned long>(static_cast<std::uint32_t>(hr)),
+        static_cast<unsigned long>(current_length),
+        static_cast<unsigned long>(maximum_length));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -648,6 +854,12 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
   if (data.profile.codec != ExportCodec::h264 &&
       data.profile.codec != ExportCodec::hevc) {
     result.diagnostic = "unified Windows exporter supports H.264 and HEVC";
+    return result;
+  }
+  if (data.profile.codec == ExportCodec::h264 &&
+      (data.profile.ten_bit || data.hdr)) {
+    result.diagnostic =
+        "Windows Media Foundation H.264 export does not accept the required 10-bit P010 input";
     return result;
   }
   if (data.output_path.empty() || !descriptor_builder) {
@@ -723,11 +935,18 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
             std::filesystem::create_directories(
                 state->final_path.parent_path(), error);
             if (error) {
-              diagnostic = "failed to create Windows export directory";
+              diagnostic = "failed to create Windows export directory: " +
+                           error.message();
               return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
             }
           }
+          error.clear();
           std::filesystem::remove(state->staged_path, error);
+          if (error) {
+            diagnostic = "failed to clear Windows export staging file: " +
+                         error.message();
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+          }
           state->opened = true;
           state->cancelled = false;
           diagnostic.clear();

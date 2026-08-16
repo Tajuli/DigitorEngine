@@ -287,6 +287,10 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
       set_diagnostic(diagnostic, "production media graph runtime is cancelled");
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
+    if (!decoder_) {
+      set_diagnostic(diagnostic, "production hardware decoder is not initialized");
+      return DIGITOR_RESULT_NOT_INITIALIZED;
+    }
 
     auto graph_result = validate_graph(diagnostic);
     if (graph_result != DIGITOR_RESULT_OK) return graph_result;
@@ -294,6 +298,19 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
     config.require_zero_copy = true;
     config.require_monotonic_timestamps = true;
     config.require_atomic_finalize = true;
+
+    // Preview uses timestamp-driven seeks and therefore creates decoder-local
+    // frame-number epochs. Export frame numbers are source-relative, so every
+    // export must start from a fresh source epoch regardless of the last
+    // preview/playback position or a previous failed export.
+    std::string decode_diagnostic;
+    auto result = decoder_->seek(0, &decode_diagnostic);
+    if (result != DIGITOR_RESULT_OK) {
+      set_diagnostic(diagnostic, decode_diagnostic.empty()
+          ? "failed to reset production decoder before export"
+          : std::move(decode_diagnostic));
+      return result;
+    }
 
     ProductionHardwareEncodeSession encoder(config, std::move(encoder_callbacks));
     {
@@ -315,7 +332,7 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
     };
 
     std::string encode_diagnostic;
-    auto result = encoder.start(&encode_diagnostic);
+    result = encoder.start(&encode_diagnostic);
     if (result != DIGITOR_RESULT_OK) {
       clear_active();
       set_diagnostic(diagnostic, encode_diagnostic.empty()
@@ -336,7 +353,18 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
       RenderedFrame rendered;
       result = render_frame(frame_number, rendered, diagnostic);
       if (result != DIGITOR_RESULT_OK) {
-        encoder.cancel(); clear_active(); return result;
+        // Container duration and nominal frame cadence can legitimately round
+        // to one source frame beyond the decoder's real EOS (especially VFR or
+        // edit-list media). Once at least one frame has been submitted, clean
+        // decoder EOS terminates the estimated range instead of invalidating an
+        // otherwise complete GPU export. Non-EOS decode failures remain fatal.
+        if (decoder_->end_of_stream() && completed > 0) {
+          if (diagnostic) diagnostic->clear();
+          break;
+        }
+        encoder.cancel();
+        clear_active();
+        return result;
       }
       HardwareEncodeFrame encode_frame;
       encode_frame.frame = std::move(rendered.frame);
@@ -344,7 +372,8 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
       encode_frame.duration_us = rendered.duration_us;
       result = encoder.submit(std::move(encode_frame), &encode_diagnostic);
       if (result != DIGITOR_RESULT_OK) {
-        encoder.cancel(); clear_active();
+        encoder.cancel();
+        clear_active();
         set_diagnostic(diagnostic, encode_diagnostic.empty()
             ? "production GPU frame submission failed" : std::move(encode_diagnostic));
         return result;
@@ -356,6 +385,11 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
       ++completed;
       if (progress) progress(completed, total);
     }
+
+    // If a duration-derived upper bound ended at natural EOS, report the
+    // actual submitted range as complete rather than leaving UI progress below
+    // 100 percent.
+    if (progress && completed != total) progress(completed, completed);
 
     result = encoder.finish(&encode_diagnostic);
     clear_active();
