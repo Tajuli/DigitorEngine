@@ -1,0 +1,108 @@
+name: Agent apply export audio clock fix
+
+on:
+  push:
+    branches:
+      - agent/fix-export-audio-progress-20260817
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: apply export audio clock fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-export-audio-progress-20260817
+          fetch-depth: 0
+      - name: Patch exact sample-clock timestamps
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/media/windows_unified_export_factory.cpp')
+          text = p.read_text(encoding='utf-8')
+          old = '''  const auto normalized_us = timeline_start_us - state.timeline_origin_us;
+          if (normalized_us > (std::numeric_limits<LONGLONG>::max)() / 10) {
+            diagnostic = "canonical audio timestamp exceeds Media Foundation range";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+          }
+          const auto duration_100ns = static_cast<LONGLONG>(
+              (static_cast<std::uint64_t>(source.frame_count) * 10'000'000ULL) /
+              state.audio_sample_rate);
+          if (duration_100ns <= 0 ||
+              FAILED(sample->SetSampleTime(normalized_us * 10)) ||
+              FAILED(sample->SetSampleDuration(duration_100ns)) ||
+              FAILED(state.writer->WriteSample(state.audio_stream, sample.Get()))) {
+            diagnostic = "Media Foundation rejected canonical synchronized audio";
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+          }
+          '''
+          new = '''  // Drive Media Foundation from the canonical integer sample cursor rather
+          // than a microsecond-rounded block timestamp.  At 44.1/48 kHz a sample
+          // is generally not an integer number of microseconds; rebuilding every
+          // block timestamp from timeline_start_us can therefore introduce tiny
+          // overlaps/gaps at block boundaries.  Deriving both endpoints from the
+          // same cumulative sample clock keeps adjacent blocks exactly contiguous.
+          const auto start_frame = state.audio_sample_frames;
+          if (source.frame_count >
+              (std::numeric_limits<std::uint64_t>::max)() - start_frame) {
+            diagnostic = "canonical audio sample cursor overflow";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+          }
+          const auto end_frame =
+              start_frame + static_cast<std::uint64_t>(source.frame_count);
+          const auto frames_to_100ns = [&state](std::uint64_t frames,
+                                                std::uint64_t& value) {
+            const auto whole_seconds = frames / state.audio_sample_rate;
+            const auto remainder = frames % state.audio_sample_rate;
+            if (whole_seconds >
+                (std::numeric_limits<std::uint64_t>::max)() / 10'000'000ULL) {
+              return false;
+            }
+            value = whole_seconds * 10'000'000ULL +
+                    (remainder * 10'000'000ULL) / state.audio_sample_rate;
+            return value <=
+                   static_cast<std::uint64_t>((std::numeric_limits<LONGLONG>::max)());
+          };
+          std::uint64_t sample_time_value = 0;
+          std::uint64_t sample_end_value = 0;
+          if (!frames_to_100ns(start_frame, sample_time_value) ||
+              !frames_to_100ns(end_frame, sample_end_value) ||
+              sample_end_value <= sample_time_value) {
+            diagnostic = "canonical audio sample clock exceeds Media Foundation range";
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+          }
+          const auto sample_time_100ns =
+              static_cast<LONGLONG>(sample_time_value);
+          const auto duration_100ns =
+              static_cast<LONGLONG>(sample_end_value - sample_time_value);
+          if (FAILED(sample->SetSampleTime(sample_time_100ns)) ||
+              FAILED(sample->SetSampleDuration(duration_100ns)) ||
+              FAILED(state.writer->WriteSample(state.audio_stream, sample.Get()))) {
+            diagnostic = "Media Foundation rejected canonical synchronized audio";
+            return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+          }
+          '''
+          if old not in text:
+              raise SystemExit('target audio timestamp block not found; refusing broad patch')
+          text = text.replace(old, new, 1)
+          p.write_text(text, encoding='utf-8')
+      - name: Verify targeted invariant
+        shell: python
+        run: |
+          from pathlib import Path
+          text = Path('src/media/windows_unified_export_factory.cpp').read_text(encoding='utf-8')
+          assert 'const auto start_frame = state.audio_sample_frames;' in text
+          assert 'sample_end_value - sample_time_value' in text
+          assert 'SetSampleTime(normalized_us * 10)' not in text
+      - name: Commit fix and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "chatgpt-agent"
+          git config user.email "chatgpt-agent@users.noreply.github.com"
+          git rm .github/workflows/agent-apply-audio-clock-fix.yml
+          git add src/media/windows_unified_export_factory.cpp
+          git commit -m "fix: stabilize Windows export audio sample clock"
+          git push origin HEAD:agent/fix-export-audio-progress-20260817
