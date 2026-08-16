@@ -72,6 +72,7 @@ struct State final {
   std::uint64_t video_frames{};
   std::uint64_t audio_sample_frames{};
   std::int64_t timeline_origin_us{-1};
+  std::uint32_t video_sample_size{};
 
   ComPtr<IDXGIAdapter1> adapter;
   ComPtr<ID3D12Device> device12;
@@ -376,6 +377,20 @@ DigitorResult initialize_writer(
   ComPtr<IMFMediaType> video_input;
   const GUID input_subtype =
       ten_bit_video ? MFVideoFormat_P010 : MFVideoFormat_NV12;
+  UINT32 sample_size = 0;
+  const HRESULT sample_size_hr = MFCalculateImageSize(
+      input_subtype, descriptor.width, descriptor.height, &sample_size);
+  if (FAILED(sample_size_hr) || sample_size == 0) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation could not calculate encoder input sample size: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(
+                      static_cast<std::uint32_t>(sample_size_hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  state.video_sample_size = sample_size;
+
   if (FAILED(MFCreateMediaType(&video_input)) ||
       FAILED(video_input->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)) ||
       FAILED(video_input->SetGUID(MF_MT_SUBTYPE, input_subtype)) ||
@@ -389,11 +404,14 @@ DigitorResult initialize_writer(
                                  1, 1)) ||
       FAILED(video_input->SetUINT32(MF_MT_INTERLACE_MODE,
                                     MFVideoInterlace_Progressive)) ||
+      FAILED(video_input->SetUINT32(MF_MT_SAMPLE_SIZE, sample_size)) ||
+      FAILED(video_input->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE)) ||
+      FAILED(video_input->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE)) ||
       FAILED(state.writer->SetInputMediaType(state.video_stream,
                                              video_input.Get(), nullptr))) {
     diagnostic = ten_bit_video
-                     ? "failed to configure P010 hardware video input"
-                     : "failed to configure NV12 hardware video input";
+                     ? "failed to configure complete P010 hardware video input"
+                     : "failed to configure complete NV12 hardware video input";
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -596,17 +614,86 @@ DigitorResult write_video_sample(
   }
 
   ComPtr<IMFMediaBuffer> buffer;
-  if (FAILED(MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0,
-                                       FALSE, &buffer))) {
-    diagnostic = ten_bit_video
-                     ? "Media Foundation could not wrap P010 GPU surface"
-                     : "Media Foundation could not wrap NV12 GPU surface";
+  HRESULT hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), texture, 0,
+                                         FALSE, &buffer);
+  if (FAILED(hr) || !buffer) {
+    char message[224]{};
+    std::snprintf(
+        message, sizeof(message),
+        "%s: HRESULT=0x%08lX",
+        ten_bit_video ? "Media Foundation could not wrap P010 GPU surface"
+                      : "Media Foundation could not wrap NV12 GPU surface",
+        static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  if (state.video_sample_size == 0) {
+    diagnostic = "Media Foundation encoder input sample size was not initialized";
+    return DIGITOR_RESULT_NOT_INITIALIZED;
+  }
+
+  DWORD maximum_length = 0;
+  hr = buffer->GetMaxLength(&maximum_length);
+  if (FAILED(hr)) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer GetMaxLength failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  if (maximum_length < state.video_sample_size) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer is smaller than the negotiated frame: max=%lu required=%u",
+                  static_cast<unsigned long>(maximum_length),
+                  state.video_sample_size);
+    diagnostic = message;
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+
+  hr = buffer->SetCurrentLength(static_cast<DWORD>(state.video_sample_size));
+  if (FAILED(hr)) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer SetCurrentLength(%u) failed: HRESULT=0x%08lX",
+                  state.video_sample_size,
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  DWORD current_length = 0;
+  hr = buffer->GetCurrentLength(&current_length);
+  if (FAILED(hr) || current_length != state.video_sample_size) {
+    char message[224]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation GPU buffer valid length mismatch: current=%lu required=%u HRESULT=0x%08lX",
+                  static_cast<unsigned long>(current_length),
+                  state.video_sample_size,
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
   ComPtr<IMFSample> sample;
-  if (FAILED(MFCreateSample(&sample)) || FAILED(sample->AddBuffer(buffer.Get()))) {
-    diagnostic = "Media Foundation video sample creation failed";
+  hr = MFCreateSample(&sample);
+  if (FAILED(hr) || !sample) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation video sample creation failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+  hr = sample->AddBuffer(buffer.Get());
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation video sample AddBuffer failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -624,14 +711,35 @@ DigitorResult write_video_sample(
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
 
-  HRESULT hr = sample->SetSampleTime(normalized_pts * 10);
-  if (SUCCEEDED(hr)) hr = sample->SetSampleDuration(input.duration_us * 10);
-  if (SUCCEEDED(hr)) hr = state.writer->WriteSample(state.video_stream, sample.Get());
+  hr = sample->SetSampleTime(normalized_pts * 10);
   if (FAILED(hr)) {
     char message[192]{};
     std::snprintf(message, sizeof(message),
-                  "Media Foundation rejected final graded GPU video sample: HRESULT=0x%08lX",
+                  "Media Foundation SetSampleTime failed: HRESULT=0x%08lX",
                   static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  hr = sample->SetSampleDuration(input.duration_us * 10);
+  if (FAILED(hr)) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message),
+                  "Media Foundation SetSampleDuration failed: HRESULT=0x%08lX",
+                  static_cast<unsigned long>(static_cast<std::uint32_t>(hr)));
+    diagnostic = message;
+    return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  hr = state.writer->WriteSample(state.video_stream, sample.Get());
+  if (FAILED(hr)) {
+    char message[256]{};
+    std::snprintf(
+        message, sizeof(message),
+        "Media Foundation WriteSample rejected final graded GPU video sample: HRESULT=0x%08lX validBytes=%lu maxBytes=%lu",
+        static_cast<unsigned long>(static_cast<std::uint32_t>(hr)),
+        static_cast<unsigned long>(current_length),
+        static_cast<unsigned long>(maximum_length));
     diagnostic = message;
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
