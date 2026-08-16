@@ -256,11 +256,13 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     bridge_desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     bridge_desc.SampleDesc.Count=1;
     bridge_desc.Usage=D3D11_USAGE_DEFAULT;
-    // BindFlags=0 is explicitly valid for a video-processor input view and
-    // avoids imposing unrelated render/encoder capabilities on the bridge.
-    bridge_desc.BindFlags=0;
+    // This allocation crosses D3D11/D3D12 through an NT shared handle and is
+    // then consumed as a D3D11 video-processor input. Keep it inside the
+    // documented shared-RGB contract so strict runtimes/drivers validate it.
+    bridge_desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
     bridge_desc.CPUAccessFlags=0;
-    bridge_desc.MiscFlags=D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    bridge_desc.MiscFlags=D3D11_RESOURCE_MISC_SHARED|
+                          D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
     D3D11_TEXTURE2D_DESC output_desc{};
     output_desc.Width=i.config.width;
