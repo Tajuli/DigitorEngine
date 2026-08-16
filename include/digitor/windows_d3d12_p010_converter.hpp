@@ -41,7 +41,7 @@ using WindowsP010GpuDispatch = std::function<DigitorResult(
 struct WindowsP010ConversionConfig {
   void* d3d12_device{};       // ID3D12Device*
   void* command_queue{};      // ID3D12CommandQueue*
-  void* d3d11_device{};       // ID3D11Device*; D3D11.5 interfaces are required
+  void* d3d11_device{};       // ID3D11Device*; ID3D11Device1 is required for shared resources
   std::uint32_t width{};
   std::uint32_t height{};
   std::uint32_t pool_size{6};
