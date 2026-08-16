@@ -31,6 +31,7 @@ DigitorResult ProductionHardwareDecodeSession::decode(
     std::string* diagnostic) noexcept {
   std::scoped_lock lock(mutex_);
   output = {};
+  end_of_stream_ = false;
   auto fail = [&](DigitorResult result, const std::string& text) {
     fail_qualification(text);
     if (diagnostic) *diagnostic = text;
@@ -39,7 +40,11 @@ DigitorResult ProductionHardwareDecodeSession::decode(
 
   try {
     auto frame = decoder_->decode(frame_number);
-    if (!frame) return fail(DIGITOR_RESULT_INVALID_ARGUMENT, "decoder returned no frame");
+    if (!frame) {
+      end_of_stream_ = true;
+      if (diagnostic) *diagnostic = "decoder reached end of stream";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
     ++qualification_.decoded_frames;
     qualification_.hardware_frame_received =
         qualification_.hardware_frame_received || frame->gpu_resident();
@@ -129,6 +134,7 @@ DigitorResult ProductionHardwareDecodeSession::decode_at_timestamp(
     std::string* diagnostic) noexcept {
   std::scoped_lock lock(mutex_);
   output = {};
+  end_of_stream_ = false;
   auto fail = [&](DigitorResult result, const std::string& text) {
     fail_qualification(text);
     if (diagnostic) *diagnostic = text;
@@ -137,7 +143,11 @@ DigitorResult ProductionHardwareDecodeSession::decode_at_timestamp(
 
   try {
     auto frame = decoder_->decode_at_timestamp(pts_us);
-    if (!frame) return fail(DIGITOR_RESULT_INVALID_ARGUMENT, "decoder returned no frame");
+    if (!frame) {
+      end_of_stream_ = true;
+      if (diagnostic) *diagnostic = "decoder reached end of stream";
+      return DIGITOR_RESULT_INVALID_ARGUMENT;
+    }
     ++qualification_.decoded_frames;
     qualification_.hardware_frame_received =
         qualification_.hardware_frame_received || frame->gpu_resident();
@@ -224,6 +234,7 @@ DigitorResult ProductionHardwareDecodeSession::seek(
   try {
     decoder_->seek(pts_us);
     have_timestamp_ = false;
+    end_of_stream_ = false;
     last_timestamp_ = 0;
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
@@ -234,6 +245,11 @@ DigitorResult ProductionHardwareDecodeSession::seek(
     if (diagnostic) *diagnostic = "unknown hardware decoder seek failure";
     return DIGITOR_RESULT_INTERNAL_ERROR;
   }
+}
+
+bool ProductionHardwareDecodeSession::end_of_stream() const {
+  std::scoped_lock lock(mutex_);
+  return end_of_stream_;
 }
 
 HardwareDecodeQualification ProductionHardwareDecodeSession::qualification() const {
