@@ -8,6 +8,7 @@ final class DigitorProductionMediaSnapshot {
     required this.path,
     required this.decoder,
     required this.firstFrame,
+    required this.duration,
     required this.nativeSurface,
     required this.strictGpuPath,
   });
@@ -15,6 +16,11 @@ final class DigitorProductionMediaSnapshot {
   final String path;
   final DigitorProductionDecoderInfo decoder;
   final DigitorProductionDecodedFrameInfo firstFrame;
+
+  /// Authoritative duration probed by the native media facade.
+  /// May be zero only when the underlying platform cannot report duration.
+  final Duration duration;
+
   final DigitorProductionNativeSurface? nativeSurface;
 
   /// True when this media facade was opened in explicit strict GPU mode.
@@ -62,6 +68,7 @@ final class DigitorProductionMediaPipeline {
         requireZeroCopy: strictGpuPath,
       );
       final decoder = next.decoderInfo;
+      final duration = next.duration;
       final firstFrame = next.decode(0);
 
       DigitorProductionNativeSurface? surface;
@@ -93,6 +100,7 @@ final class DigitorProductionMediaPipeline {
         path: path,
         decoder: decoder,
         firstFrame: firstFrame,
+        duration: duration,
         nativeSurface: surface,
         strictGpuPath: strictGpuPath,
       );
