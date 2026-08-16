@@ -111,7 +111,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
         std::scoped_lock lock(i.mutex);
         i.telemetry.diagnostic=message;
       }
-      std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+      std::fprintf(stderr,"[DigitorEngine] YUV converter %s\n",message);
       std::fflush(stderr);
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     };
@@ -120,7 +120,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
         std::scoped_lock lock(i.mutex);
         i.telemetry.diagnostic=message;
       }
-      std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+      std::fprintf(stderr,"[DigitorEngine] YUV converter %s\n",message);
       std::fflush(stderr);
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     };
@@ -190,12 +190,18 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     if(!(rgba_support&D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT))
       return fail_message("hardware video processor does not accept RGBA8 input");
 
-    UINT p010_support=0;
-    hr=i.enumerator->CheckVideoProcessorFormat(DXGI_FORMAT_P010,&p010_support);
+    const DXGI_FORMAT encoder_format=
+        i.config.ten_bit_output?DXGI_FORMAT_P010:DXGI_FORMAT_NV12;
+    UINT yuv_support=0;
+    hr=i.enumerator->CheckVideoProcessorFormat(encoder_format,&yuv_support);
     if(FAILED(hr))
-      return fail_hr("CheckVideoProcessorFormat(P010)",hr);
-    if(!(p010_support&D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT))
-      return fail_message("hardware video processor does not expose P010 output");
+      return fail_hr(i.config.ten_bit_output
+                         ? "CheckVideoProcessorFormat(P010)"
+                         : "CheckVideoProcessorFormat(NV12)",hr);
+    if(!(yuv_support&D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT))
+      return fail_message(i.config.ten_bit_output
+                              ? "hardware video processor does not expose P010 output"
+                              : "hardware video processor does not expose NV12 output");
 
     hr=i.video_device->CreateVideoProcessor(i.enumerator.Get(),0,&i.processor);
     if(FAILED(hr)||!i.processor)
@@ -269,7 +275,7 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
     output_desc.Height=i.config.height;
     output_desc.MipLevels=1;
     output_desc.ArraySize=1;
-    output_desc.Format=DXGI_FORMAT_P010;
+    output_desc.Format=encoder_format;
     output_desc.SampleDesc.Count=1;
     output_desc.Usage=D3D11_USAGE_DEFAULT;
     output_desc.BindFlags=D3D11_BIND_RENDER_TARGET;
@@ -322,18 +328,23 @@ DigitorResult WindowsD3D12P010Converter::initialize() noexcept {
 
       hr=i.device11->CreateTexture2D(&output_desc,nullptr,&slot->p010);
       if(FAILED(hr)||!slot->p010)
-        return fail_hr("ID3D11Device::CreateTexture2D(P010 video-processor output)",hr);
+        return fail_hr(i.config.ten_bit_output
+                           ? "ID3D11Device::CreateTexture2D(P010 video-processor output)"
+                           : "ID3D11Device::CreateTexture2D(NV12 video-processor output)",hr);
       hr=i.video_device->CreateVideoProcessorOutputView(
           slot->p010.Get(),i.enumerator.Get(),&output_view_desc,
           &slot->output_view);
       if(FAILED(hr)||!slot->output_view)
-        return fail_hr("ID3D11VideoDevice::CreateVideoProcessorOutputView(P010)",hr);
+        return fail_hr(i.config.ten_bit_output
+                           ? "ID3D11VideoDevice::CreateVideoProcessorOutputView(P010)"
+                           : "ID3D11VideoDevice::CreateVideoProcessorOutputView(NV12)",hr);
       i.slots.push_back(std::move(slot));
     }
 
     std::scoped_lock lock(i.mutex);
-    i.telemetry.diagnostic=
-        "D3D11-owned RGBA8 bridge and P010 video-processor pool initialized; no CPU pixel staging";
+    i.telemetry.diagnostic=i.config.ten_bit_output
+        ? "D3D11-owned RGBA8 bridge and P010 video-processor pool initialized; no CPU pixel staging"
+        : "D3D11-owned RGBA8 bridge and NV12 video-processor pool initialized; no CPU pixel staging";
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) {
     return DIGITOR_RESULT_OUT_OF_MEMORY;
@@ -372,7 +383,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
       std::scoped_lock lock(i.mutex);
       i.telemetry.diagnostic=message;
     }
-    std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+    std::fprintf(stderr,"[DigitorEngine] YUV converter %s\n",message);
     std::fflush(stderr);
   };
 
@@ -391,7 +402,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
     if(!slot) {
       std::scoped_lock lock(i.mutex);
       ++i.telemetry.pool_exhaustions;
-      i.telemetry.diagnostic="P010 video-processor surface pool exhausted";
+      i.telemetry.diagnostic="video-processor YUV surface pool exhausted";
       return DIGITOR_RESULT_RESOURCE_IN_USE;
     }
     const auto release_on_error=[&slot]() {
@@ -494,7 +505,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
                         "D3D12 device removed during RGBA8 bridge copy: HRESULT=0x%08lX",
                         static_cast<unsigned long>(static_cast<std::uint32_t>(removed)));
           i.telemetry.diagnostic=message;
-          std::fprintf(stderr,"[DigitorEngine] P010 converter %s\n",message);
+          std::fprintf(stderr,"[DigitorEngine] YUV converter %s\n",message);
           std::fflush(stderr);
         } else if(wait==WAIT_TIMEOUT) {
           i.telemetry.diagnostic="timed out waiting for D3D12 RGBA8 bridge copy";
@@ -521,11 +532,13 @@ DigitorResult WindowsD3D12P010Converter::convert(
         i.processor.Get(),slot->output_view.Get(),0,1,&stream);
     if(FAILED(hr)) {
       release_on_error();
-      set_hr_diagnostic("ID3D11VideoContext::VideoProcessorBlt(RGBA8 bridge->P010)",hr);
+      set_hr_diagnostic(i.config.ten_bit_output
+                            ? "ID3D11VideoContext::VideoProcessorBlt(RGBA8 bridge->P010)"
+                            : "ID3D11VideoContext::VideoProcessorBlt(RGBA8 bridge->NV12)",hr);
       return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     }
 
-    // Completion waits synchronize GPU engines only. No RGBA/P010 bytes are
+    // Completion waits synchronize GPU engines only. No RGBA/YUV bytes are
     // mapped, read, or staged through CPU memory.
     i.context11->End(i.completion_query.Get());
     i.context11->Flush();
@@ -548,7 +561,7 @@ DigitorResult WindowsD3D12P010Converter::convert(
         release_on_error();
         std::scoped_lock lock(i.mutex);
         ++i.telemetry.synchronization_failures;
-        i.telemetry.diagnostic="timed out waiting for D3D11 video-processor P010 completion";
+        i.telemetry.diagnostic="timed out waiting for D3D11 video-processor YUV completion";
         return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
       }
       std::this_thread::yield();
@@ -566,8 +579,9 @@ DigitorResult WindowsD3D12P010Converter::convert(
     {
       std::scoped_lock lock(i.mutex);
       ++i.telemetry.completed;
-      i.telemetry.diagnostic=
-          "final D3D12 RGBA8 copied on GPU into D3D11-owned bridge and converted to P010";
+      i.telemetry.diagnostic=i.config.ten_bit_output
+          ? "final D3D12 RGBA8 copied on GPU into D3D11-owned bridge and converted to P010"
+          : "final D3D12 RGBA8 copied on GPU into D3D11-owned bridge and converted to NV12";
     }
     return DIGITOR_RESULT_OK;
   } catch(const std::bad_alloc&) {
