@@ -213,7 +213,7 @@ DigitorResult WindowsD3D12P010Dispatch::dispatch(void* rgba,void* p010,const Win
     cpu.ptr+=inc;D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};uv.Format=DXGI_FORMAT_R16G16_UNORM;uv.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;uv.Texture2D.PlaneSlice=1;i.device->CreateUnorderedAccessView(dst,nullptr,&uv,cpu);
     ID3D12DescriptorHeap* heaps[]{i.descriptor_heap.Get()};i.command_list->SetDescriptorHeaps(1,heaps);i.command_list->SetComputeRootSignature(i.root_signature.Get());
     auto gpu=i.descriptor_heap->GetGPUDescriptorHandleForHeapStart();i.command_list->SetComputeRootDescriptorTable(0,gpu);gpu.ptr+=inc;i.command_list->SetComputeRootDescriptorTable(1,gpu);
-    i.command_list->SetComputeRoot32BitConstants(2,sizeof(c)/4,&c,0);i.command_list->Dispatch((c.width+15)/16,(c.height+15)/16,1);
+    i.command_list->SetComputeRoot32BitConstants(2,sizeof(c)/4,&c,0);i.command_list->Dispatch((c.width+7)/8,(c.height+7)/8,1);
     barrier_count=0;
     if(!i.config.source_starts_shader_readable) {
       barriers[barrier_count].Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
