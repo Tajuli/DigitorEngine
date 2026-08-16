@@ -552,16 +552,43 @@ DigitorResult write_audio_block(State& state, ConstAudioBufferView source,
     return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
   }
 
-  const auto normalized_us = timeline_start_us - state.timeline_origin_us;
-  if (normalized_us > (std::numeric_limits<LONGLONG>::max)() / 10) {
-    diagnostic = "canonical audio timestamp exceeds Media Foundation range";
+  // Media Foundation uses a 100 ns clock, while the canonical mixer advances in
+  // integer audio frames. Derive every block boundary from that cumulative
+  // sample cursor so adjacent AAC input blocks cannot accumulate the
+  // microsecond rounding overlap/gap that made long exports sound uneven.
+  const auto start_frame = state.audio_sample_frames;
+  if (source.frame_count >
+      (std::numeric_limits<std::uint64_t>::max)() - start_frame) {
+    diagnostic = "canonical audio sample cursor overflow";
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
-  const auto duration_100ns = static_cast<LONGLONG>(
-      (static_cast<std::uint64_t>(source.frame_count) * 10'000'000ULL) /
-      state.audio_sample_rate);
-  if (duration_100ns <= 0 ||
-      FAILED(sample->SetSampleTime(normalized_us * 10)) ||
+  const auto end_frame =
+      start_frame + static_cast<std::uint64_t>(source.frame_count);
+  const auto frames_to_100ns = [&state](std::uint64_t frames,
+                                        std::uint64_t& value) {
+    const auto whole_seconds = frames / state.audio_sample_rate;
+    const auto remainder = frames % state.audio_sample_rate;
+    if (whole_seconds >
+        (std::numeric_limits<std::uint64_t>::max)() / 10'000'000ULL) {
+      return false;
+    }
+    value = whole_seconds * 10'000'000ULL +
+            (remainder * 10'000'000ULL) / state.audio_sample_rate;
+    return value <=
+           static_cast<std::uint64_t>((std::numeric_limits<LONGLONG>::max)());
+  };
+  std::uint64_t sample_time_value = 0;
+  std::uint64_t sample_end_value = 0;
+  if (!frames_to_100ns(start_frame, sample_time_value) ||
+      !frames_to_100ns(end_frame, sample_end_value) ||
+      sample_end_value <= sample_time_value) {
+    diagnostic = "canonical audio sample clock exceeds Media Foundation range";
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  }
+  const auto sample_time_100ns = static_cast<LONGLONG>(sample_time_value);
+  const auto duration_100ns =
+      static_cast<LONGLONG>(sample_end_value - sample_time_value);
+  if (FAILED(sample->SetSampleTime(sample_time_100ns)) ||
       FAILED(sample->SetSampleDuration(duration_100ns)) ||
       FAILED(state.writer->WriteSample(state.audio_stream, sample.Get()))) {
     diagnostic = "Media Foundation rejected canonical synchronized audio";
@@ -1057,6 +1084,7 @@ ProductionEncoderFactoryResult create_windows_unified_export_encoder(
             state->mf_started = false;
           }
           state->initialized = false;
+
           if (FAILED(finalize_hr)) {
             state->release_audio_revision();
             diagnostic = "Media Foundation A/V export finalization failed";
