@@ -47,6 +47,7 @@ public:
         std::string* diagnostic = nullptr) noexcept;
     [[nodiscard]] DigitorResult seek(std::int64_t pts_us,
                                      std::string* diagnostic = nullptr) noexcept;
+    [[nodiscard]] bool end_of_stream() const;
     [[nodiscard]] HardwareDecodeQualification qualification() const;
     [[nodiscard]] DecoderInfo decoder_info() const;
 
@@ -59,6 +60,7 @@ private:
     mutable std::mutex mutex_;
     HardwareDecodeQualification qualification_{};
     bool have_timestamp_{};
+    bool end_of_stream_{};
     std::int64_t last_timestamp_{};
 };
 
