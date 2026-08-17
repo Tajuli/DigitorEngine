@@ -16,6 +16,8 @@
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaExtractor.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -192,11 +194,28 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
   i.caps.output_handle_type = "AHardwareBuffer";
 
   i.extractor = AMediaExtractor_new();
-  if (!i.extractor ||
-      AMediaExtractor_setDataSource(i.extractor, i.config.media_path.c_str()) !=
-          AMEDIA_OK)
+  if (!i.extractor)
     return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
-                  "AMediaExtractor could not open media source");
+                  "AMediaExtractor allocation failed");
+
+  const int source_fd =
+      ::open(i.config.media_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (source_fd < 0)
+    return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
+                  "could not open local Android media file");
+
+  struct stat source_stat {};
+  if (::fstat(source_fd, &source_stat) != 0 || source_stat.st_size <= 0) {
+    ::close(source_fd);
+    return i.fail(DIGITOR_RESULT_INVALID_ARGUMENT,
+                  "Android media file is empty or unreadable");
+  }
+  const auto source_status = AMediaExtractor_setDataSourceFd(
+      i.extractor, source_fd, 0, static_cast<off64_t>(source_stat.st_size));
+  ::close(source_fd);
+  if (source_status != AMEDIA_OK)
+    return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
+                  "AMediaExtractor could not open local media file descriptor");
 
   const auto tracks = AMediaExtractor_getTrackCount(i.extractor);
   const char* mime = nullptr;
