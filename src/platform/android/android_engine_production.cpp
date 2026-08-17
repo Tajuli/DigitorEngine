@@ -380,18 +380,21 @@ DigitorResult install_android_engine_production_dependencies_factory(
       state.factory = std::move(factory);
     }
 
+    // Dependency installation and Flutter production-host registration are
+    // separate lifecycle events. The Flutter attachment can arrive before the
+    // selected backend installs its provider builder, so a deferred retry must
+    // never discard a valid engine-owned Android dependency factory. The
+    // pending attachment is retried when the production runtime is available.
     std::string retry_diagnostic;
     const auto retry = retry_flutter_production_host_registration(
         DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID, &retry_diagnostic);
     if (retry != DIGITOR_RESULT_OK) {
-      std::scoped_lock lock(state.mutex);
-      state.factory = {};
       if (diagnostic) {
         *diagnostic = retry_diagnostic.empty()
-                          ? "Android dependencies could not register the pending Flutter production host"
+                          ? "Android production dependency factory installed; Flutter host registration is pending"
                           : std::move(retry_diagnostic);
       }
-      return retry;
+      return DIGITOR_RESULT_OK;
     }
     if (diagnostic) diagnostic->clear();
     return DIGITOR_RESULT_OK;
