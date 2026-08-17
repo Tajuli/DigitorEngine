@@ -828,6 +828,14 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
   }
 
 
+  struct VkCorrectionConstants {
+  float exposure, contrast, saturation, temperature;
+  float tint, highlights, shadows, hue;
+  float color_boost;
+  std::uint32_t width, height, padding;
+};
+static_assert(sizeof(VkCorrectionConstants) == 48);
+
   struct NodeTexture {
     VkImage image{};
     VkImageView view{};
@@ -865,6 +873,12 @@ class VulkanBackend final : public IRenderBackend, public NativeNodeMaskBackend 
                     "[[vk::binding(1,0)]] Texture2D<float> B;");
         replace_all(source, "RWTexture2D<float> Output : register(u0);",
                     "[[vk::binding(2,0)]] RWTexture2D<float> Output;");
+        break;
+      case NativeNodeKernel::correction:
+        replace_all(source, "Texture2D<float4> Source : register(t0);",
+                    "[[vk::binding(0,0)]] Texture2D<float4> Source;");
+        replace_all(source, "RWTexture2D<float4> Output : register(u0);",
+                    "[[vk::binding(1,0)]] RWTexture2D<float4> Output;");
         break;
       case NativeNodeKernel::masked_composite:
         replace_all(source, "Texture2D<float4> Original : register(t0);",
@@ -2248,6 +2262,65 @@ public:
     bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
   }
+
+  [[nodiscard]] bool supports_native_node_operation(
+    NodeOperationKind kind) const noexcept override {
+  return kind == NodeOperationKind::correction ||
+         IRenderBackend::supports_native_node_operation(kind);
+}
+
+DigitorResult execute_process_node_operation_gpu(
+    const GpuSourceResource& source, std::int64_t timestamp,
+    const NodeOperation& operation,
+    ProcessedGpuFramePtr& output) noexcept override {
+  output.reset();
+  if (operation.kind != NodeOperationKind::correction)
+    return DIGITOR_RESULT_UNSUPPORTED;
+  if (!source.usable_by(DIGITOR_RENDERER_VULKAN,
+                        backend_context_identity()))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+      &operation.payload);
+  if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto prior = std::static_pointer_cast<VkPreviewOwner>(
+      native_owner(*source.frame));
+  if (!prior || !prior->output || !prior->output_view)
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+  auto owner = std::make_shared<VkPreviewOwner>();
+  owner->device = d_;
+  owner->device_live = device_live_;
+  if (create_node_image(source.width, source.height,
+                        VK_FORMAT_R32G32B32A32_SFLOAT,
+                        owner->output, owner->output_memory,
+                        owner->output_view) != DIGITOR_RESULT_OK)
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  owner->output_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+  owner->upstream = prior;
+  const auto& v = (*payload)->values();
+  VkCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+      v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+      v.color_boost, source.width, source.height, 0u};
+  const NodeTexture textures[]{
+      {prior->output, prior->output_view, &prior->output_layout, false},
+      {owner->output, owner->output_view, &owner->output_layout, true}};
+  const auto status = dispatch_node_kernel(
+      NativeNodeKernel::correction, source.width, source.height,
+      textures, &c, sizeof(c));
+  if (status != DIGITOR_RESULT_OK) return status;
+  static std::atomic_uint64_t identities{1'700'000};
+  output = std::make_shared<ProcessedGpuFrame>(
+      this, DIGITOR_RENDERER_VULKAN,
+      GpuFrameMetadata{source.width, source.height,
+          DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+          timestamp, source.color_metadata_identity},
+      identities++, std::static_pointer_cast<void>(owner),
+      std::make_shared<std::atomic_bool>(true), true);
+  bind_frame_context_lifetime(output);
+  return output && output->ready() ? DIGITOR_RESULT_OK
+                                   : DIGITOR_RESULT_INTERNAL_ERROR;
+}
+
 
   VulkanBackend(VkInstance in, VkPhysicalDevice ph, VkDevice d, uint32_t family)
       : in_(in), ph_(ph), d_(d), family_(family) {

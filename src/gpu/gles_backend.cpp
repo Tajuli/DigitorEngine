@@ -268,6 +268,14 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   struct GlWindowConstants { float center_x,center_y,width_f,height_f,rotation,feather,opacity; std::uint32_t shape,invert,width,height,padding; };
   struct GlSizeConstants { std::uint32_t width,height; };
 
+  struct GlCorrectionConstants {
+  float exposure, contrast, saturation, temperature;
+  float tint, highlights, shadows, hue;
+  float color_boost;
+  std::uint32_t width, height, padding;
+};
+static_assert(sizeof(GlCorrectionConstants) == 48);
+
   std::shared_ptr<GlPipelineOwner> node_program(NativeNodeKernel kernel) noexcept {
     const auto contract = native_node_pipeline_contract(DIGITOR_RENDERER_OPENGL_ES, kernel);
     if (!validate_native_node_pipeline_contract(contract)) return {};
@@ -541,6 +549,59 @@ public:
   DigitorResult composite_with_matte(const GpuSourceResource& original,const GpuSourceResource& processed,const GpuMatteResourcePtr& matte,std::int64_t timestamp,ProcessedGpuFramePtr& output) noexcept override {
     output.reset();auto context=eglGetCurrentContext();if(!original.usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||!processed.usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||!matte||!matte->usable_by(DIGITOR_RENDERER_OPENGL_ES,backend_context_identity())||original.width!=processed.width||original.height!=processed.height||original.width!=matte->metadata().width||original.height!=matte->metadata().height)return DIGITOR_RESULT_INVALID_ARGUMENT;auto a=std::static_pointer_cast<GlPreviewOwner>(native_owner(*original.frame));auto b=std::static_pointer_cast<GlPreviewOwner>(native_owner(*processed.frame));auto m=std::static_pointer_cast<GlMatteOwner>(matte->native_owner());auto owner=std::make_shared<GlPreviewOwner>();owner->context=context;if(!make_node_texture(owner->output,GL_RGBA32F,original.width,original.height)||!make_framebuffer(owner->framebuffer,owner->output,GL_FRAMEBUFFER,"native node composite framebuffer"))return DIGITOR_RESULT_OUT_OF_MEMORY;GlSizeConstants c{original.width,original.height};const GLuint textures[]{a->output,b->output,m->texture,owner->output};auto status=dispatch_node_compute(NativeNodeKernel::masked_composite,c.width,c.height,textures,&c,sizeof(c));if(status!=DIGITOR_RESULT_OK)return status;auto bundle=std::make_shared<GlUpstreamBundle>();bundle->values={a,b,m};owner->upstream=bundle;static std::atomic_uint64_t ids{1500000};output=std::make_shared<ProcessedGpuFrame>(this,DIGITOR_RENDERER_OPENGL_ES,GpuFrameMetadata{original.width,original.height,DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,GpuFrameAlpha::straight,timestamp,original.color_metadata_identity},ids++,std::static_pointer_cast<void>(owner),std::make_shared<std::atomic_bool>(true),true);bind_frame_context_lifetime(output);return DIGITOR_RESULT_OK;
   }
+
+  [[nodiscard]] bool supports_native_node_operation(
+    NodeOperationKind kind) const noexcept override {
+  return kind == NodeOperationKind::correction ||
+         IRenderBackend::supports_native_node_operation(kind);
+}
+
+DigitorResult execute_process_node_operation_gpu(
+    const GpuSourceResource& source, std::int64_t timestamp,
+    const NodeOperation& operation,
+    ProcessedGpuFramePtr& output) noexcept override {
+  output.reset();
+  if (operation.kind != NodeOperationKind::correction)
+    return DIGITOR_RESULT_UNSUPPORTED;
+  if (!source.usable_by(DIGITOR_RENDERER_OPENGL_ES,
+                        backend_context_identity()))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+      &operation.payload);
+  if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto context = eglGetCurrentContext();
+  auto prior = std::static_pointer_cast<GlPreviewOwner>(
+      native_owner(*source.frame));
+  if (!prior || prior->context != context || !prior->output)
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto owner = std::make_shared<GlPreviewOwner>();
+  owner->context = context;
+  if (!make_node_texture(owner->output, GL_RGBA32F,
+                         source.width, source.height))
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  const auto& v = (*payload)->values();
+  GlCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+      v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+      v.color_boost, source.width, source.height, 0u};
+  const GLuint textures[]{prior->output, owner->output};
+  const auto status = dispatch_node_compute(
+      NativeNodeKernel::correction, source.width, source.height,
+      textures, &c, sizeof(c));
+  if (status != DIGITOR_RESULT_OK) return status;
+  owner->upstream = prior;
+  static std::atomic_uint64_t identities{1'800'000};
+  output = std::make_shared<ProcessedGpuFrame>(
+      this, DIGITOR_RENDERER_OPENGL_ES,
+      GpuFrameMetadata{source.width, source.height,
+          DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+          timestamp, source.color_metadata_identity},
+      identities++, std::static_pointer_cast<void>(owner),
+      std::make_shared<std::atomic_bool>(true), true);
+  bind_frame_context_lifetime(output);
+  return output && output->ready() ? DIGITOR_RESULT_OK
+                                   : DIGITOR_RESULT_INTERNAL_ERROR;
+}
+
 
   GlBackend() {
     i_.backend = DIGITOR_RENDERER_OPENGL_ES;

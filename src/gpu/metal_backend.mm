@@ -351,6 +351,14 @@ class MetalBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   static_assert(sizeof(MetalWindowConstants) == 48);
   struct MetalSizeConstants { std::uint32_t width, height; };
 
+  struct MetalCorrectionConstants {
+  float exposure, contrast, saturation, temperature;
+  float tint, highlights, shadows, hue;
+  float color_boost;
+  std::uint32_t width, height, padding;
+};
+static_assert(sizeof(MetalCorrectionConstants) == 48);
+
   id<MTLTexture> make_node_texture(MTLPixelFormat format,
                                    std::uint32_t width,
                                    std::uint32_t height,
@@ -579,6 +587,64 @@ public:
     bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
   }
+
+  [[nodiscard]] bool supports_native_node_operation(
+    NodeOperationKind kind) const noexcept override {
+  return kind == NodeOperationKind::correction ||
+         IRenderBackend::supports_native_node_operation(kind);
+}
+
+DigitorResult execute_process_node_operation_gpu(
+    const GpuSourceResource& source, std::int64_t timestamp,
+    const NodeOperation& operation,
+    ProcessedGpuFramePtr& output) noexcept override {
+  output.reset();
+  if (operation.kind != NodeOperationKind::correction)
+    return DIGITOR_RESULT_UNSUPPORTED;
+  if (!source.usable_by(DIGITOR_RENDERER_METAL,
+                        backend_context_identity()))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+      &operation.payload);
+  if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto prior = std::static_pointer_cast<MetalPreviewOwner>(
+      native_owner(*source.frame));
+  if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  LocalCounts local;
+  id<MTLTexture> result = make_node_texture(
+      MTLPixelFormatRGBA32Float, source.width, source.height, local);
+  if (!result) return DIGITOR_RESULT_OUT_OF_MEMORY;
+  const auto& v = (*payload)->values();
+  MetalCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+      v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+      v.color_boost, source.width, source.height, 0u};
+  const id<MTLTexture> textures[]{prior->output, result};
+  const auto status = dispatch_node_msl(
+      NativeNodeKernel::correction, source.width, source.height,
+      textures, &c, sizeof(c));
+  if (status != DIGITOR_RESULT_OK) return status;
+  auto owner = std::make_shared<MetalPreviewOwner>();
+  owner->output = result;
+  owner->preview = nil;
+  owner->queue = nil;
+  owner->upstream = prior;
+  owner->textures = 1;
+  owner->tracked = true;
+  ++metal_live.owners;
+  --local.textures;
+  static std::atomic_uint64_t identities{1'900'000};
+  output = std::make_shared<ProcessedGpuFrame>(
+      this, DIGITOR_RENDERER_METAL,
+      GpuFrameMetadata{source.width, source.height,
+          DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+          timestamp, source.color_metadata_identity},
+      identities++, std::static_pointer_cast<void>(owner),
+      std::make_shared<std::atomic_bool>(true), true);
+  bind_frame_context_lifetime(output);
+  return output && output->ready() ? DIGITOR_RESULT_OK
+                                   : DIGITOR_RESULT_INTERNAL_ERROR;
+}
+
 
   explicit MetalBackend(id<MTLDevice> device) : device_(device) {
     info_.backend = DIGITOR_RENDERER_METAL;

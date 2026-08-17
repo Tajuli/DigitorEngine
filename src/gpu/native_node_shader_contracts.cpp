@@ -20,6 +20,13 @@ constexpr std::array<NativeNodeBinding, 5> kCompositeBindings{{
     {4, NativeNodeBindingKind::constants, "8-bytes"},
 }};
 
+constexpr std::array<NativeNodeBinding, 3> kCorrectionBindings{{
+    {0, NativeNodeBindingKind::sampled_or_storage_input, "rgba32f"},
+    {1, NativeNodeBindingKind::storage_output, "rgba32f"},
+    {2, NativeNodeBindingKind::constants, "48-bytes"},
+}};
+constexpr std::uint32_t kCorrectionConstantBytes = 48;
+
 constexpr std::string_view kMixerHlsl = R"(
 Texture2D<float4> InputA : register(t0);
 Texture2D<float4> InputB : register(t1);
@@ -104,6 +111,72 @@ using namespace metal;struct P{float cx,cy,ww,wh,rot,feather,opacity;uint shape,
 constexpr std::string_view kMultiplyMsl = R"(#include <metal_stdlib>
 using namespace metal;struct P{uint width;uint height;};kernel void matte_multiply(texture2d<float,access::read>a[[texture(0)]],texture2d<float,access::read>b[[texture(1)]],texture2d<float,access::write>o[[texture(2)]],constant P&p[[buffer(0)]],uint2 id[[thread_position_in_grid]]){if(id.x>=p.width||id.y>=p.height)return;o.write(float4(clamp(a.read(id).r,0.0f,1.0f)*clamp(b.read(id).r,0.0f,1.0f)),id);})";
 
+constexpr std::string_view kCorrectionHlsl = R"(
+Texture2D<float4> Source : register(t0);
+RWTexture2D<float4> Output : register(u0);
+cbuffer Params : register(b0) {
+  float exposure; float contrast; float saturation; float temperature;
+  float tint; float highlights; float shadows; float hue;
+  float color_boost; uint width; uint height; uint padding;
+};
+float3 rotate_hue_correction(float3 c, float degrees) {
+  if (degrees == 0.0) return c;
+  float angle = degrees * 0.017453292519943295;
+  float co = cos(angle), s = sin(angle);
+  float r = c.r, g = c.g, b = c.b;
+  return float3(
+    (.213 + co*.787 - s*.213)*r + (.715 - co*.715 - s*.715)*g + (.072 - co*.072 + s*.928)*b,
+    (.213 - co*.213 + s*.143)*r + (.715 + co*.285 + s*.140)*g + (.072 - co*.072 - s*.283)*b,
+    (.213 - co*.213 - s*.787)*r + (.715 - co*.715 + s*.715)*g + (.072 + co*.928 + s*.072)*b);
+}
+[numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
+  if (id.x >= width || id.y >= height) return;
+  float4 color = Source.Load(int3(id.xy, 0));
+  float3 rgb = color.rgb + float3(temperature*.1, tint*.1, -temperature*.1);
+  float luminance = dot(rgb, float3(.2126,.7152,.0722));
+  float maximum = max(rgb.r, max(rgb.g, rgb.b));
+  float minimum = min(rgb.r, min(rgb.g, rgb.b));
+  float chroma = maximum - minimum;
+  float sat = max(0.0, 1.0 + saturation);
+  float boost = 1.0 + color_boost * (1.0 - saturate(chroma));
+  float combined = max(0.0, sat * boost);
+  rgb = luminance.xxx + (rgb - luminance.xxx) * combined;
+  float c = max(0.0, 1.0 + contrast);
+  rgb = (rgb - .5) * c + .5;
+  rgb += shadows * (1.0 - saturate(rgb)) * .25 + highlights * saturate(rgb) * .25;
+  rgb *= exp2(exposure * 2.0);
+  rgb = rotate_hue_correction(rgb, hue * 180.0);
+  Output[id.xy] = float4(rgb, color.a);
+}
+)";
+
+constexpr std::string_view kCorrectionVk = R"(#version 450
+layout(local_size_x=8,local_size_y=8,local_size_z=1) in;
+layout(set=0,binding=0,rgba32f) uniform readonly image2D Source;
+layout(set=0,binding=1,rgba32f) uniform writeonly image2D Output;
+layout(push_constant) uniform P { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; } p;
+vec3 rotate_hue_correction(vec3 c,float degrees){if(degrees==0.0)return c;float a=degrees*0.017453292519943295,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return vec3((.213+co*.787-s*.213)*r+(.715-co*.715-s*.715)*g+(.072-co*.072+s*.928)*b,(.213-co*.213+s*.143)*r+(.715+co*.285+s*.140)*g+(.072-co*.072-s*.283)*b,(.213-co*.213-s*.787)*r+(.715-co*.715+s*.715)*g+(.072+co*.928+s*.072)*b);}
+void main(){uvec2 id=gl_GlobalInvocationID.xy;if(any(greaterThanEqual(id,uvec2(p.width,p.height))))return;vec4 color=imageLoad(Source,ivec2(id));vec3 rgb=color.rgb+vec3(p.temperature*.1,p.tint*.1,-p.temperature*.1);float luminance=dot(rgb,vec3(.2126,.7152,.0722));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0,1.0+p.saturation),boost=1.0+p.color_boost*(1.0-clamp(chroma,0.0,1.0)),combined=max(0.0,sat*boost);rgb=vec3(luminance)+(rgb-vec3(luminance))*combined;float c=max(0.0,1.0+p.contrast);rgb=(rgb-vec3(.5))*c+vec3(.5);rgb+=p.shadows*(vec3(1.0)-clamp(rgb,0.0,1.0))*.25+p.highlights*clamp(rgb,0.0,1.0)*.25;rgb*=exp2(p.exposure*2.0);rgb=rotate_hue_correction(rgb,p.hue*180.0);imageStore(Output,ivec2(id),vec4(rgb,color.a));}
+)";
+
+constexpr std::string_view kCorrectionGles = R"(#version 310 es
+precision highp float; precision highp int;
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform highp sampler2D Source;
+layout(binding=1,rgba32f) uniform writeonly highp image2D Output;
+layout(std140,binding=2) uniform P { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; } p;
+vec3 rotate_hue_correction(vec3 c,float degrees){if(degrees==0.0)return c;float a=degrees*0.017453292519943295,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return vec3((.213+co*.787-s*.213)*r+(.715-co*.715-s*.715)*g+(.072-co*.072+s*.928)*b,(.213-co*.213+s*.143)*r+(.715+co*.285+s*.140)*g+(.072-co*.072-s*.283)*b,(.213-co*.213-s*.787)*r+(.715-co*.715+s*.715)*g+(.072+co*.928+s*.072)*b);}
+void main(){uvec2 id=gl_GlobalInvocationID.xy;if(any(greaterThanEqual(id,uvec2(p.width,p.height))))return;ivec2 q=ivec2(id);vec4 color=texelFetch(Source,q,0);vec3 rgb=color.rgb+vec3(p.temperature*.1,p.tint*.1,-p.temperature*.1);float luminance=dot(rgb,vec3(.2126,.7152,.0722));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0,1.0+p.saturation),boost=1.0+p.color_boost*(1.0-clamp(chroma,0.0,1.0)),combined=max(0.0,sat*boost);rgb=vec3(luminance)+(rgb-vec3(luminance))*combined;float c=max(0.0,1.0+p.contrast);rgb=(rgb-vec3(.5))*c+vec3(.5);rgb+=p.shadows*(vec3(1.0)-clamp(rgb,0.0,1.0))*.25+p.highlights*clamp(rgb,0.0,1.0)*.25;rgb*=exp2(p.exposure*2.0);rgb=rotate_hue_correction(rgb,p.hue*180.0);imageStore(Output,q,vec4(rgb,color.a));}
+)";
+
+constexpr std::string_view kCorrectionMsl = R"(#include <metal_stdlib>
+using namespace metal;
+struct CorrectionP { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; };
+float3 rotate_hue_correction(float3 c,float degrees){if(degrees==0.0f)return c;float a=degrees*0.017453292519943295f,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return float3((.213f+co*.787f-s*.213f)*r+(.715f-co*.715f-s*.715f)*g+(.072f-co*.072f+s*.928f)*b,(.213f-co*.213f+s*.143f)*r+(.715f+co*.285f+s*.140f)*g+(.072f-co*.072f-s*.283f)*b,(.213f-co*.213f-s*.787f)*r+(.715f-co*.715f+s*.715f)*g+(.072f+co*.928f+s*.072f)*b);}
+kernel void correction(texture2d<float,access::read> Source [[texture(0)]],texture2d<float,access::write> Output [[texture(1)]],constant CorrectionP& p [[buffer(0)]],uint2 id [[thread_position_in_grid]]){if(id.x>=p.width||id.y>=p.height)return;float4 color=Source.read(id);float3 rgb=color.rgb+float3(p.temperature*.1f,p.tint*.1f,-p.temperature*.1f);float luminance=dot(rgb,float3(.2126f,.7152f,.0722f));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0f,1.0f+p.saturation),boost=1.0f+p.color_boost*(1.0f-clamp(chroma,0.0f,1.0f)),combined=max(0.0f,sat*boost);rgb=float3(luminance)+(rgb-float3(luminance))*combined;float c=max(0.0f,1.0f+p.contrast);rgb=(rgb-float3(.5f))*c+float3(.5f);rgb+=p.shadows*(float3(1.0f)-clamp(rgb,0.0f,1.0f))*.25f+p.highlights*clamp(rgb,0.0f,1.0f)*.25f;rgb*=exp2(p.exposure*2.0f);rgb=rotate_hue_correction(rgb,p.hue*180.0f);Output.write(float4(rgb,color.a),id);}
+)";
+
+
 struct KernelData {
   const NativeNodeBinding* bindings{};
   std::uint32_t binding_count{};
@@ -123,6 +196,8 @@ KernelData data_for(NativeNodeKernel kernel) noexcept {
       return {kNativePowerWindowMatteBindings.data(), static_cast<std::uint32_t>(kNativePowerWindowMatteBindings.size()), kNativePowerWindowMatteConstantBytes, kWindowHlsl, kWindowVk, kWindowGles, kWindowMsl, "power_window_matte"};
     case NativeNodeKernel::matte_multiply:
       return {kNativeMatteMultiplyBindings.data(), static_cast<std::uint32_t>(kNativeMatteMultiplyBindings.size()), kNativeMatteMultiplyConstantBytes, kMultiplyHlsl, kMultiplyVk, kMultiplyGles, kMultiplyMsl, "matte_multiply"};
+    case NativeNodeKernel::correction:
+      return {kCorrectionBindings.data(), static_cast<std::uint32_t>(kCorrectionBindings.size()), kCorrectionConstantBytes, kCorrectionHlsl, kCorrectionVk, kCorrectionGles, kCorrectionMsl, "correction"};
   }
   return {};
 }
