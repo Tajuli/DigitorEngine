@@ -6,7 +6,7 @@ on:
       - agent/fix-android-native-assets-ninja-20260818
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   format-hook:
@@ -19,8 +19,15 @@ jobs:
       - name: Format hook
         working-directory: dart/digitor_engine_ffi
         run: dart format hook/build.dart
-      - name: Upload formatted hook
-        uses: actions/upload-artifact@v4
-        with:
-          name: formatted-build-dart
-          path: dart/digitor_engine_ffi/hook/build.dart
+      - name: Commit formatter output
+        shell: bash
+        run: |
+          if git diff --quiet -- dart/digitor_engine_ffi/hook/build.dart; then
+            echo "No formatter changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dart/digitor_engine_ffi/hook/build.dart
+          git commit -m "Format Android native asset hook"
+          git push origin HEAD:agent/fix-android-native-assets-ninja-20260818
