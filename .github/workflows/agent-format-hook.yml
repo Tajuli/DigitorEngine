@@ -1,0 +1,26 @@
+name: Agent Format Hook
+
+on:
+  push:
+    branches:
+      - agent/fix-android-native-assets-ninja-20260818
+
+permissions:
+  contents: read
+
+jobs:
+  format-hook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Format hook
+        working-directory: dart/digitor_engine_ffi
+        run: dart format hook/build.dart
+      - name: Upload formatted hook
+        uses: actions/upload-artifact@v4
+        with:
+          name: formatted-build-dart
+          path: dart/digitor_engine_ffi/hook/build.dart
