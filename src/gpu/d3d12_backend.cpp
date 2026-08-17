@@ -430,6 +430,14 @@ class D3DBackend final : public IRenderBackend, public NativeNodeMaskBackend {
   }
 
 
+  struct D3DCorrectionConstants {
+  float exposure, contrast, saturation, temperature;
+  float tint, highlights, shadows, hue;
+  float color_boost;
+  std::uint32_t width, height, padding;
+};
+static_assert(sizeof(D3DCorrectionConstants) == 48);
+
   struct NodeTexture {
     ID3D12Resource* resource{};
     DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
@@ -1000,6 +1008,68 @@ public:
     bind_frame_context_lifetime(output);
     return DIGITOR_RESULT_OK;
   }
+
+  [[nodiscard]] bool supports_native_node_operation(
+    NodeOperationKind kind) const noexcept override {
+  return kind == NodeOperationKind::correction ||
+         IRenderBackend::supports_native_node_operation(kind);
+}
+
+DigitorResult execute_process_node_operation_gpu(
+    const GpuSourceResource& source, std::int64_t timestamp,
+    const NodeOperation& operation,
+    ProcessedGpuFramePtr& output) noexcept override {
+  output.reset();
+  if (operation.kind != NodeOperationKind::correction)
+    return DIGITOR_RESULT_UNSUPPORTED;
+  if (!source.usable_by(DIGITOR_RENDERER_D3D12,
+                        backend_context_identity()))
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+      &operation.payload);
+  if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  auto prior = std::static_pointer_cast<D3DPreviewOwner>(
+      native_owner(*source.frame));
+  if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+  const auto source_format = format(source.format);
+  if (source_format == DXGI_FORMAT_UNKNOWN)
+    return DIGITOR_RESULT_UNSUPPORTED;
+
+  LocalCounts local;
+  auto owner = std::make_shared<D3DPreviewOwner>();
+  owner->tracked_owner = true;
+  ++d3d_live.owners;
+  if (create_node_texture(source.width, source.height,
+                          DXGI_FORMAT_R32G32B32A32_FLOAT,
+                          owner->output, local) != DIGITOR_RESULT_OK)
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  local.transfer_resource(*owner);
+  owner->upstream = prior;
+  const auto& v = (*payload)->values();
+  D3DCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+      v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+      v.color_boost, source.width, source.height, 0u};
+  const NodeTexture textures[]{
+      {prior->output.Get(), source_format, false},
+      {owner->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, true}};
+  const auto status = dispatch_node_kernel(
+      NativeNodeKernel::correction, source.width, source.height,
+      textures, &c, sizeof(c));
+  if (status != DIGITOR_RESULT_OK) return status;
+  owner->output_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+  static std::atomic_uint64_t identities{1'600'000};
+  output = std::make_shared<ProcessedGpuFrame>(
+      this, DIGITOR_RENDERER_D3D12,
+      GpuFrameMetadata{source.width, source.height,
+          DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+          timestamp, source.color_metadata_identity},
+      identities++, std::static_pointer_cast<void>(owner),
+      std::make_shared<std::atomic_bool>(true), true);
+  bind_frame_context_lifetime(output);
+  return output && output->ready() ? DIGITOR_RESULT_OK
+                                   : DIGITOR_RESULT_INTERNAL_ERROR;
+}
+
 
   explicit D3DBackend(ComPtr<ID3D12Device> device)
       : device_(std::move(device)) {
