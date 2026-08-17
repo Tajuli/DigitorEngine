@@ -1,0 +1,476 @@
+name: Apply native Correction GPU fix
+
+on:
+  push:
+    branches:
+      - agent/fix-correction-native-gpu-20260817
+    paths:
+      - .github/workflows/agent-apply-correction-gpu-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply Correction GPU implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, value):
+              Path(path).write_text(value, encoding='utf-8')
+
+          def replace_once(path, old, new):
+              text = read(path)
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f'anchor missing in {path}: {old[:120]!r}')
+              write(path, text.replace(old, new, 1))
+
+          def insert_before(path, anchor, snippet, marker):
+              text = read(path)
+              if marker in text:
+                  return
+              if anchor not in text:
+                  raise SystemExit(f'anchor missing in {path}: {anchor!r}')
+              write(path, text.replace(anchor, snippet + '\n' + anchor, 1))
+
+          # 1) Generic native-node kernel contract.
+          replace_once(
+              'include/digitor/native_node_shader_contracts.hpp',
+              '  matte_multiply = 4\n};',
+              '  matte_multiply = 4,\n  correction = 5\n};')
+
+          correction_binding = r'''constexpr std::array<NativeNodeBinding, 3> kCorrectionBindings{{
+              {0, NativeNodeBindingKind::sampled_or_storage_input, "rgba32f"},
+              {1, NativeNodeBindingKind::storage_output, "rgba32f"},
+              {2, NativeNodeBindingKind::constants, "48-bytes"},
+          }};
+          constexpr std::uint32_t kCorrectionConstantBytes = 48;
+          '''
+          insert_before(
+              'src/gpu/native_node_shader_contracts.cpp',
+              'constexpr std::string_view kMixerHlsl',
+              correction_binding,
+              'kCorrectionConstantBytes = 48')
+
+          correction_shaders = r'''constexpr std::string_view kCorrectionHlsl = R"(
+          Texture2D<float4> Source : register(t0);
+          RWTexture2D<float4> Output : register(u0);
+          cbuffer Params : register(b0) {
+            float exposure; float contrast; float saturation; float temperature;
+            float tint; float highlights; float shadows; float hue;
+            float color_boost; uint width; uint height; uint padding;
+          };
+          float3 rotate_hue_correction(float3 c, float degrees) {
+            if (degrees == 0.0) return c;
+            float angle = degrees * 0.017453292519943295;
+            float co = cos(angle), s = sin(angle);
+            float r = c.r, g = c.g, b = c.b;
+            return float3(
+              (.213 + co*.787 - s*.213)*r + (.715 - co*.715 - s*.715)*g + (.072 - co*.072 + s*.928)*b,
+              (.213 - co*.213 + s*.143)*r + (.715 + co*.285 + s*.140)*g + (.072 - co*.072 - s*.283)*b,
+              (.213 - co*.213 - s*.787)*r + (.715 - co*.715 + s*.715)*g + (.072 + co*.928 + s*.072)*b);
+          }
+          [numthreads(8,8,1)] void main(uint3 id : SV_DispatchThreadID) {
+            if (id.x >= width || id.y >= height) return;
+            float4 color = Source.Load(int3(id.xy, 0));
+            float3 rgb = color.rgb + float3(temperature*.1, tint*.1, -temperature*.1);
+            float luminance = dot(rgb, float3(.2126,.7152,.0722));
+            float maximum = max(rgb.r, max(rgb.g, rgb.b));
+            float minimum = min(rgb.r, min(rgb.g, rgb.b));
+            float chroma = maximum - minimum;
+            float sat = max(0.0, 1.0 + saturation);
+            float boost = 1.0 + color_boost * (1.0 - saturate(chroma));
+            float combined = max(0.0, sat * boost);
+            rgb = luminance.xxx + (rgb - luminance.xxx) * combined;
+            float c = max(0.0, 1.0 + contrast);
+            rgb = (rgb - .5) * c + .5;
+            rgb += shadows * (1.0 - saturate(rgb)) * .25 + highlights * saturate(rgb) * .25;
+            rgb *= exp2(exposure * 2.0);
+            rgb = rotate_hue_correction(rgb, hue * 180.0);
+            Output[id.xy] = float4(rgb, color.a);
+          }
+          )";
+
+          constexpr std::string_view kCorrectionVk = R"(#version 450
+          layout(local_size_x=8,local_size_y=8,local_size_z=1) in;
+          layout(set=0,binding=0,rgba32f) uniform readonly image2D Source;
+          layout(set=0,binding=1,rgba32f) uniform writeonly image2D Output;
+          layout(push_constant) uniform P { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; } p;
+          vec3 rotate_hue_correction(vec3 c,float degrees){if(degrees==0.0)return c;float a=degrees*0.017453292519943295,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return vec3((.213+co*.787-s*.213)*r+(.715-co*.715-s*.715)*g+(.072-co*.072+s*.928)*b,(.213-co*.213+s*.143)*r+(.715+co*.285+s*.140)*g+(.072-co*.072-s*.283)*b,(.213-co*.213-s*.787)*r+(.715-co*.715+s*.715)*g+(.072+co*.928+s*.072)*b);}
+          void main(){uvec2 id=gl_GlobalInvocationID.xy;if(any(greaterThanEqual(id,uvec2(p.width,p.height))))return;vec4 color=imageLoad(Source,ivec2(id));vec3 rgb=color.rgb+vec3(p.temperature*.1,p.tint*.1,-p.temperature*.1);float luminance=dot(rgb,vec3(.2126,.7152,.0722));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0,1.0+p.saturation),boost=1.0+p.color_boost*(1.0-clamp(chroma,0.0,1.0)),combined=max(0.0,sat*boost);rgb=vec3(luminance)+(rgb-vec3(luminance))*combined;float c=max(0.0,1.0+p.contrast);rgb=(rgb-vec3(.5))*c+vec3(.5);rgb+=p.shadows*(vec3(1.0)-clamp(rgb,0.0,1.0))*.25+p.highlights*clamp(rgb,0.0,1.0)*.25;rgb*=exp2(p.exposure*2.0);rgb=rotate_hue_correction(rgb,p.hue*180.0);imageStore(Output,ivec2(id),vec4(rgb,color.a));}
+          )";
+
+          constexpr std::string_view kCorrectionGles = R"(#version 310 es
+          precision highp float; precision highp int;
+          layout(local_size_x=8,local_size_y=8) in;
+          layout(binding=0) uniform highp sampler2D Source;
+          layout(binding=1,rgba32f) uniform writeonly highp image2D Output;
+          layout(std140,binding=2) uniform P { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; } p;
+          vec3 rotate_hue_correction(vec3 c,float degrees){if(degrees==0.0)return c;float a=degrees*0.017453292519943295,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return vec3((.213+co*.787-s*.213)*r+(.715-co*.715-s*.715)*g+(.072-co*.072+s*.928)*b,(.213-co*.213+s*.143)*r+(.715+co*.285+s*.140)*g+(.072-co*.072-s*.283)*b,(.213-co*.213-s*.787)*r+(.715-co*.715+s*.715)*g+(.072+co*.928+s*.072)*b);}
+          void main(){uvec2 id=gl_GlobalInvocationID.xy;if(any(greaterThanEqual(id,uvec2(p.width,p.height))))return;ivec2 q=ivec2(id);vec4 color=texelFetch(Source,q,0);vec3 rgb=color.rgb+vec3(p.temperature*.1,p.tint*.1,-p.temperature*.1);float luminance=dot(rgb,vec3(.2126,.7152,.0722));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0,1.0+p.saturation),boost=1.0+p.color_boost*(1.0-clamp(chroma,0.0,1.0)),combined=max(0.0,sat*boost);rgb=vec3(luminance)+(rgb-vec3(luminance))*combined;float c=max(0.0,1.0+p.contrast);rgb=(rgb-vec3(.5))*c+vec3(.5);rgb+=p.shadows*(vec3(1.0)-clamp(rgb,0.0,1.0))*.25+p.highlights*clamp(rgb,0.0,1.0)*.25;rgb*=exp2(p.exposure*2.0);rgb=rotate_hue_correction(rgb,p.hue*180.0);imageStore(Output,q,vec4(rgb,color.a));}
+          )";
+
+          constexpr std::string_view kCorrectionMsl = R"(#include <metal_stdlib>
+          using namespace metal;
+          struct CorrectionP { float exposure; float contrast; float saturation; float temperature; float tint; float highlights; float shadows; float hue; float color_boost; uint width; uint height; uint padding; };
+          float3 rotate_hue_correction(float3 c,float degrees){if(degrees==0.0f)return c;float a=degrees*0.017453292519943295f,co=cos(a),s=sin(a);float r=c.r,g=c.g,b=c.b;return float3((.213f+co*.787f-s*.213f)*r+(.715f-co*.715f-s*.715f)*g+(.072f-co*.072f+s*.928f)*b,(.213f-co*.213f+s*.143f)*r+(.715f+co*.285f+s*.140f)*g+(.072f-co*.072f-s*.283f)*b,(.213f-co*.213f-s*.787f)*r+(.715f-co*.715f+s*.715f)*g+(.072f+co*.928f+s*.072f)*b);}
+          kernel void correction(texture2d<float,access::read> Source [[texture(0)]],texture2d<float,access::write> Output [[texture(1)]],constant CorrectionP& p [[buffer(0)]],uint2 id [[thread_position_in_grid]]){if(id.x>=p.width||id.y>=p.height)return;float4 color=Source.read(id);float3 rgb=color.rgb+float3(p.temperature*.1f,p.tint*.1f,-p.temperature*.1f);float luminance=dot(rgb,float3(.2126f,.7152f,.0722f));float maximum=max(rgb.r,max(rgb.g,rgb.b)),minimum=min(rgb.r,min(rgb.g,rgb.b)),chroma=maximum-minimum;float sat=max(0.0f,1.0f+p.saturation),boost=1.0f+p.color_boost*(1.0f-clamp(chroma,0.0f,1.0f)),combined=max(0.0f,sat*boost);rgb=float3(luminance)+(rgb-float3(luminance))*combined;float c=max(0.0f,1.0f+p.contrast);rgb=(rgb-float3(.5f))*c+float3(.5f);rgb+=p.shadows*(float3(1.0f)-clamp(rgb,0.0f,1.0f))*.25f+p.highlights*clamp(rgb,0.0f,1.0f)*.25f;rgb*=exp2(p.exposure*2.0f);rgb=rotate_hue_correction(rgb,p.hue*180.0f);Output.write(float4(rgb,color.a),id);}
+          )";
+
+          '''
+          insert_before(
+              'src/gpu/native_node_shader_contracts.cpp',
+              'struct KernelData {',
+              correction_shaders,
+              'kCorrectionHlsl = R"(')
+
+          matte_case = '''    case NativeNodeKernel::matte_multiply:\n      return {kNativeMatteMultiplyBindings.data(), static_cast<std::uint32_t>(kNativeMatteMultiplyBindings.size()), kNativeMatteMultiplyConstantBytes, kMultiplyHlsl, kMultiplyVk, kMultiplyGles, kMultiplyMsl, "matte_multiply"};\n'''
+          correction_case = matte_case + '''    case NativeNodeKernel::correction:\n      return {kCorrectionBindings.data(), static_cast<std::uint32_t>(kCorrectionBindings.size()), kCorrectionConstantBytes, kCorrectionHlsl, kCorrectionVk, kCorrectionGles, kCorrectionMsl, "correction"};\n'''
+          replace_once('src/gpu/native_node_shader_contracts.cpp', matte_case, correction_case)
+
+          # Shared backend parameter layout: 9 floats + width/height/pad = 48 bytes.
+          d3d_constants = r'''  struct D3DCorrectionConstants {
+            float exposure, contrast, saturation, temperature;
+            float tint, highlights, shadows, hue;
+            float color_boost;
+            std::uint32_t width, height, padding;
+          };
+          static_assert(sizeof(D3DCorrectionConstants) == 48);
+          '''
+          insert_before('src/gpu/d3d12_backend.cpp', '  struct NodeTexture {', d3d_constants,
+                        'struct D3DCorrectionConstants')
+
+          d3d_method = r'''  [[nodiscard]] bool supports_native_node_operation(
+              NodeOperationKind kind) const noexcept override {
+            return kind == NodeOperationKind::correction ||
+                   IRenderBackend::supports_native_node_operation(kind);
+          }
+
+          DigitorResult execute_process_node_operation_gpu(
+              const GpuSourceResource& source, std::int64_t timestamp,
+              const NodeOperation& operation,
+              ProcessedGpuFramePtr& output) noexcept override {
+            output.reset();
+            if (operation.kind != NodeOperationKind::correction)
+              return DIGITOR_RESULT_UNSUPPORTED;
+            if (!source.usable_by(DIGITOR_RENDERER_D3D12,
+                                  backend_context_identity()))
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+                &operation.payload);
+            if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            auto prior = std::static_pointer_cast<D3DPreviewOwner>(
+                native_owner(*source.frame));
+            if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto source_format = format(source.format);
+            if (source_format == DXGI_FORMAT_UNKNOWN)
+              return DIGITOR_RESULT_UNSUPPORTED;
+
+            LocalCounts local;
+            auto owner = std::make_shared<D3DPreviewOwner>();
+            owner->tracked_owner = true;
+            ++d3d_live.owners;
+            if (create_node_texture(source.width, source.height,
+                                    DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                    owner->output, local) != DIGITOR_RESULT_OK)
+              return DIGITOR_RESULT_OUT_OF_MEMORY;
+            local.transfer_resource(*owner);
+            owner->upstream = prior;
+            const auto& v = (*payload)->values();
+            D3DCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+                v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+                v.color_boost, source.width, source.height, 0u};
+            const NodeTexture textures[]{
+                {prior->output.Get(), source_format, false},
+                {owner->output.Get(), DXGI_FORMAT_R32G32B32A32_FLOAT, true}};
+            const auto status = dispatch_node_kernel(
+                NativeNodeKernel::correction, source.width, source.height,
+                textures, &c, sizeof(c));
+            if (status != DIGITOR_RESULT_OK) return status;
+            owner->output_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            static std::atomic_uint64_t identities{1'600'000};
+            output = std::make_shared<ProcessedGpuFrame>(
+                this, DIGITOR_RENDERER_D3D12,
+                GpuFrameMetadata{source.width, source.height,
+                    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+                    timestamp, source.color_metadata_identity},
+                identities++, std::static_pointer_cast<void>(owner),
+                std::make_shared<std::atomic_bool>(true), true);
+            bind_frame_context_lifetime(output);
+            return output && output->ready() ? DIGITOR_RESULT_OK
+                                             : DIGITOR_RESULT_INTERNAL_ERROR;
+          }
+
+          '''
+          insert_before('src/gpu/d3d12_backend.cpp',
+                        '  explicit D3DBackend(ComPtr<ID3D12Device> device)',
+                        d3d_method, 'identities{1\'600\'000}')
+
+          vk_constants = r'''  struct VkCorrectionConstants {
+            float exposure, contrast, saturation, temperature;
+            float tint, highlights, shadows, hue;
+            float color_boost;
+            std::uint32_t width, height, padding;
+          };
+          static_assert(sizeof(VkCorrectionConstants) == 48);
+          '''
+          insert_before('src/gpu/vulkan_backend.cpp', '  struct NodeTexture {', vk_constants,
+                        'struct VkCorrectionConstants')
+
+          vk_case_anchor = '''      case NativeNodeKernel::masked_composite:\n        replace_all(source, "Texture2D<float4> Original : register(t0);",\n                    "[[vk::binding(0,0)]] Texture2D<float4> Original;");\n'''
+          vk_case = '''      case NativeNodeKernel::correction:\n        replace_all(source, "Texture2D<float4> Source : register(t0);",\n                    "[[vk::binding(0,0)]] Texture2D<float4> Source;");\n        replace_all(source, "RWTexture2D<float4> Output : register(u0);",\n                    "[[vk::binding(1,0)]] RWTexture2D<float4> Output;");\n        break;\n''' + vk_case_anchor
+          replace_once('src/gpu/vulkan_backend.cpp', vk_case_anchor, vk_case)
+
+          vk_method = r'''  [[nodiscard]] bool supports_native_node_operation(
+              NodeOperationKind kind) const noexcept override {
+            return kind == NodeOperationKind::correction ||
+                   IRenderBackend::supports_native_node_operation(kind);
+          }
+
+          DigitorResult execute_process_node_operation_gpu(
+              const GpuSourceResource& source, std::int64_t timestamp,
+              const NodeOperation& operation,
+              ProcessedGpuFramePtr& output) noexcept override {
+            output.reset();
+            if (operation.kind != NodeOperationKind::correction)
+              return DIGITOR_RESULT_UNSUPPORTED;
+            if (!source.usable_by(DIGITOR_RENDERER_VULKAN,
+                                  backend_context_identity()))
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+                &operation.payload);
+            if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            auto prior = std::static_pointer_cast<VkPreviewOwner>(
+                native_owner(*source.frame));
+            if (!prior || !prior->output || !prior->output_view)
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+
+            auto owner = std::make_shared<VkPreviewOwner>();
+            owner->device = d_;
+            owner->device_live = device_live_;
+            if (create_node_image(source.width, source.height,
+                                  VK_FORMAT_R32G32B32A32_SFLOAT,
+                                  owner->output, owner->output_memory,
+                                  owner->output_view) != DIGITOR_RESULT_OK)
+              return DIGITOR_RESULT_OUT_OF_MEMORY;
+            owner->output_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            owner->upstream = prior;
+            const auto& v = (*payload)->values();
+            VkCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+                v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+                v.color_boost, source.width, source.height, 0u};
+            const NodeTexture textures[]{
+                {prior->output, prior->output_view, &prior->output_layout, false},
+                {owner->output, owner->output_view, &owner->output_layout, true}};
+            const auto status = dispatch_node_kernel(
+                NativeNodeKernel::correction, source.width, source.height,
+                textures, &c, sizeof(c));
+            if (status != DIGITOR_RESULT_OK) return status;
+            static std::atomic_uint64_t identities{1'700'000};
+            output = std::make_shared<ProcessedGpuFrame>(
+                this, DIGITOR_RENDERER_VULKAN,
+                GpuFrameMetadata{source.width, source.height,
+                    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+                    timestamp, source.color_metadata_identity},
+                identities++, std::static_pointer_cast<void>(owner),
+                std::make_shared<std::atomic_bool>(true), true);
+            bind_frame_context_lifetime(output);
+            return output && output->ready() ? DIGITOR_RESULT_OK
+                                             : DIGITOR_RESULT_INTERNAL_ERROR;
+          }
+
+          '''
+          insert_before('src/gpu/vulkan_backend.cpp',
+                        '  VulkanBackend(VkInstance in, VkPhysicalDevice ph, VkDevice d, uint32_t family)',
+                        vk_method, 'identities{1\'700\'000}')
+
+          gl_constants = r'''  struct GlCorrectionConstants {
+            float exposure, contrast, saturation, temperature;
+            float tint, highlights, shadows, hue;
+            float color_boost;
+            std::uint32_t width, height, padding;
+          };
+          static_assert(sizeof(GlCorrectionConstants) == 48);
+          '''
+          insert_before('src/gpu/gles_backend.cpp',
+                        '  std::shared_ptr<GlPipelineOwner> node_program',
+                        gl_constants, 'struct GlCorrectionConstants')
+
+          gl_method = r'''  [[nodiscard]] bool supports_native_node_operation(
+              NodeOperationKind kind) const noexcept override {
+            return kind == NodeOperationKind::correction ||
+                   IRenderBackend::supports_native_node_operation(kind);
+          }
+
+          DigitorResult execute_process_node_operation_gpu(
+              const GpuSourceResource& source, std::int64_t timestamp,
+              const NodeOperation& operation,
+              ProcessedGpuFramePtr& output) noexcept override {
+            output.reset();
+            if (operation.kind != NodeOperationKind::correction)
+              return DIGITOR_RESULT_UNSUPPORTED;
+            if (!source.usable_by(DIGITOR_RENDERER_OPENGL_ES,
+                                  backend_context_identity()))
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+                &operation.payload);
+            if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto context = eglGetCurrentContext();
+            auto prior = std::static_pointer_cast<GlPreviewOwner>(
+                native_owner(*source.frame));
+            if (!prior || prior->context != context || !prior->output)
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            auto owner = std::make_shared<GlPreviewOwner>();
+            owner->context = context;
+            if (!make_node_texture(owner->output, GL_RGBA32F,
+                                   source.width, source.height))
+              return DIGITOR_RESULT_OUT_OF_MEMORY;
+            const auto& v = (*payload)->values();
+            GlCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+                v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+                v.color_boost, source.width, source.height, 0u};
+            const GLuint textures[]{prior->output, owner->output};
+            const auto status = dispatch_node_compute(
+                NativeNodeKernel::correction, source.width, source.height,
+                textures, &c, sizeof(c));
+            if (status != DIGITOR_RESULT_OK) return status;
+            owner->upstream = prior;
+            static std::atomic_uint64_t identities{1'800'000};
+            output = std::make_shared<ProcessedGpuFrame>(
+                this, DIGITOR_RENDERER_OPENGL_ES,
+                GpuFrameMetadata{source.width, source.height,
+                    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+                    timestamp, source.color_metadata_identity},
+                identities++, std::static_pointer_cast<void>(owner),
+                std::make_shared<std::atomic_bool>(true), true);
+            bind_frame_context_lifetime(output);
+            return output && output->ready() ? DIGITOR_RESULT_OK
+                                             : DIGITOR_RESULT_INTERNAL_ERROR;
+          }
+
+          '''
+          insert_before('src/gpu/gles_backend.cpp', '  GlBackend() {', gl_method,
+                        'identities{1\'800\'000}')
+
+          metal_constants = r'''  struct MetalCorrectionConstants {
+            float exposure, contrast, saturation, temperature;
+            float tint, highlights, shadows, hue;
+            float color_boost;
+            std::uint32_t width, height, padding;
+          };
+          static_assert(sizeof(MetalCorrectionConstants) == 48);
+          '''
+          insert_before('src/gpu/metal_backend.mm',
+                        '  id<MTLTexture> make_node_texture',
+                        metal_constants, 'struct MetalCorrectionConstants')
+
+          metal_method = r'''  [[nodiscard]] bool supports_native_node_operation(
+              NodeOperationKind kind) const noexcept override {
+            return kind == NodeOperationKind::correction ||
+                   IRenderBackend::supports_native_node_operation(kind);
+          }
+
+          DigitorResult execute_process_node_operation_gpu(
+              const GpuSourceResource& source, std::int64_t timestamp,
+              const NodeOperation& operation,
+              ProcessedGpuFramePtr& output) noexcept override {
+            output.reset();
+            if (operation.kind != NodeOperationKind::correction)
+              return DIGITOR_RESULT_UNSUPPORTED;
+            if (!source.usable_by(DIGITOR_RENDERER_METAL,
+                                  backend_context_identity()))
+              return DIGITOR_RESULT_INVALID_ARGUMENT;
+            const auto* payload = std::get_if<std::shared_ptr<const CorrectionParameters>>(
+                &operation.payload);
+            if (!payload || !*payload) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            auto prior = std::static_pointer_cast<MetalPreviewOwner>(
+                native_owner(*source.frame));
+            if (!prior || !prior->output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+            LocalCounts local;
+            id<MTLTexture> result = make_node_texture(
+                MTLPixelFormatRGBA32Float, source.width, source.height, local);
+            if (!result) return DIGITOR_RESULT_OUT_OF_MEMORY;
+            const auto& v = (*payload)->values();
+            MetalCorrectionConstants c{v.exposure, v.contrast, v.saturation,
+                v.temperature, v.tint, v.highlights, v.shadows, v.hue,
+                v.color_boost, source.width, source.height, 0u};
+            const id<MTLTexture> textures[]{prior->output, result};
+            const auto status = dispatch_node_msl(
+                NativeNodeKernel::correction, source.width, source.height,
+                textures, &c, sizeof(c));
+            if (status != DIGITOR_RESULT_OK) return status;
+            auto owner = std::make_shared<MetalPreviewOwner>();
+            owner->output = result;
+            owner->preview = nil;
+            owner->queue = nil;
+            owner->upstream = prior;
+            owner->textures = 1;
+            owner->tracked = true;
+            ++metal_live.owners;
+            --local.textures;
+            static std::atomic_uint64_t identities{1'900'000};
+            output = std::make_shared<ProcessedGpuFrame>(
+                this, DIGITOR_RENDERER_METAL,
+                GpuFrameMetadata{source.width, source.height,
+                    DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT, GpuFrameAlpha::straight,
+                    timestamp, source.color_metadata_identity},
+                identities++, std::static_pointer_cast<void>(owner),
+                std::make_shared<std::atomic_bool>(true), true);
+            bind_frame_context_lifetime(output);
+            return output && output->ready() ? DIGITOR_RESULT_OK
+                                             : DIGITOR_RESULT_INTERNAL_ERROR;
+          }
+
+          '''
+          insert_before('src/gpu/metal_backend.mm',
+                        '  explicit MetalBackend(id<MTLDevice> device) : device_(device)',
+                        metal_method, 'identities{1\'900\'000}')
+
+          # Source-level safety checks for the exact bug path.
+          required = {
+              'include/digitor/native_node_shader_contracts.hpp': ['correction = 5'],
+              'src/gpu/native_node_shader_contracts.cpp': ['kCorrectionHlsl', '"correction"'],
+              'src/gpu/d3d12_backend.cpp': ['NodeOperationKind::correction', 'NativeNodeKernel::correction'],
+              'src/gpu/vulkan_backend.cpp': ['identities{1\'700\'000}', 'NativeNodeKernel::correction'],
+              'src/gpu/gles_backend.cpp': ['identities{1\'800\'000}', 'NativeNodeKernel::correction'],
+              'src/gpu/metal_backend.mm': ['identities{1\'900\'000}', 'NativeNodeKernel::correction'],
+          }
+          for path, needles in required.items():
+              text = read(path)
+              for needle in needles:
+                  if needle not in text:
+                      raise SystemExit(f'missing expected post-patch token {needle!r} in {path}')
+          PY
+
+          git diff --check
+          git status --short
+      - name: Commit implementation
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add include/digitor/native_node_shader_contracts.hpp \
+                  src/gpu/native_node_shader_contracts.cpp \
+                  src/gpu/d3d12_backend.cpp \
+                  src/gpu/vulkan_backend.cpp \
+                  src/gpu/gles_backend.cpp \
+                  src/gpu/metal_backend.mm
+          git commit -m "Implement native GPU Correction selected-node pass"
+          git push origin HEAD:agent/fix-correction-native-gpu-20260817
