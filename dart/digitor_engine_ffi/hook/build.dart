@@ -56,7 +56,15 @@ Future<void> main(List<String> arguments) async {
     await Directory.fromUri(outputRoot).create(recursive: true);
 
     final cmake = await _findCmake();
+    final androidNinja = targetOs == OS.android
+        ? await _findAndroidNinja(code)
+        : null;
     final configureArguments = <String>[
+      if (androidNinja != null) ...<String>[
+        '-G',
+        'Ninja',
+        '-DCMAKE_MAKE_PROGRAM=${androidNinja.toFilePath()}',
+      ],
       '-S',
       engineRoot.toFilePath(),
       '-B',
@@ -460,6 +468,52 @@ List<String> _platformCmakeArguments(CodeConfig code) {
     default:
       throw UnsupportedError('Unsupported target ${code.targetOS.name}.');
   }
+}
+
+Future<Uri> _findAndroidNinja(CodeConfig code) async {
+  final compiler = code.cCompiler?.compiler;
+  if (compiler == null) {
+    throw StateError('Flutter did not provide an Android C toolchain.');
+  }
+
+  final ndk = _androidNdkRoot(compiler);
+  final sdkRoot = Directory.fromUri(ndk).parent.parent;
+  final executable = Platform.isWindows ? 'ninja.exe' : 'ninja';
+  final cmakeRoot = Directory(
+    '${sdkRoot.path}${Platform.pathSeparator}cmake',
+  );
+
+  if (await cmakeRoot.exists()) {
+    final installs = await cmakeRoot
+        .list(followLinks: false)
+        .where((entity) => entity is Directory)
+        .cast<Directory>()
+        .toList();
+    installs.sort((a, b) => b.path.compareTo(a.path));
+    for (final install in installs) {
+      final candidate = File(
+        '${install.path}${Platform.pathSeparator}bin'
+        '${Platform.pathSeparator}$executable',
+      );
+      if (await candidate.exists()) return candidate.uri;
+    }
+  }
+
+  final path = Platform.environment['PATH'];
+  if (path != null && path.isNotEmpty) {
+    for (final entry in path.split(Platform.isWindows ? ';' : ':')) {
+      if (entry.isEmpty) continue;
+      final candidate = File(
+        '$entry${Platform.pathSeparator}$executable',
+      );
+      if (await candidate.exists()) return candidate.uri;
+    }
+  }
+
+  throw StateError(
+    'Ninja is required for Android DigitorEngine native-asset builds. '
+    'Install Android SDK CMake/Ninja or add Ninja to PATH.',
+  );
 }
 
 Uri _androidNdkRoot(Uri compiler) {
