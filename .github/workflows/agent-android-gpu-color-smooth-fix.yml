@@ -1,0 +1,173 @@
+name: Agent Android GPU Color Smooth Fix
+
+on:
+  push:
+    branches:
+      - agent/fix-android-native-assets-ninja-20260818
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Android native GPU fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'{label}: expected source block not found in {path}')
+              text = text.replace(old, new, 1)
+              p.write_text(text)
+
+          decoder = 'src/media/android_mediacodec_decoder.cpp'
+          replace_once(
+              decoder,
+              '''  std::uint32_t width{}, height{};\n  bool input_eos{}, output_eos{};\n''',
+              '''  std::uint32_t width{}, height{};\n  std::int32_t color_standard{}, color_range{}, color_transfer{};\n  bool input_eos{}, output_eos{};\n''',
+              'decoder color state',
+          )
+          replace_once(
+              decoder,
+              '''    if (window) {\n      ANativeWindow_release(window);\n      window = nullptr;\n    }\n''',
+              '''    // AImageReader_getWindow returns a window managed by the reader.\n    // Do not release it independently; deleting the reader owns that lifetime.\n    window = nullptr;\n''',
+              'AImageReader window ownership',
+          )
+          replace_once(
+              decoder,
+              '''  if (!i.track_format || !mime)\n    return i.fail(DIGITOR_RESULT_UNSUPPORTED,\n                  "no supported AVC, HEVC, VP9, or AV1 video track");\n\n  int32_t w = 0, h = 0;\n''',
+              '''  if (!i.track_format || !mime)\n    return i.fail(DIGITOR_RESULT_UNSUPPORTED,\n                  "no supported AVC, HEVC, VP9, or AV1 video track");\n\n  // Preserve the media color description instead of assuming BT.709 SDR.\n  // Android MediaFormat values are mapped below into the canonical color IDs\n  // used by NativeMediaColorMetadata across all platform decoders.\n  AMediaFormat_getInt32(i.track_format, "color-standard", &i.color_standard);\n  AMediaFormat_getInt32(i.track_format, "color-range", &i.color_range);\n  AMediaFormat_getInt32(i.track_format, "color-transfer", &i.color_transfer);\n\n  int32_t w = 0, h = 0;\n''',
+              'track color metadata',
+          )
+          replace_once(
+              decoder,
+              '''  ANativeWindow_acquire(i.window);\n\n  i.codec = AMediaCodec_createDecoderByType(mime);\n''',
+              '''\n  i.codec = AMediaCodec_createDecoderByType(mime);\n''',
+              'remove reader window acquire',
+          )
+          replace_once(
+              decoder,
+              '''  const auto deadline =\n      std::chrono::steady_clock::now() + std::chrono::milliseconds(500);\n''',
+              '''  // Hardware codecs on real devices can need substantially longer for the\n  // first Surface/AImageReader frame than for steady-state playback. Keep the\n  // strict GPU path, but do not misclassify normal vendor startup as failure.\n  const bool first_surface = i.stats.acquired_images == 0;\n  const auto deadline = std::chrono::steady_clock::now() +\n      (first_surface ? std::chrono::seconds(5)\n                     : std::chrono::milliseconds(750));\n''',
+              'decoder deadline',
+          )
+          replace_once(
+              decoder,
+              '''    if (output_index >= 0) {\n      const bool eos =\n          (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != 0;\n      // Surface decoders may report zero byte count: the output buffer is a\n      // render token, not pixel storage. Render every non-EOS token.\n      const bool render = !eos;\n      AMediaCodec_releaseOutputBuffer(i.codec, output_index, render);\n      if (render) ++i.stats.rendered_outputs;\n      if (eos) {\n        i.output_eos = true;\n        i.stats.eos_drained = true;\n      }\n    }\n''',
+              '''    if (output_index >= 0) {\n      const bool eos =\n          (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != 0;\n      // Surface decoders may report zero byte count: the output buffer is a\n      // render token, not pixel storage. Render every non-EOS token.\n      const bool render = !eos;\n      AMediaCodec_releaseOutputBuffer(i.codec, output_index, render);\n      if (render) ++i.stats.rendered_outputs;\n      if (eos) {\n        i.output_eos = true;\n        i.stats.eos_drained = true;\n      }\n    } else if (output_index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {\n      auto* output_format = AMediaCodec_getOutputFormat(i.codec);\n      if (output_format) {\n        // Prefer decoder-resolved output aspects when the codec supplies them.\n        AMediaFormat_getInt32(output_format, "color-standard", &i.color_standard);\n        AMediaFormat_getInt32(output_format, "color-range", &i.color_range);\n        AMediaFormat_getInt32(output_format, "color-transfer", &i.color_transfer);\n        AMediaFormat_delete(output_format);\n      }\n    }\n''',
+              'output color metadata refresh',
+          )
+          replace_once(
+              decoder,
+              '''      d.color.full_range = 0;\n      d.color.matrix = 1;\n      d.color.primaries = 1;\n      d.color.transfer = 1;\n''',
+              '''      // NativeMediaColorMetadata uses the same canonical numeric IDs as\n      // FFmpeg/ISO color metadata on the other platform decoders. Do not pass\n      // Android MediaFormat enums through directly because their numeric IDs\n      // differ for transfer characteristics and BT.2020.\n      switch (i.color_standard) {\n        case 1:  // MediaFormat.COLOR_STANDARD_BT709\n          d.color.primaries = 1;  // AVCOL_PRI_BT709\n          d.color.matrix = 1;     // AVCOL_SPC_BT709\n          break;\n        case 2:  // MediaFormat.COLOR_STANDARD_BT601_PAL\n          d.color.primaries = 5;  // AVCOL_PRI_BT470BG\n          d.color.matrix = 5;     // AVCOL_SPC_BT470BG\n          break;\n        case 4:  // MediaFormat.COLOR_STANDARD_BT601_NTSC\n          d.color.primaries = 6;  // AVCOL_PRI_SMPTE170M\n          d.color.matrix = 6;     // AVCOL_SPC_SMPTE170M\n          break;\n        case 6:  // MediaFormat.COLOR_STANDARD_BT2020\n          d.color.primaries = 9;  // AVCOL_PRI_BT2020\n          d.color.matrix = 9;     // AVCOL_SPC_BT2020_NCL\n          break;\n        default:\n          d.color.primaries = 0;\n          d.color.matrix = 0;\n          break;\n      }\n      switch (i.color_transfer) {\n        case 1: d.color.transfer = 8; break;   // linear\n        case 2: d.color.transfer = 13; break;  // sRGB / IEC 61966-2-1\n        case 3: d.color.transfer = 6; break;   // SDR / SMPTE 170M\n        case 6: d.color.transfer = 16; break;  // ST 2084 / PQ\n        case 7: d.color.transfer = 18; break;  // HLG / ARIB STD-B67\n        default: d.color.transfer = 0; break;\n      }\n      d.color.full_range = i.color_range == 1 ? 1 : 0;\n      d.color.chroma_location = 0;\n''',
+              'surface color mapping',
+          )
+
+          header = 'include/digitor/android_zero_copy_pipeline.hpp'
+          replace_once(
+              header,
+              '''  AndroidYuvFormat format{AndroidYuvFormat::implementation_defined};\n  std::int64_t timestamp_us{};\n''',
+              '''  AndroidYuvFormat format{AndroidYuvFormat::implementation_defined};\n  AndroidColorMatrix matrix{AndroidColorMatrix::bt709};\n  AndroidColorRange range{AndroidColorRange::limited};\n  std::int32_t primaries{};\n  std::int32_t transfer{};\n  std::int64_t timestamp_us{};\n''',
+              'imported image color metadata',
+          )
+
+          concrete = 'src/media/android_zero_copy_concrete_bindings.cpp'
+          replace_once(
+              concrete,
+              '''         out.format == in.format && out.timestamp_us == in.timestamp_us &&\n         out.frame_identity == in.frame_identity;\n''',
+              '''         out.format == in.format && out.matrix == in.matrix &&\n         out.range == in.range && out.primaries == in.primaries &&\n         out.transfer == in.transfer && out.timestamp_us == in.timestamp_us &&\n         out.frame_identity == in.frame_identity;\n''',
+              'validate imported color metadata',
+          )
+          replace_once(
+              concrete,
+              '''  const auto r = impl_->config.import_ahardware_buffer(in, out);\n  if (r != DIGITOR_RESULT_OK) {\n''',
+              '''  const auto r = impl_->config.import_ahardware_buffer(in, out);\n  if (r == DIGITOR_RESULT_OK) {\n    out.matrix = in.matrix;\n    out.range = in.range;\n    out.primaries = in.primaries;\n    out.transfer = in.transfer;\n  }\n  if (r != DIGITOR_RESULT_OK) {\n''',
+              'vulkan import color carry',
+          )
+          # Apply the same carry-through to the GLES importer (second occurrence).
+          p = Path(concrete)
+          text = p.read_text()
+          marker = '''  const auto r = impl_->config.import_ahardware_buffer(in, out);\n  if (r != DIGITOR_RESULT_OK) {\n'''
+          if marker not in text:
+              raise SystemExit('gles import color carry: expected second importer block not found')
+          text = text.replace(
+              marker,
+              '''  const auto r = impl_->config.import_ahardware_buffer(in, out);\n  if (r == DIGITOR_RESULT_OK) {\n    out.matrix = in.matrix;\n    out.range = in.range;\n    out.primaries = in.primaries;\n    out.transfer = in.transfer;\n  }\n  if (r != DIGITOR_RESULT_OK) {\n''',
+              1,
+          )
+          p.write_text(text)
+          replace_once(
+              concrete,
+              '''  const auto r = dispatch_(in, AndroidColorMatrix::bt709,\n                           AndroidColorRange::limited,\n                           in.format == AndroidYuvFormat::p010 ? 10u : 8u, out);\n''',
+              '''  const auto r = dispatch_(in, in.matrix, in.range,\n                           in.format == AndroidYuvFormat::p010 ? 10u : 8u, out);\n''',
+              'GPU converter color selection',
+          )
+
+          native = 'src/media/android_native_zero_copy.cpp'
+          replace_once(
+              native,
+              '''  const auto result = i.native_vulkan_import(frame, out);\n  if (result != DIGITOR_RESULT_OK) {\n''',
+              '''  const auto result = i.native_vulkan_import(frame, out);\n  if (result == DIGITOR_RESULT_OK) {\n    out.matrix = frame.matrix;\n    out.range = frame.range;\n    out.primaries = frame.primaries;\n    out.transfer = frame.transfer;\n  }\n  if (result != DIGITOR_RESULT_OK) {\n''',
+              'native Vulkan color carry',
+          )
+          replace_once(
+              native,
+              '''    const auto result = i.native_gles_import(frame, out);\n    if (result != DIGITOR_RESULT_OK) return result;\n''',
+              '''    const auto result = i.native_gles_import(frame, out);\n    if (result == DIGITOR_RESULT_OK) {\n      out.matrix = frame.matrix;\n      out.range = frame.range;\n      out.primaries = frame.primaries;\n      out.transfer = frame.transfer;\n    }\n    if (result != DIGITOR_RESULT_OK) return result;\n''',
+              'native GLES color carry',
+          )
+          replace_once(
+              native,
+              '''  out.format = frame.format;\n  out.timestamp_us = frame.timestamp_us;\n''',
+              '''  out.format = frame.format;\n  out.matrix = frame.matrix;\n  out.range = frame.range;\n  out.primaries = frame.primaries;\n  out.transfer = frame.transfer;\n  out.timestamp_us = frame.timestamp_us;\n''',
+              'EGL import color metadata',
+          )
+
+          # The legacy concrete decoder contract can now carry the same fields.
+          concrete_header = 'include/digitor/android_zero_copy_concrete_bindings.hpp'
+          replace_once(
+              concrete_header,
+              '''  std::uint32_t bit_depth{8};\n  void* output_surface{};\n''',
+              '''  std::uint32_t bit_depth{8};\n  AndroidColorMatrix matrix{AndroidColorMatrix::bt709};\n  AndroidColorRange range{AndroidColorRange::limited};\n  std::int32_t primaries{};\n  std::int32_t transfer{};\n  void* output_surface{};\n''',
+              'concrete decoder color config',
+          )
+          replace_once(
+              concrete,
+              '''  out.bit_depth = impl_->config.bit_depth;\n  out.format = impl_->config.bit_depth == 10 ? AndroidYuvFormat::p010\n''',
+              '''  out.bit_depth = impl_->config.bit_depth;\n  out.matrix = impl_->config.matrix;\n  out.range = impl_->config.range;\n  out.primaries = impl_->config.primaries;\n  out.transfer = impl_->config.transfer;\n  out.format = impl_->config.bit_depth == 10 ? AndroidYuvFormat::p010\n''',
+              'concrete decoder color output',
+          )
+          PY
+
+      - name: Sanity-check invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q 'ANativeWindow_acquire(i.window)' src/media/android_mediacodec_decoder.cpp
+          ! grep -q 'dispatch_(in, AndroidColorMatrix::bt709' src/media/android_zero_copy_concrete_bindings.cpp
+          grep -q 'AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED' src/media/android_mediacodec_decoder.cpp
+          grep -q 'std::chrono::seconds(5)' src/media/android_mediacodec_decoder.cpp
+          grep -q 'out.matrix = in.matrix' src/media/android_zero_copy_concrete_bindings.cpp
+          grep -q 'out.transfer = frame.transfer' src/media/android_native_zero_copy.cpp
+
+      - name: Commit fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/media/android_mediacodec_decoder.cpp include/digitor/android_zero_copy_pipeline.hpp include/digitor/android_zero_copy_concrete_bindings.hpp src/media/android_zero_copy_concrete_bindings.cpp src/media/android_native_zero_copy.cpp; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/media/android_mediacodec_decoder.cpp include/digitor/android_zero_copy_pipeline.hpp include/digitor/android_zero_copy_concrete_bindings.hpp src/media/android_zero_copy_concrete_bindings.cpp src/media/android_native_zero_copy.cpp
+          git commit -m 'Fix Android GPU decode color and surface lifetime'
+          git push origin HEAD:agent/fix-android-native-assets-ninja-20260818
