@@ -480,9 +480,7 @@ Future<Uri> _findAndroidNinja(CodeConfig code) async {
   final ndk = _androidNdkRoot(compiler);
   final sdkRoot = Directory.fromUri(ndk).parent.parent;
   final executable = Platform.isWindows ? 'ninja.exe' : 'ninja';
-  final cmakeRoot = Directory(
-    '${sdkRoot.path}${Platform.pathSeparator}cmake',
-  );
+  final cmakeRoot = Directory('${sdkRoot.path}${Platform.pathSeparator}cmake');
 
   if (await cmakeRoot.exists()) {
     final installs = <Directory>[];
@@ -505,9 +503,7 @@ Future<Uri> _findAndroidNinja(CodeConfig code) async {
   if (path != null && path.isNotEmpty) {
     for (final entry in path.split(Platform.isWindows ? ';' : ':')) {
       if (entry.isEmpty) continue;
-      final candidate = File(
-        '$entry${Platform.pathSeparator}$executable',
-      );
+      final candidate = File('$entry${Platform.pathSeparator}$executable');
       if (await candidate.exists()) return candidate.uri;
     }
   }
