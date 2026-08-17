@@ -23,7 +23,9 @@ namespace {
                                 AndroidZeroCopyBackend backend) noexcept {
   return out.backend == backend && out.image && out.image_view && out.lifetime &&
          out.width == in.width && out.height == in.height &&
-         out.format == in.format && out.timestamp_us == in.timestamp_us &&
+         out.format == in.format && out.matrix == in.matrix &&
+         out.range == in.range && out.primaries == in.primaries &&
+         out.transfer == in.transfer && out.timestamp_us == in.timestamp_us &&
          out.frame_identity == in.frame_identity;
 }
 
@@ -71,6 +73,10 @@ DigitorResult AndroidMediaCodecSurfaceDecoder::acquire(
   out.width = impl_->config.width;
   out.height = impl_->config.height;
   out.bit_depth = impl_->config.bit_depth;
+  out.matrix = impl_->config.matrix;
+  out.range = impl_->config.range;
+  out.primaries = impl_->config.primaries;
+  out.transfer = impl_->config.transfer;
   out.format = impl_->config.bit_depth == 10 ? AndroidYuvFormat::p010
                                               : AndroidYuvFormat::implementation_defined;
   out.timestamp_us = timestamp_us;
@@ -124,6 +130,12 @@ DigitorResult AndroidVulkanHardwareBufferImporter::import(
   if (!impl_->initialized) return DIGITOR_RESULT_NOT_INITIALIZED;
   if (!valid_format(in)) return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto r = impl_->config.import_ahardware_buffer(in, out);
+  if (r == DIGITOR_RESULT_OK) {
+    out.matrix = in.matrix;
+    out.range = in.range;
+    out.primaries = in.primaries;
+    out.transfer = in.transfer;
+  }
   if (r != DIGITOR_RESULT_OK) {
     out = {};
     return r;
@@ -173,6 +185,12 @@ DigitorResult AndroidGlesHardwareBufferImporter::import(
   if (!impl_->initialized) return DIGITOR_RESULT_NOT_INITIALIZED;
   if (!valid_format(in)) return DIGITOR_RESULT_INVALID_ARGUMENT;
   const auto r = impl_->config.import_ahardware_buffer(in, out);
+  if (r == DIGITOR_RESULT_OK) {
+    out.matrix = in.matrix;
+    out.range = in.range;
+    out.primaries = in.primaries;
+    out.transfer = in.transfer;
+  }
   if (r != DIGITOR_RESULT_OK) {
     out = {};
     return r;
@@ -201,8 +219,7 @@ DigitorResult AndroidGpuYuvConverter::convert(
   out.reset();
   if (!dispatch_ || !in.image || !in.image_view || !in.width || !in.height)
     return DIGITOR_RESULT_INVALID_ARGUMENT;
-  const auto r = dispatch_(in, AndroidColorMatrix::bt709,
-                           AndroidColorRange::limited,
+  const auto r = dispatch_(in, in.matrix, in.range,
                            in.format == AndroidYuvFormat::p010 ? 10u : 8u, out);
   if (r != DIGITOR_RESULT_OK) return r;
   if (!out || !out->ready() || out->metadata().format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||

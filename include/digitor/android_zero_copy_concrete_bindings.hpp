@@ -14,6 +14,10 @@ struct AndroidMediaCodecDecoderConfig {
   std::uint32_t width{};
   std::uint32_t height{};
   std::uint32_t bit_depth{8};
+  AndroidColorMatrix matrix{AndroidColorMatrix::bt709};
+  AndroidColorRange range{AndroidColorRange::limited};
+  std::int32_t primaries{};
+  std::int32_t transfer{};
   void* output_surface{};
   bool require_hardware_codec{true};
   bool require_ahardwarebuffer{true};

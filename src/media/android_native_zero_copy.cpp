@@ -177,6 +177,12 @@ DigitorResult AndroidNativeZeroCopyBindings::import_vulkan(
   // VkImage, VkDeviceMemory, VkImageView, YCbCr conversion and sync import. Do
   // not expose AHardwareBuffer/externalFormat integers as fake Vulkan handles.
   const auto result = i.native_vulkan_import(frame, out);
+  if (result == DIGITOR_RESULT_OK) {
+    out.matrix = frame.matrix;
+    out.range = frame.range;
+    out.primaries = frame.primaries;
+    out.transfer = frame.transfer;
+  }
   if (result != DIGITOR_RESULT_OK) {
     out = {};
     std::scoped_lock lock(i.mutex);
@@ -224,6 +230,12 @@ DigitorResult AndroidNativeZeroCopyBindings::import_gles(
 
   if (i.native_gles_import) {
     const auto result = i.native_gles_import(frame, out);
+    if (result == DIGITOR_RESULT_OK) {
+      out.matrix = frame.matrix;
+      out.range = frame.range;
+      out.primaries = frame.primaries;
+      out.transfer = frame.transfer;
+    }
     if (result != DIGITOR_RESULT_OK) return result;
     if (out.backend != AndroidZeroCopyBackend::opengl_es || !out.image || !out.image_view ||
         !out.lifetime || out.width != frame.width || out.height != frame.height ||
@@ -287,6 +299,10 @@ DigitorResult AndroidNativeZeroCopyBindings::import_gles(
   out.width = frame.width;
   out.height = frame.height;
   out.format = frame.format;
+  out.matrix = frame.matrix;
+  out.range = frame.range;
+  out.primaries = frame.primaries;
+  out.transfer = frame.transfer;
   out.timestamp_us = frame.timestamp_us;
   out.frame_identity = frame.frame_identity;
   out.lifetime = std::move(holder);

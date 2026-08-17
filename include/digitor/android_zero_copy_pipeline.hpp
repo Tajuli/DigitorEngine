@@ -73,6 +73,10 @@ struct AndroidImportedImage {
   std::uint32_t width{};
   std::uint32_t height{};
   AndroidYuvFormat format{AndroidYuvFormat::implementation_defined};
+  AndroidColorMatrix matrix{AndroidColorMatrix::bt709};
+  AndroidColorRange range{AndroidColorRange::limited};
+  std::int32_t primaries{};
+  std::int32_t transfer{};
   std::int64_t timestamp_us{};
   std::uint64_t frame_identity{};
   std::shared_ptr<void> lifetime;

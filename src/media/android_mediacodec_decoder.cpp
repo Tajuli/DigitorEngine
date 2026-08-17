@@ -123,6 +123,7 @@ struct AndroidMediaCodecAhbDecoder::Impl {
   ANativeWindow* window{};
   AMediaFormat* track_format{};
   std::uint32_t width{}, height{};
+  std::int32_t color_standard{}, color_range{}, color_transfer{};
   bool input_eos{}, output_eos{};
 
   void close() noexcept {
@@ -131,10 +132,9 @@ struct AndroidMediaCodecAhbDecoder::Impl {
       AMediaCodec_delete(codec);
       codec = nullptr;
     }
-    if (window) {
-      ANativeWindow_release(window);
-      window = nullptr;
-    }
+    // AImageReader_getWindow returns a window managed by the reader.
+    // Do not release it independently; deleting the reader owns that lifetime.
+    window = nullptr;
     if (reader) {
       AImageReader_delete(reader);
       reader = nullptr;
@@ -236,6 +236,13 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
     return i.fail(DIGITOR_RESULT_UNSUPPORTED,
                   "no supported AVC, HEVC, VP9, or AV1 video track");
 
+  // Preserve the media color description instead of assuming BT.709 SDR.
+  // Android MediaFormat values are mapped below into the canonical color IDs
+  // used by NativeMediaColorMetadata across all platform decoders.
+  AMediaFormat_getInt32(i.track_format, "color-standard", &i.color_standard);
+  AMediaFormat_getInt32(i.track_format, "color-range", &i.color_range);
+  AMediaFormat_getInt32(i.track_format, "color-transfer", &i.color_transfer);
+
   int32_t w = 0, h = 0;
   if (!AMediaFormat_getInt32(i.track_format, AMEDIAFORMAT_KEY_WIDTH, &w) ||
       !AMediaFormat_getInt32(i.track_format, AMEDIAFORMAT_KEY_HEIGHT, &h) ||
@@ -253,7 +260,6 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
     return i.fail(
         DIGITOR_RESULT_BACKEND_UNAVAILABLE,
         "GPU-sampleable PRIVATE AImageReader surface creation failed");
-  ANativeWindow_acquire(i.window);
 
   i.codec = AMediaCodec_createDecoderByType(mime);
   if (!i.codec)
@@ -332,8 +338,13 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         DIGITOR_RESULT_BACKEND_UNAVAILABLE,
         "required API 26 AImageReader/AHardwareBuffer symbols are unavailable");
 
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+  // Hardware codecs on real devices can need substantially longer for the
+  // first Surface/AImageReader frame than for steady-state playback. Keep the
+  // strict GPU path, but do not misclassify normal vendor startup as failure.
+  const bool first_surface = i.stats.acquired_images == 0;
+  const auto deadline = std::chrono::steady_clock::now() +
+      (first_surface ? std::chrono::seconds(5)
+                     : std::chrono::milliseconds(750));
   while (std::chrono::steady_clock::now() < deadline &&
          !i.cancelled.load()) {
     if (!i.input_eos) {
@@ -376,6 +387,15 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       if (eos) {
         i.output_eos = true;
         i.stats.eos_drained = true;
+      }
+    } else if (output_index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+      auto* output_format = AMediaCodec_getOutputFormat(i.codec);
+      if (output_format) {
+        // Prefer decoder-resolved output aspects when the codec supplies them.
+        AMediaFormat_getInt32(output_format, "color-standard", &i.color_standard);
+        AMediaFormat_getInt32(output_format, "color-range", &i.color_range);
+        AMediaFormat_getInt32(output_format, "color-transfer", &i.color_transfer);
+        AMediaFormat_delete(output_format);
       }
     }
 
@@ -450,10 +470,42 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         d.acquire_sync.type = NativeMediaSyncType::sync_fd;
         d.acquire_sync.handle = static_cast<std::uintptr_t>(fence_fd);
       }
-      d.color.full_range = 0;
-      d.color.matrix = 1;
-      d.color.primaries = 1;
-      d.color.transfer = 1;
+      // NativeMediaColorMetadata uses the same canonical numeric IDs as
+      // FFmpeg/ISO color metadata on the other platform decoders. Do not pass
+      // Android MediaFormat enums through directly because their numeric IDs
+      // differ for transfer characteristics and BT.2020.
+      switch (i.color_standard) {
+        case 1:  // MediaFormat.COLOR_STANDARD_BT709
+          d.color.primaries = 1;  // AVCOL_PRI_BT709
+          d.color.matrix = 1;     // AVCOL_SPC_BT709
+          break;
+        case 2:  // MediaFormat.COLOR_STANDARD_BT601_PAL
+          d.color.primaries = 5;  // AVCOL_PRI_BT470BG
+          d.color.matrix = 5;     // AVCOL_SPC_BT470BG
+          break;
+        case 4:  // MediaFormat.COLOR_STANDARD_BT601_NTSC
+          d.color.primaries = 6;  // AVCOL_PRI_SMPTE170M
+          d.color.matrix = 6;     // AVCOL_SPC_SMPTE170M
+          break;
+        case 6:  // MediaFormat.COLOR_STANDARD_BT2020
+          d.color.primaries = 9;  // AVCOL_PRI_BT2020
+          d.color.matrix = 9;     // AVCOL_SPC_BT2020_NCL
+          break;
+        default:
+          d.color.primaries = 0;
+          d.color.matrix = 0;
+          break;
+      }
+      switch (i.color_transfer) {
+        case 1: d.color.transfer = 8; break;   // linear
+        case 2: d.color.transfer = 13; break;  // sRGB / IEC 61966-2-1
+        case 3: d.color.transfer = 6; break;   // SDR / SMPTE 170M
+        case 6: d.color.transfer = 16; break;  // ST 2084 / PQ
+        case 7: d.color.transfer = 18; break;  // HLG / ARIB STD-B67
+        default: d.color.transfer = 0; break;
+      }
+      d.color.full_range = i.color_range == 1 ? 1 : 0;
+      d.color.chroma_location = 0;
 
       out = std::make_shared<NativeMediaSurface>(d, owner);
       i.stats.in_flight_images = i.in_flight.load();
