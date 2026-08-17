@@ -56,9 +56,10 @@ Future<void> main(List<String> arguments) async {
     await Directory.fromUri(outputRoot).create(recursive: true);
 
     final cmake = await _findCmake();
-    final androidNinja = targetOs == OS.android
-        ? await _findAndroidNinja(code)
-        : null;
+    Uri? androidNinja;
+    if (targetOs == OS.android) {
+      androidNinja = await _findAndroidNinja(code);
+    }
     final configureArguments = <String>[
       if (androidNinja != null) ...<String>[
         '-G',
@@ -484,11 +485,12 @@ Future<Uri> _findAndroidNinja(CodeConfig code) async {
   );
 
   if (await cmakeRoot.exists()) {
-    final installs = await cmakeRoot
-        .list(followLinks: false)
-        .where((entity) => entity is Directory)
-        .cast<Directory>()
-        .toList();
+    final installs = <Directory>[];
+    await for (final entity in cmakeRoot.list(followLinks: false)) {
+      if (entity is Directory) {
+        installs.add(entity);
+      }
+    }
     installs.sort((a, b) => b.path.compareTo(a.path));
     for (final install in installs) {
       final candidate = File(
