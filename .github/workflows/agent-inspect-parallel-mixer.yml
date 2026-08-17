@@ -1,0 +1,53 @@
+name: Inspect native parallel mixer
+
+on:
+  push:
+    branches:
+      - agent/fix-native-parallel-mixer-20260817
+    paths:
+      - .github/workflows/agent-inspect-parallel-mixer.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print mixer seams
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          files = [
+            'src/gpu/gpu_backend.cpp',
+            'src/gpu/d3d12_backend.cpp',
+            'src/gpu/vulkan_backend.cpp',
+            'src/gpu/gles_backend.cpp',
+            'src/gpu/metal_backend.mm',
+            'src/gpu/native_node_shader_contracts.cpp',
+          ]
+          needles = [
+            'mix_gpu_sources', 'execute_mix_gpu_sources',
+            'supports_native_node_mixer', 'dispatch_node_kernel',
+            'dispatch_node_compute', 'NativeNodeKernel::parallel_mixer',
+            'execute_process_node_operation_gpu'
+          ]
+          for f in files:
+            p=Path(f)
+            print(f'===== {f} =====')
+            text=p.read_text().splitlines()
+            hits=[]
+            for i,line in enumerate(text):
+              if any(n in line for n in needles):
+                hits.append(i)
+            seen=set()
+            for i in hits:
+              a=max(0,i-35); b=min(len(text),i+95)
+              key=(a,b)
+              if key in seen: continue
+              seen.add(key)
+              print(f'--- lines {a+1}-{b} ---')
+              for j in range(a,b): print(f'{j+1:05d}: {text[j]}')
+          PY
