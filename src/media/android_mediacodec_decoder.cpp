@@ -46,6 +46,8 @@ using ImageGetHardwareBufferFn = media_status_t (*)(
     const AImage*, AHardwareBuffer**);
 using HardwareBufferDescribeFn = void (*)(
     const AHardwareBuffer*, AHardwareBuffer_Desc*);
+using MediaCodecGetNameFn = media_status_t (*)(AMediaCodec*, char**);
+using MediaCodecReleaseNameFn = void (*)(AMediaCodec*, char*);
 
 template <typename Fn>
 Fn resolve_android_symbol(const char* name) noexcept {
@@ -84,6 +86,28 @@ const AndroidApi26Symbols& android_api26_symbols() noexcept {
     out.hardware_buffer_describe =
         resolve_android_symbol<HardwareBufferDescribeFn>(
             "AHardwareBuffer_describe");
+    return out;
+  }();
+  return symbols;
+}
+
+struct AndroidApi28Symbols final {
+  MediaCodecGetNameFn media_codec_get_name{};
+  MediaCodecReleaseNameFn media_codec_release_name{};
+
+  [[nodiscard]] bool complete() const noexcept {
+    return media_codec_get_name && media_codec_release_name;
+  }
+};
+
+const AndroidApi28Symbols& android_api28_symbols() noexcept {
+  static const AndroidApi28Symbols symbols = [] {
+    AndroidApi28Symbols out{};
+    out.media_codec_get_name = resolve_android_symbol<MediaCodecGetNameFn>(
+        "AMediaCodec_getName");
+    out.media_codec_release_name =
+        resolve_android_symbol<MediaCodecReleaseNameFn>(
+            "AMediaCodec_releaseName");
     return out;
   }();
   return symbols;
@@ -277,15 +301,32 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
   if (!i.codec)
     return i.fail(DIGITOR_RESULT_UNSUPPORTED,
                   "MediaCodec decoder unavailable for selected MIME type");
-#if __ANDROID_API__ >= 28
+
   if (i.config.strict_zero_copy) {
+    // The plugin intentionally supports Android API 23+, while hardware-codec
+    // identity APIs were added in API 28. A compile-time __ANDROID_API__ guard
+    // therefore reflects the app's minimum API, not the runtime device. Resolve
+    // the API 28 symbols dynamically so a modern device can still qualify the
+    // selected codec without raising the package minimum SDK or weakening the
+    // strict no-software-decoder contract.
+    if (android_get_device_api_level() < 28)
+      return i.fail(
+          DIGITOR_RESULT_UNSUPPORTED,
+          "API 28 is required to qualify MediaCodec hardware identity in strict mode");
+    const auto& api28 = android_api28_symbols();
+    if (!api28.complete())
+      return i.fail(
+          DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+          "required API 28 MediaCodec identity symbols are unavailable");
+
     char* codec_name = nullptr;
-    if (AMediaCodec_getName(i.codec, &codec_name) != AMEDIA_OK || !codec_name)
+    if (api28.media_codec_get_name(i.codec, &codec_name) != AMEDIA_OK ||
+        !codec_name)
       return i.fail(
           DIGITOR_RESULT_UNSUPPORTED,
           "unable to qualify MediaCodec as a hardware decoder");
     std::string name(codec_name);
-    AMediaCodec_releaseName(i.codec, codec_name);
+    api28.media_codec_release_name(i.codec, codec_name);
     std::transform(
         name.begin(), name.end(), name.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -297,12 +338,6 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
           DIGITOR_RESULT_UNSUPPORTED,
           "strict zero-copy rejected a software MediaCodec component");
   }
-#else
-  if (i.config.strict_zero_copy)
-    return i.fail(
-        DIGITOR_RESULT_UNSUPPORTED,
-        "this NDK API cannot qualify hardware codec identity in strict mode");
-#endif
 
   if (AMediaCodec_configure(i.codec, i.track_format, i.window, nullptr, 0) !=
           AMEDIA_OK ||
