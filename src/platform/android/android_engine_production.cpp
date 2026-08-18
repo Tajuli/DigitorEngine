@@ -11,6 +11,7 @@
 #include "digitor/android_mediacodec_decoder.hpp"
 #include "digitor/media.hpp"
 #include "digitor/production_hardware_decode.hpp"
+#include "platform/android/android_gles_flutter_preview.hpp"
 #endif
 
 namespace digitor {
@@ -434,8 +435,15 @@ install_android_engine_production_runtime(
           factory = state.factory;
         }
         if (!factory) {
+#if defined(__ANDROID__)
+          if (backend.backend == DIGITOR_RENDERER_OPENGL_ES) {
+            return make_android_gles_flutter_preview_build(
+                backend, attachment,
+                make_engine_android_decoder_factory(backend), local);
+          }
+#endif
           local =
-              "engine-owned Android production dependencies are not installed";
+              "engine-owned Android production dependencies are not installed and the selected backend has no qualified SurfaceProducer presenter";
           return std::nullopt;
         }
         auto dependencies = factory(backend, attachment, local);
