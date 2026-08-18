@@ -1,14 +1,23 @@
 package com.primedigitor.digitor_engine_ffi
 
+import android.content.ContentValues
+import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.view.Surface
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 
 class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     companion object {
         private const val CHANNEL = "digitor_engine_ffi/platform_host"
+        private const val EXPORT_DIR = "digitor-exports"
         private val SUPPORTED_HANDLE_TYPES = listOf(4, 7, 8, 9)
 
         init {
@@ -25,6 +34,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private lateinit var channel: MethodChannel
     private lateinit var textures: TextureRegistry
+    private lateinit var context: Context
     private val hosts = mutableMapOf<Long, HostTexture>()
 
     private external fun nativeAcquireWindow(surface: Surface): Long
@@ -34,6 +44,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private external fun nativeProductionRegistrarToken(): Long
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        context = binding.applicationContext
         textures = binding.textureRegistry
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
@@ -66,6 +77,9 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     result.success(token)
                 }
             }
+            "prepareExport" -> prepareExport(call, result)
+            "publishExport" -> publishExport(call, result)
+            "discardExport" -> discardExport(call, result)
             "createTexture" -> createTexture(call, result)
             "refreshTextureTarget" -> refreshTextureTarget(call, result)
             "present" -> result.error(
@@ -84,6 +98,132 @@ class DigitorEngineFfiPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 }
             }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun exportStagingDirectory(): File {
+        val directory = File(context.cacheDir, EXPORT_DIR)
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IllegalStateException("Could not create Android export staging directory.")
+        }
+        return directory
+    }
+
+    private fun safeExportName(raw: String?): String {
+        val base = raw
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "digitor-export.mp4"
+        val cleaned = base.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return if (cleaned.lowercase().endsWith(".mp4")) cleaned else "$cleaned.mp4"
+    }
+
+    private fun prepareExport(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val requested = safeExportName(call.argument<String>("displayName"))
+            val stem = requested.removeSuffix(".mp4")
+            val displayName = "$stem-${System.currentTimeMillis()}.mp4"
+            val staging = File(exportStagingDirectory(), displayName)
+            if (staging.exists()) staging.delete()
+            File("${staging.absolutePath}.digitor-partial").delete()
+            result.success(
+                mapOf(
+                    "stagingPath" to staging.absolutePath,
+                    "displayName" to displayName,
+                    "collection" to "Movies/Digitor",
+                ),
+            )
+        } catch (error: Throwable) {
+            result.error("export_staging_failed", error.message ?: "Could not prepare export staging.", null)
+        }
+    }
+
+    private fun validatedStagingFile(path: String?): File {
+        require(!path.isNullOrBlank()) { "stagingPath is required." }
+        val root = exportStagingDirectory().canonicalFile
+        val file = File(path).canonicalFile
+        require(file.parentFile == root) { "Export staging path is outside the plugin cache." }
+        require(file.isFile && file.length() > 0L) { "Encoded staging MP4 is missing or empty." }
+        return file
+    }
+
+    private fun publishExport(call: MethodCall, result: MethodChannel.Result) {
+        var insertedUri: android.net.Uri? = null
+        try {
+            val staging = validatedStagingFile(call.argument<String>("stagingPath"))
+            val displayName = safeExportName(call.argument<String>("displayName") ?: staging.name)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(
+                        MediaStore.Video.Media.RELATIVE_PATH,
+                        "${Environment.DIRECTORY_MOVIES}/Digitor",
+                    )
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                insertedUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("MediaStore could not create the Digitor export item.")
+                resolver.openOutputStream(insertedUri, "w")?.use { output ->
+                    FileInputStream(staging).use { input -> input.copyTo(output) }
+                } ?: throw IllegalStateException("MediaStore export stream is unavailable.")
+                val publishValues = ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }
+                resolver.update(insertedUri, publishValues, null, null)
+                if (!staging.delete()) staging.deleteOnExit()
+                result.success(
+                    mapOf(
+                        "uri" to insertedUri.toString(),
+                        "displayPath" to "${Environment.DIRECTORY_MOVIES}/Digitor/$displayName",
+                        "displayName" to displayName,
+                    ),
+                )
+                return
+            }
+
+            val root = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                ?: throw IllegalStateException("Android external Movies directory is unavailable.")
+            val directory = File(root, "Digitor")
+            if (!directory.exists() && !directory.mkdirs()) {
+                throw IllegalStateException("Could not create the Digitor Movies directory.")
+            }
+            val destination = File(directory, displayName)
+            FileInputStream(staging).use { input ->
+                FileOutputStream(destination, false).use { output -> input.copyTo(output) }
+            }
+            if (!staging.delete()) staging.deleteOnExit()
+            result.success(
+                mapOf(
+                    "uri" to destination.toURI().toString(),
+                    "displayPath" to destination.absolutePath,
+                    "displayName" to displayName,
+                ),
+            )
+        } catch (error: Throwable) {
+            insertedUri?.let { runCatching { context.contentResolver.delete(it, null, null) } }
+            result.error("export_publish_failed", error.message ?: "Could not publish Android export.", null)
+        }
+    }
+
+    private fun discardExport(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val raw = call.argument<String>("stagingPath")
+            if (!raw.isNullOrBlank()) {
+                val root = exportStagingDirectory().canonicalFile
+                val file = File(raw).canonicalFile
+                if (file.parentFile == root) {
+                    file.delete()
+                    File("${file.absolutePath}.digitor-partial").delete()
+                }
+            }
+            result.success(null)
+        } catch (error: Throwable) {
+            result.error("export_discard_failed", error.message ?: "Could not discard Android export staging.", null)
         }
     }
 
