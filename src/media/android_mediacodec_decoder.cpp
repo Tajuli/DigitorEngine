@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -345,6 +346,7 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
   const auto deadline = std::chrono::steady_clock::now() +
       (first_surface ? std::chrono::seconds(5)
                      : std::chrono::milliseconds(750));
+  media_status_t last_acquire_status = AMEDIA_OK;
   while (std::chrono::steady_clock::now() < deadline &&
          !i.cancelled.load()) {
     if (!i.input_eos) {
@@ -410,6 +412,7 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         i.config.scheduling == AndroidDecodeScheduling::realtime_latest
             ? AImageReader_acquireLatestImage(i.reader, &image)
             : AImageReader_acquireNextImage(i.reader, &image);
+    last_acquire_status = acquired;
     if (acquired == AMEDIA_OK && image) {
       AHardwareBuffer* ahb = nullptr;
       int64_t timestamp_ns = 0;
@@ -514,10 +517,20 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
   }
 
   ++i.stats.decoder_stalls;
-  return i.cancelled.load()
-             ? i.fail(DIGITOR_RESULT_RESOURCE_IN_USE, "decoder cancelled")
-             : i.fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                      "decoder frame acquisition timeout");
+  if (i.cancelled.load())
+    return i.fail(DIGITOR_RESULT_RESOURCE_IN_USE, "decoder cancelled");
+
+  char diagnostic[256]{};
+  std::snprintf(
+      diagnostic, sizeof(diagnostic),
+      "decoder frame acquisition timeout: submitted=%llu rendered=%llu "
+      "acquired=%llu lastAcquire=%d inputEos=%d outputEos=%d",
+      static_cast<unsigned long long>(i.stats.submitted_samples),
+      static_cast<unsigned long long>(i.stats.rendered_outputs),
+      static_cast<unsigned long long>(i.stats.acquired_images),
+      static_cast<int>(last_acquire_status), i.input_eos ? 1 : 0,
+      i.output_eos ? 1 : 0);
+  return i.fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, diagnostic);
 #endif
 }
 
