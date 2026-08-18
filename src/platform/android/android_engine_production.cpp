@@ -219,7 +219,8 @@ ProductionDecoderFactory make_engine_android_decoder_factory(
           std::make_unique<AndroidProductionVideoDecoder>(media_path);
       ProductionHardwareDecodeOptions options{};
       options.renderer_backend = renderer_backend;
-      options.render_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
+      options.render_format = /* Android decoder import working format */
+          DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;
       options.require_zero_copy = true;
       options.require_monotonic_timestamps = true;
       auto session = std::make_unique<ProductionHardwareDecodeSession>(
@@ -466,7 +467,3 @@ install_android_engine_production_runtime(
 }
 
 }  // namespace digitor
-
-#if defined(__ANDROID__)
-#include "android_native_provider.cpp"
-#endif
