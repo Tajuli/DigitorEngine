@@ -1,4 +1,4 @@
-name: Apply Android AHB visible crop patch
+name: Apply Android GLES production format patch
 
 on:
   push:
@@ -24,59 +24,77 @@ jobs:
           ref: fix/android-source-preview-fallback
           fetch-depth: 0
 
-      - name: Apply asserted GLES AHardwareBuffer crop patch
+      - name: Apply asserted Android GLES production-format patch
         shell: python
         run: |
           from pathlib import Path
 
-          path = Path('src/gpu/gles_backend.cpp')
-          text = path.read_text()
-
-          replacements = [
-              (
-                  '"precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"\n'
-                  '        "out vec4 color;void main(){color=texture(decoded_frame,uv);}";',
-                  '"precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"\n'
-                  '        "uniform vec2 decoded_scale;"\n'
-                  '        "out vec4 color;void main(){color=texture(decoded_frame,uv*decoded_scale);}";'
-              ),
-              (
-                  'if (ahb_desc.width != descriptor.width || ahb_desc.height != descriptor.height ||\n'
-                  '        ahb_desc.layers != 1 ||',
-                  'if (ahb_desc.width < descriptor.width || ahb_desc.height < descriptor.height ||\n'
-                  '        ahb_desc.layers != 1 ||'
-              ),
-              (
-                  '    glUniform1i(source_location, 0);\n'
-                  '    glDrawArrays(GL_TRIANGLES, 0, 3);',
-                  '    glUniform1i(source_location, 0);\n'
-                  '    const GLint scale_location =\n'
-                  '        glGetUniformLocation(pipeline->program, "decoded_scale");\n'
-                  '    if (scale_location < 0 || !ahb_desc.width || !ahb_desc.height)\n'
-                  '      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;\n'
-                  '    glUniform2f(scale_location,\n'
-                  '                static_cast<GLfloat>(descriptor.width) /\n'
-                  '                    static_cast<GLfloat>(ahb_desc.width),\n'
-                  '                static_cast<GLfloat>(descriptor.height) /\n'
-                  '                    static_cast<GLfloat>(ahb_desc.height));\n'
-                  '    glDrawArrays(GL_TRIANGLES, 0, 3);'
-              ),
-          ]
-
-          for old, new in replacements:
+          def replace_once(path, old, new):
+              text = path.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'expected exactly one match, found {count}: {old[:80]!r}')
-              text = text.replace(old, new, 1)
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}: {old[:100]!r}')
+              path.write_text(text.replace(old, new, 1))
 
-          path.write_text(text)
+          engine = Path('src/platform/android/android_engine_production.cpp')
+          replace_once(
+              engine,
+              '      options.render_format = DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT;',
+              '      options.render_format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;',
+          )
 
-      - name: Commit GLES padding fix
+          gles = Path('src/gpu/gles_backend.cpp')
+          replace_once(
+              gles,
+              'request.output_format != DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT ||\n        request.working_color_space != "linear-rgba")',
+              'request.output_format != DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT ||\n        request.working_color_space != "linear-rgba")',
+          )
+          replace_once(
+              gles,
+              'GpuFailurePoint::OutputResourceStorage, GL_RGBA16F,\n                      static_cast<GLsizei>(descriptor.width),\n                      static_cast<GLsizei>(descriptor.height),\n                      "Android AHardwareBuffer RGBA16F output")',
+              'GpuFailurePoint::OutputResourceStorage, GL_RGBA32F,\n                      static_cast<GLsizei>(descriptor.width),\n                      static_cast<GLsizei>(descriptor.height),\n                      "Android AHardwareBuffer RGBA32F output")',
+          )
+          replace_once(
+              gles,
+              'GpuFrameMetadata{descriptor.width, descriptor.height,\n                         DIGITOR_PIXEL_FORMAT_RGBA16_FLOAT,',
+              'GpuFrameMetadata{descriptor.width, descriptor.height,\n                         DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,',
+          )
+
+          dart = Path('dart/digitor_engine_ffi/lib/src/registered_production_session.dart')
+          old = '''  if (rendererBackend == DigitorBackend.direct3D12.nativeValue) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: DigitorPixelFormat.rgba32Float.nativeValue,
+      colorMetadata: 'linear-rgba32f',
+    );
+  }
+  return DigitorDefaultExportFrameContract(
+    workingFormat: DigitorPixelFormat.rgba16Float.nativeValue,
+    colorMetadata: 'linear-rgba',
+  );'''
+          new = '''  if (rendererBackend == DigitorBackend.direct3D12.nativeValue) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: DigitorPixelFormat.rgba32Float.nativeValue,
+      colorMetadata: 'linear-rgba32f',
+    );
+  }
+  if (rendererBackend == DigitorBackend.openGles.nativeValue) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: DigitorPixelFormat.rgba32Float.nativeValue,
+      colorMetadata: 'linear-rgba',
+    );
+  }
+  return DigitorDefaultExportFrameContract(
+    workingFormat: DigitorPixelFormat.rgba16Float.nativeValue,
+    colorMetadata: 'linear-rgba',
+  );'''
+          replace_once(dart, old, new)
+
+      - name: Commit Android GLES format fix
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/gpu/gles_backend.cpp
+          git add src/platform/android/android_engine_production.cpp src/gpu/gles_backend.cpp dart/digitor_engine_ffi/lib/src/registered_production_session.dart
           git diff --cached --check
-          git commit -m "Handle padded Android AHardwareBuffer visible crop"
+          git commit -m "Align Android GLES frozen export frame format"
           git push origin HEAD:fix/android-source-preview-fallback
