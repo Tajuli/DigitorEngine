@@ -321,7 +321,14 @@ final class DigitorProductionMediaSource {
       out.ref
         ..structSize = sizeOf<_ProductionDecodedFrameInfoNative>()
         ..apiVersion = 1;
-      _check('productionMediaDecode', _mediaDecode(_handle, frameNumber, out));
+      final result = _mediaDecode(_handle, frameNumber, out);
+      if (result != 0) {
+        final diagnostic = _lastNativeError();
+        final operation = diagnostic == null
+            ? 'productionMediaDecode'
+            : 'productionMediaDecode [$diagnostic]';
+        throw DigitorEngineException(operation, result);
+      }
       return DigitorProductionDecodedFrameInfo(
         frameNumber: out.ref.frameNumber,
         pts: Duration(microseconds: out.ref.ptsUs),
@@ -391,6 +398,13 @@ final class DigitorProductionMediaSource {
     _mediaClose(_handle);
     _handle = nullptr;
     _closed = true;
+  }
+
+  String? _lastNativeError() {
+    final value = _mediaGetLastError(_handle);
+    if (value == nullptr) return null;
+    final text = value.toDartString().trim();
+    return text.isEmpty ? null : text;
   }
 
   void _ensureOpen() {
@@ -637,6 +651,13 @@ external int _mediaDecode(
 external int _mediaGetNativeSurface(
   Pointer<_ProductionMediaSourceNative> source,
   Pointer<_ProductionNativeSurfaceNative> outSurface,
+);
+
+@Native<Pointer<Utf8> Function(Pointer<_ProductionMediaSourceNative>)>(
+  symbol: 'digitor_production_media_get_last_error',
+)
+external Pointer<Utf8> _mediaGetLastError(
+  Pointer<_ProductionMediaSourceNative> source,
 );
 
 @Native<Void Function(Pointer<_ProductionMediaSourceNative>)>(
