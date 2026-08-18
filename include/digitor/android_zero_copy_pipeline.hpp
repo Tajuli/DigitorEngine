@@ -46,6 +46,11 @@ struct AndroidHardwareBufferFrame {
   std::int64_t timestamp_us{};
   std::uint64_t frame_identity{};
   std::shared_ptr<void> decoder_lifetime;
+  // Canonical ISO/FFmpeg-style color IDs propagated by the native decoder.
+  // Keep these separate from Android MediaFormat enums, whose numeric values
+  // are not compatible with the engine's cross-platform color metadata IDs.
+  std::int32_t primaries{};
+  std::int32_t transfer{};
 };
 
 struct AndroidZeroCopyConfig {
