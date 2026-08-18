@@ -6,6 +6,7 @@
 #include "digitor/native_preview_presentation.hpp"
 #include "gpu/backend_production_capability.hpp"
 #include "gpu/gpu_backend.hpp"
+#include "android_gles_mediacodec_encoder.hpp"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -268,9 +269,10 @@ make_android_gles_flutter_preview_build(
 
   auto* renderer = const_cast<IRenderBackend*>(
       static_cast<const IRenderBackend*>(backend.frame_context_identity));
+  const auto egl_display = static_cast<EGLDisplay>(resources->egl_display);
+  const auto egl_context = static_cast<EGLContext>(resources->egl_context);
   auto target = std::make_shared<AndroidGlesFlutterTarget>(
-      static_cast<EGLDisplay>(resources->egl_display),
-      static_cast<EGLContext>(resources->egl_context), renderer);
+      egl_display, egl_context, renderer);
   auto host = std::make_shared<AndroidGlesFlutterPreviewHost>(
       attachment.flutter_texture_registrar, backend.frame_context_identity,
       target);
@@ -341,7 +343,10 @@ make_android_gles_flutter_preview_build(
       (std::uint64_t{1} << DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT);
   preview.selected_mode = DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
 
-  build.encoder_backend = EncoderBackend::software;
+  build.encoder_factory =
+      android_gles_mediacodec_detail::make_android_gles_mediacodec_encoder_factory(
+          egl_display, egl_context, renderer, backend.frame_context_identity);
+  build.encoder_backend = EncoderBackend::media_codec;
   build.required_device_identity = static_cast<std::uint64_t>(
       reinterpret_cast<std::uintptr_t>(backend.frame_context_identity));
   build.required_context_identity = backend.context_identity;
