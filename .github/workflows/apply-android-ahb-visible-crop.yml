@@ -1,0 +1,77 @@
+name: Apply Android AHB visible crop patch
+
+on:
+  push:
+    branches:
+      - fix/android-source-preview-fallback
+    paths:
+      - .github/workflows/apply-android-ahb-visible-crop.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/android-source-preview-fallback
+          fetch-depth: 0
+
+      - name: Apply asserted GLES AHardwareBuffer crop patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/gpu/gles_backend.cpp')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '"precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"\n'
+                  '        "out vec4 color;void main(){color=texture(decoded_frame,uv);}";',
+                  '"precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"\n'
+                  '        "uniform vec2 decoded_scale;"\n'
+                  '        "out vec4 color;void main(){color=texture(decoded_frame,uv*decoded_scale);}";'
+              ),
+              (
+                  'if (ahb_desc.width != descriptor.width || ahb_desc.height != descriptor.height ||\n'
+                  '        ahb_desc.layers != 1 ||',
+                  'if (ahb_desc.width < descriptor.width || ahb_desc.height < descriptor.height ||\n'
+                  '        ahb_desc.layers != 1 ||'
+              ),
+              (
+                  '    glUniform1i(source_location, 0);\n'
+                  '    glDrawArrays(GL_TRIANGLES, 0, 3);',
+                  '    glUniform1i(source_location, 0);\n'
+                  '    const GLint scale_location =\n'
+                  '        glGetUniformLocation(pipeline->program, "decoded_scale");\n'
+                  '    if (scale_location < 0 || !ahb_desc.width || !ahb_desc.height)\n'
+                  '      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;\n'
+                  '    glUniform2f(scale_location,\n'
+                  '                static_cast<GLfloat>(descriptor.width) /\n'
+                  '                    static_cast<GLfloat>(ahb_desc.width),\n'
+                  '                static_cast<GLfloat>(descriptor.height) /\n'
+                  '                    static_cast<GLfloat>(ahb_desc.height));\n'
+                  '    glDrawArrays(GL_TRIANGLES, 0, 3);'
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, found {count}: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+
+      - name: Commit GLES padding fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/gpu/gles_backend.cpp
+          git diff --cached --check
+          git commit -m "Handle padded Android AHardwareBuffer visible crop"
+          git push origin HEAD:fix/android-source-preview-fallback
