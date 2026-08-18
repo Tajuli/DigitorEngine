@@ -153,30 +153,30 @@ final class DigitorEditorWorkspace {
     _productionSession?.dispose();
     _productionSession = null;
     final snapshot = _mediaPipeline.open(path);
+    _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
-      // The auxiliary media facade is used only to obtain immutable metadata
-      // (dimensions, duration and source frame timing). Keeping it open while
-      // the registered production session starts would hold a second Android
-      // MediaCodec decoder for the same source. Some devices expose only one
-      // usable hardware AVC decoder instance, causing createRegistered to fail
-      // with BACKEND_UNAVAILABLE. Release the auxiliary decoder before opening
-      // the strict production path and retain only metadata safe after close.
-      final metadata = DigitorProductionMediaSnapshot(
-        path: snapshot.path,
-        decoder: snapshot.decoder,
-        firstFrame: snapshot.firstFrame,
-        duration: snapshot.duration,
-        nativeSurface: null,
-        strictGpuPath: snapshot.strictGpuPath,
-      );
-      _mediaPipeline.clear();
-      _media = metadata;
+      if (Platform.isAndroid) {
+        // The auxiliary media facade is used only to obtain immutable metadata
+        // (dimensions, duration and source frame timing). Keeping it open while
+        // the registered production session starts would hold a second Android
+        // MediaCodec decoder for the same source. Some devices expose only one
+        // usable hardware AVC decoder instance, causing createRegistered to fail
+        // with BACKEND_UNAVAILABLE. Release the auxiliary decoder before opening
+        // the strict production path and retain only metadata safe after close.
+        _media = DigitorProductionMediaSnapshot(
+          path: snapshot.path,
+          decoder: snapshot.decoder,
+          firstFrame: snapshot.firstFrame,
+          duration: snapshot.duration,
+          nativeSurface: null,
+          strictGpuPath: snapshot.strictGpuPath,
+        );
+        _mediaPipeline.clear();
+      }
       _productionSession = DigitorRegisteredProductionSession.open(
         mediaPath: path,
         nodeGraph: _graph,
       );
-    } else {
-      _media = snapshot;
     }
     final media = _media!;
     _timeline.attachMedia(path);
