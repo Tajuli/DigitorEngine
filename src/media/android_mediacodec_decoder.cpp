@@ -443,6 +443,21 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         AMediaFormat_getInt32(output_format, "color-standard", &i.color_standard);
         AMediaFormat_getInt32(output_format, "color-range", &i.color_range);
         AMediaFormat_getInt32(output_format, "color-transfer", &i.color_transfer);
+
+        // MediaCodec is allowed to back a visible frame with an aligned/padded
+        // GraphicBuffer (for example 1920x1080 video in a 1920x1088 AHB).
+        // Preserve the codec's visible crop as the production frame geometry;
+        // allocation geometry is validated separately when the AHB arrives.
+        int32_t crop_left = 0, crop_top = 0, crop_right = -1, crop_bottom = -1;
+        if (AMediaFormat_getInt32(output_format, "crop-left", &crop_left) &&
+            AMediaFormat_getInt32(output_format, "crop-top", &crop_top) &&
+            AMediaFormat_getInt32(output_format, "crop-right", &crop_right) &&
+            AMediaFormat_getInt32(output_format, "crop-bottom", &crop_bottom) &&
+            crop_left >= 0 && crop_top >= 0 && crop_right >= crop_left &&
+            crop_bottom >= crop_top) {
+          i.width = static_cast<std::uint32_t>(crop_right - crop_left + 1);
+          i.height = static_cast<std::uint32_t>(crop_bottom - crop_top + 1);
+        }
         AMediaFormat_delete(output_format);
       }
     }
@@ -497,6 +512,12 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
             DIGITOR_RESULT_UNSUPPORTED,
             "protected decoder output is not supported by the editing pipeline");
       }
+      if (!i.width || !i.height || desc.width < i.width || desc.height < i.height) {
+        AImage_delete(image);
+        return i.fail(
+            DIGITOR_RESULT_BACKEND_UNAVAILABLE,
+            "decoder AHardwareBuffer allocation is smaller than visible video dimensions");
+      }
 
       i.in_flight.fetch_add(1);
       ++i.stats.acquired_images;
@@ -518,8 +539,10 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       d.platform = NativeMediaPlatform::android;
       d.handle_type = NativeMediaHandleType::ahardware_buffer;
       d.pixel_format = format;
-      d.width = desc.width;
-      d.height = desc.height;
+      // width/height are visible media geometry. Vendor GraphicBuffer/AHB
+      // alignment belongs to the native backing allocation and may be larger.
+      d.width = i.width;
+      d.height = i.height;
       d.plane_count = 2;
       d.native_handle = reinterpret_cast<std::uintptr_t>(ahb);
       d.native_device = 0;
