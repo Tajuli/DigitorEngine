@@ -6,6 +6,11 @@ on:
       - fix/android-source-preview-fallback
     paths:
       - .github/workflows/apply-android-ahb-visible-crop.yml
+  pull_request:
+    branches:
+      - agent/fix-android-native-assets-ninja-20260818
+    paths:
+      - .github/workflows/apply-android-ahb-visible-crop.yml
 
 permissions:
   contents: write
