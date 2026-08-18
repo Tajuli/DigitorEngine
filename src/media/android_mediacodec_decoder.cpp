@@ -99,6 +99,17 @@ NativeMediaPixelFormat native_format(std::uint32_t format) noexcept {
   if (format == AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420 ||
       format == kImplementationDefinedAhbFormat)
     return NativeMediaPixelFormat::nv12;
+
+  // PRIVATE MediaCodec/AImageReader output is allowed to use a vendor/HAL
+  // implementation-defined AHardwareBuffer format that has no public NDK enum.
+  // The Android Vulkan importer does not reinterpret the physical layout as
+  // linear NV12: it queries vkGetAndroidHardwareBufferPropertiesANDROID and
+  // uses the returned VkFormat/externalFormat + sampler YCbCr conversion. The
+  // media descriptor's NV12 value is therefore the logical 8-bit 4:2:0 model
+  // for the current Android decoder contract, not a claim about vendor tiling.
+  // Keep zero invalid so a genuinely malformed descriptor is still rejected.
+  if (format != 0)
+    return NativeMediaPixelFormat::nv12;
 #else
   (void)format;
 #endif
@@ -426,12 +437,24 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       AHardwareBuffer_Desc desc{};
       api26.hardware_buffer_describe(ahb, &desc);
       const auto format = native_format(desc.format);
-      if (format == NativeMediaPixelFormat::unknown ||
-          !(desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
+      if (!(desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
+        char diagnostic[192]{};
+        std::snprintf(
+            diagnostic, sizeof(diagnostic),
+            "decoder AHardwareBuffer is not GPU-sampleable: format=0x%x usage=0x%llx",
+            static_cast<unsigned int>(desc.format),
+            static_cast<unsigned long long>(desc.usage));
         AImage_delete(image);
-        return i.fail(
-            DIGITOR_RESULT_UNSUPPORTED,
-            "decoder returned unsupported or non-GPU-sampleable hardware-buffer format");
+        return i.fail(DIGITOR_RESULT_UNSUPPORTED, diagnostic);
+      }
+      if (format == NativeMediaPixelFormat::unknown) {
+        char diagnostic[160]{};
+        std::snprintf(
+            diagnostic, sizeof(diagnostic),
+            "decoder returned invalid PRIVATE AHardwareBuffer format=0x%x",
+            static_cast<unsigned int>(desc.format));
+        AImage_delete(image);
+        return i.fail(DIGITOR_RESULT_UNSUPPORTED, diagnostic);
       }
       if (desc.usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT) {
         AImage_delete(image);
