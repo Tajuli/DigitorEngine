@@ -328,8 +328,9 @@ final class DigitorRegisteredProductionSession {
         'The production graph changed after the last preview. Render a fresh preview before freezing export.',
       );
     }
-    final currentPreviewContract =
-        previewContractIsCurrent ? _lastPreviewFrameContract : null;
+    final currentPreviewContract = previewContractIsCurrent
+        ? _lastPreviewFrameContract
+        : null;
 
     previewConsumed();
     bindNodeGraph();
