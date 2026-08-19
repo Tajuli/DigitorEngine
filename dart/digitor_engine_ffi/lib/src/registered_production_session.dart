@@ -21,9 +21,10 @@ final class DigitorDefaultExportFrameContract {
 /// Resolves the default frozen frame contract for a renderer.
 ///
 /// D3D12 production media is decoded/processed as canonical RGBA32F and
-/// carries the `linear-rgba32f` color identity. Keep the legacy defaults for
-/// other renderers until their platform export contracts opt into a different
-/// canonical working representation.
+/// carries the `linear-rgba32f` color identity. Other renderers keep their
+/// conservative defaults when no current production-preview contract exists.
+/// Once a preview is rendered, export freezes that exact processed GPU format
+/// so strict preview/export parity does not depend on a backend-wide guess.
 DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   int rendererBackend,
 ) {
@@ -36,6 +37,26 @@ DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   return DigitorDefaultExportFrameContract(
     workingFormat: DigitorPixelFormat.rgba16Float.nativeValue,
     colorMetadata: 'linear-rgba',
+  );
+}
+
+DigitorDefaultExportFrameContract _previewFrameContract(
+  DigitorPixelFormat format,
+) {
+  if (format == DigitorPixelFormat.rgba32Float) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: format.nativeValue,
+      colorMetadata: 'linear-rgba32f',
+    );
+  }
+  if (format == DigitorPixelFormat.rgba16Float) {
+    return DigitorDefaultExportFrameContract(
+      workingFormat: format.nativeValue,
+      colorMetadata: 'linear-rgba',
+    );
+  }
+  throw StateError(
+    'Production preview returned an unsupported export working format: ${format.name}.',
   );
 }
 
@@ -104,6 +125,9 @@ final class DigitorRegisteredProductionSession {
   Pointer<DigitorFlutterProductionSessionNative> _handle;
   final DigitorNodeGraph _graph;
   int? _outstandingPreviewGeneration;
+  DigitorDefaultExportFrameContract? _lastPreviewFrameContract;
+  int? _lastPreviewGraphRevision;
+  int? _lastPreviewParameterRevision;
   bool _disposed = false;
 
   void bindNodeGraph() {
@@ -242,6 +266,9 @@ final class DigitorRegisteredProductionSession {
         protectedContent: value.protectedContent != 0,
         readiness: DigitorNativeTextureReadiness.fromNative(value.readiness),
       );
+      _lastPreviewFrameContract = _previewFrameContract(frame.pixelFormat);
+      _lastPreviewGraphRevision = _graph.graphRevision;
+      _lastPreviewParameterRevision = _graph.parameterRevision;
       _outstandingPreviewGeneration = frame.generation;
       return frame;
     } finally {
@@ -289,6 +316,21 @@ final class DigitorRegisteredProductionSession {
     void Function(DigitorExportProgress progress)? onProgress,
   }) {
     _ensureAlive();
+
+    final previewContractIsCurrent =
+        _lastPreviewFrameContract != null &&
+        _lastPreviewGraphRevision == nodeGraphRevision &&
+        _lastPreviewParameterRevision == colorPipelineRevision;
+    final hasStalePreviewContract =
+        _lastPreviewFrameContract != null && !previewContractIsCurrent;
+    if (workingFormat == null && hasStalePreviewContract) {
+      throw StateError(
+        'The production graph changed after the last preview. Render a fresh preview before freezing export.',
+      );
+    }
+    final currentPreviewContract =
+        previewContractIsCurrent ? _lastPreviewFrameContract : null;
+
     previewConsumed();
     bindNodeGraph();
     if (firstFrame < 0 || lastFrame < firstFrame || width <= 0 || height <= 0) {
@@ -298,9 +340,13 @@ final class DigitorRegisteredProductionSession {
       digitorCurrentRendererBackendForExport(),
     );
     final resolvedWorkingFormat =
-        workingFormat ?? defaultFrameContract.workingFormat;
+        workingFormat ??
+        currentPreviewContract?.workingFormat ??
+        defaultFrameContract.workingFormat;
     final resolvedColorMetadata =
-        colorMetadata ?? defaultFrameContract.colorMetadata;
+        colorMetadata ??
+        currentPreviewContract?.colorMetadata ??
+        defaultFrameContract.colorMetadata;
     if (snapshotIdentity <= 0 ||
         timelineRevision <= 0 ||
         renderRevision <= 0 ||
