@@ -1,0 +1,59 @@
+name: Fix PR 388 qualification failures
+
+on:
+  push:
+    branches:
+      - fix/android-source-preview-fallback
+    paths:
+      - .github/workflows/fix-pr-388-ci.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/android-source-preview-fallback
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Add Android native provider to production native asset
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('CMakeLists.txt')
+          text = path.read_text()
+          marker = '''    target_sources(digitor_engine PRIVATE
+              src/platform/android/android_native_provider.cpp
+              src/media/android_mediacodec_decoder.cpp'''
+          if marker not in text:
+              old = '''    target_sources(digitor_engine PRIVATE
+              src/media/android_mediacodec_decoder.cpp'''
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected Android target source block once, found {text.count(old)}')
+              text = text.replace(old, marker, 1)
+              path.write_text(text)
+
+      - name: Format Dart production session
+        run: dart format dart/digitor_engine_ffi/lib/src/registered_production_session.dart
+
+      - name: Commit qualification fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt dart/digitor_engine_ffi/lib/src/registered_production_session.dart
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "PR #388 qualification fixes already applied"
+            exit 0
+          fi
+          git commit -m "Fix PR 388 Flutter plugin qualification"
+          git push origin HEAD:fix/android-source-preview-fallback
