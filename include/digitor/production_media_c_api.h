@@ -129,6 +129,10 @@ DIGITOR_MEDIA_API int32_t digitor_production_media_decode(
 DIGITOR_MEDIA_API int32_t digitor_production_media_get_native_surface(
     const DigitorProductionMediaSource* source,
     DigitorProductionNativeSurfaceDescriptor* out_surface);
+/* Borrowed UTF-8 diagnostic for the last source operation. The pointer remains
+ * valid until the next mutating source operation or source close. */
+DIGITOR_MEDIA_API const char* digitor_production_media_get_last_error(
+    const DigitorProductionMediaSource* source);
 DIGITOR_MEDIA_API void digitor_production_media_close(
     DigitorProductionMediaSource* source);
 DIGITOR_MEDIA_API uint8_t digitor_production_media_ffmpeg_available(void);

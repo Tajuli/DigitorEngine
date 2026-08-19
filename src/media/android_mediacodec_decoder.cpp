@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -16,6 +17,8 @@
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaExtractor.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -96,6 +99,17 @@ NativeMediaPixelFormat native_format(std::uint32_t format) noexcept {
   if (format == AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420 ||
       format == kImplementationDefinedAhbFormat)
     return NativeMediaPixelFormat::nv12;
+
+  // PRIVATE MediaCodec/AImageReader output is allowed to use a vendor/HAL
+  // implementation-defined AHardwareBuffer format that has no public NDK enum.
+  // The Android Vulkan importer does not reinterpret the physical layout as
+  // linear NV12: it queries vkGetAndroidHardwareBufferPropertiesANDROID and
+  // uses the returned VkFormat/externalFormat + sampler YCbCr conversion. The
+  // media descriptor's NV12 value is therefore the logical 8-bit 4:2:0 model
+  // for the current Android decoder contract, not a claim about vendor tiling.
+  // Keep zero invalid so a genuinely malformed descriptor is still rejected.
+  if (format != 0)
+    return NativeMediaPixelFormat::nv12;
 #else
   (void)format;
 #endif
@@ -121,6 +135,7 @@ struct AndroidMediaCodecAhbDecoder::Impl {
   ANativeWindow* window{};
   AMediaFormat* track_format{};
   std::uint32_t width{}, height{};
+  std::int32_t color_standard{}, color_range{}, color_transfer{};
   bool input_eos{}, output_eos{};
 
   void close() noexcept {
@@ -129,10 +144,9 @@ struct AndroidMediaCodecAhbDecoder::Impl {
       AMediaCodec_delete(codec);
       codec = nullptr;
     }
-    if (window) {
-      ANativeWindow_release(window);
-      window = nullptr;
-    }
+    // AImageReader_getWindow returns a window managed by the reader.
+    // Do not release it independently; deleting the reader owns that lifetime.
+    window = nullptr;
     if (reader) {
       AImageReader_delete(reader);
       reader = nullptr;
@@ -192,11 +206,28 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
   i.caps.output_handle_type = "AHardwareBuffer";
 
   i.extractor = AMediaExtractor_new();
-  if (!i.extractor ||
-      AMediaExtractor_setDataSource(i.extractor, i.config.media_path.c_str()) !=
-          AMEDIA_OK)
+  if (!i.extractor)
     return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
-                  "AMediaExtractor could not open media source");
+                  "AMediaExtractor allocation failed");
+
+  const int source_fd =
+      ::open(i.config.media_path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (source_fd < 0)
+    return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
+                  "could not open local Android media file");
+
+  struct stat source_stat {};
+  if (::fstat(source_fd, &source_stat) != 0 || source_stat.st_size <= 0) {
+    ::close(source_fd);
+    return i.fail(DIGITOR_RESULT_INVALID_ARGUMENT,
+                  "Android media file is empty or unreadable");
+  }
+  const auto source_status = AMediaExtractor_setDataSourceFd(
+      i.extractor, source_fd, 0, static_cast<off64_t>(source_stat.st_size));
+  ::close(source_fd);
+  if (source_status != AMEDIA_OK)
+    return i.fail(DIGITOR_RESULT_NOT_INITIALIZED,
+                  "AMediaExtractor could not open local media file descriptor");
 
   const auto tracks = AMediaExtractor_getTrackCount(i.extractor);
   const char* mime = nullptr;
@@ -217,6 +248,13 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
     return i.fail(DIGITOR_RESULT_UNSUPPORTED,
                   "no supported AVC, HEVC, VP9, or AV1 video track");
 
+  // Preserve the media color description instead of assuming BT.709 SDR.
+  // Android MediaFormat values are mapped below into the canonical color IDs
+  // used by NativeMediaColorMetadata across all platform decoders.
+  AMediaFormat_getInt32(i.track_format, "color-standard", &i.color_standard);
+  AMediaFormat_getInt32(i.track_format, "color-range", &i.color_range);
+  AMediaFormat_getInt32(i.track_format, "color-transfer", &i.color_transfer);
+
   int32_t w = 0, h = 0;
   if (!AMediaFormat_getInt32(i.track_format, AMEDIAFORMAT_KEY_WIDTH, &w) ||
       !AMediaFormat_getInt32(i.track_format, AMEDIAFORMAT_KEY_HEIGHT, &h) ||
@@ -234,7 +272,6 @@ DigitorResult AndroidMediaCodecAhbDecoder::initialize() noexcept {
     return i.fail(
         DIGITOR_RESULT_BACKEND_UNAVAILABLE,
         "GPU-sampleable PRIVATE AImageReader surface creation failed");
-  ANativeWindow_acquire(i.window);
 
   i.codec = AMediaCodec_createDecoderByType(mime);
   if (!i.codec)
@@ -313,8 +350,14 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         DIGITOR_RESULT_BACKEND_UNAVAILABLE,
         "required API 26 AImageReader/AHardwareBuffer symbols are unavailable");
 
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+  // Hardware codecs on real devices can need substantially longer for the
+  // first Surface/AImageReader frame than for steady-state playback. Keep the
+  // strict GPU path, but do not misclassify normal vendor startup as failure.
+  const bool first_surface = i.stats.acquired_images == 0;
+  const auto deadline = std::chrono::steady_clock::now() +
+      (first_surface ? std::chrono::seconds(5)
+                     : std::chrono::milliseconds(750));
+  media_status_t last_acquire_status = AMEDIA_OK;
   while (std::chrono::steady_clock::now() < deadline &&
          !i.cancelled.load()) {
     if (!i.input_eos) {
@@ -358,20 +401,34 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
         i.output_eos = true;
         i.stats.eos_drained = true;
       }
+    } else if (output_index == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
+      auto* output_format = AMediaCodec_getOutputFormat(i.codec);
+      if (output_format) {
+        // Prefer decoder-resolved output aspects when the codec supplies them.
+        AMediaFormat_getInt32(output_format, "color-standard", &i.color_standard);
+        AMediaFormat_getInt32(output_format, "color-range", &i.color_range);
+        AMediaFormat_getInt32(output_format, "color-transfer", &i.color_transfer);
+        AMediaFormat_delete(output_format);
+      }
     }
 
+    // The asynchronous AImageReader APIs return an acquire fence that must be
+    // signaled before the returned AImage may be accessed. This decoder is a
+    // frame-accurate producer and immediately needs the AHardwareBuffer, so use
+    // the synchronous acquire APIs: they perform that synchronization without
+    // introducing a CPU pixel readback or changing the PRIVATE/AHB zero-copy
+    // path. This also avoids vendor-specific races during first-frame startup.
     AImage* image = nullptr;
-    int fence_fd = -1;
     const media_status_t acquired =
         i.config.scheduling == AndroidDecodeScheduling::realtime_latest
-            ? api26.acquire_latest_image_async(i.reader, &image, &fence_fd)
-            : api26.acquire_next_image_async(i.reader, &image, &fence_fd);
+            ? AImageReader_acquireLatestImage(i.reader, &image)
+            : AImageReader_acquireNextImage(i.reader, &image);
+    last_acquire_status = acquired;
     if (acquired == AMEDIA_OK && image) {
       AHardwareBuffer* ahb = nullptr;
       int64_t timestamp_ns = 0;
       AImage_getTimestamp(image, &timestamp_ns);
       if (api26.image_get_hardware_buffer(image, &ahb) != AMEDIA_OK || !ahb) {
-        if (fence_fd >= 0) ::close(fence_fd);
         AImage_delete(image);
         return i.fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                       "AImage has no AHardwareBuffer");
@@ -380,16 +437,26 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       AHardwareBuffer_Desc desc{};
       api26.hardware_buffer_describe(ahb, &desc);
       const auto format = native_format(desc.format);
-      if (format == NativeMediaPixelFormat::unknown ||
-          !(desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
-        if (fence_fd >= 0) ::close(fence_fd);
+      if (!(desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
+        char diagnostic[192]{};
+        std::snprintf(
+            diagnostic, sizeof(diagnostic),
+            "decoder AHardwareBuffer is not GPU-sampleable: format=0x%x usage=0x%llx",
+            static_cast<unsigned int>(desc.format),
+            static_cast<unsigned long long>(desc.usage));
         AImage_delete(image);
-        return i.fail(
-            DIGITOR_RESULT_UNSUPPORTED,
-            "decoder returned unsupported or non-GPU-sampleable hardware-buffer format");
+        return i.fail(DIGITOR_RESULT_UNSUPPORTED, diagnostic);
+      }
+      if (format == NativeMediaPixelFormat::unknown) {
+        char diagnostic[160]{};
+        std::snprintf(
+            diagnostic, sizeof(diagnostic),
+            "decoder returned invalid PRIVATE AHardwareBuffer format=0x%x",
+            static_cast<unsigned int>(desc.format));
+        AImage_delete(image);
+        return i.fail(DIGITOR_RESULT_UNSUPPORTED, diagnostic);
       }
       if (desc.usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT) {
-        if (fence_fd >= 0) ::close(fence_fd);
         AImage_delete(image);
         return i.fail(
             DIGITOR_RESULT_UNSUPPORTED,
@@ -400,17 +467,14 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       ++i.stats.acquired_images;
       struct Owner {
         AImage* image{};
-        int fence{-1};
         std::shared_ptr<Impl> session;
         ~Owner() {
-          if (fence >= 0) ::close(fence);
           if (image) AImage_delete(image);
           session->in_flight.fetch_sub(1);
         }
       };
       auto owner = std::make_shared<Owner>();
       owner->image = image;
-      owner->fence = fence_fd;
       owner->session = self;
 
       NativeMediaSurfaceDescriptor d{};
@@ -427,20 +491,47 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
       d.allocation_size =
           static_cast<std::uint64_t>(desc.height) * desc.stride;
       d.timestamp_us = timestamp_ns / 1000;
-      if (fence_fd >= 0) {
-        d.acquire_sync.type = NativeMediaSyncType::sync_fd;
-        d.acquire_sync.handle = static_cast<std::uintptr_t>(fence_fd);
+      // NativeMediaColorMetadata uses the same canonical numeric IDs as
+      // FFmpeg/ISO color metadata on the other platform decoders. Do not pass
+      // Android MediaFormat enums through directly because their numeric IDs
+      // differ for transfer characteristics and BT.2020.
+      switch (i.color_standard) {
+        case 1:  // MediaFormat.COLOR_STANDARD_BT709
+          d.color.primaries = 1;  // AVCOL_PRI_BT709
+          d.color.matrix = 1;     // AVCOL_SPC_BT709
+          break;
+        case 2:  // MediaFormat.COLOR_STANDARD_BT601_PAL
+          d.color.primaries = 5;  // AVCOL_PRI_BT470BG
+          d.color.matrix = 5;     // AVCOL_SPC_BT470BG
+          break;
+        case 4:  // MediaFormat.COLOR_STANDARD_BT601_NTSC
+          d.color.primaries = 6;  // AVCOL_PRI_SMPTE170M
+          d.color.matrix = 6;     // AVCOL_SPC_SMPTE170M
+          break;
+        case 6:  // MediaFormat.COLOR_STANDARD_BT2020
+          d.color.primaries = 9;  // AVCOL_PRI_BT2020
+          d.color.matrix = 9;     // AVCOL_SPC_BT2020_NCL
+          break;
+        default:
+          d.color.primaries = 0;
+          d.color.matrix = 0;
+          break;
       }
-      d.color.full_range = 0;
-      d.color.matrix = 1;
-      d.color.primaries = 1;
-      d.color.transfer = 1;
+      switch (i.color_transfer) {
+        case 1: d.color.transfer = 8; break;   // linear
+        case 2: d.color.transfer = 13; break;  // sRGB / IEC 61966-2-1
+        case 3: d.color.transfer = 6; break;   // SDR / SMPTE 170M
+        case 6: d.color.transfer = 16; break;  // ST 2084 / PQ
+        case 7: d.color.transfer = 18; break;  // HLG / ARIB STD-B67
+        default: d.color.transfer = 0; break;
+      }
+      d.color.full_range = i.color_range == 1 ? 1 : 0;
+      d.color.chroma_location = 0;
 
       out = std::make_shared<NativeMediaSurface>(d, owner);
       i.stats.in_flight_images = i.in_flight.load();
       return DIGITOR_RESULT_OK;
     }
-    if (fence_fd >= 0) ::close(fence_fd);
     if (image) AImage_delete(image);
 
     if (i.output_eos)
@@ -449,10 +540,20 @@ DigitorResult AndroidMediaCodecAhbDecoder::decode_next(
   }
 
   ++i.stats.decoder_stalls;
-  return i.cancelled.load()
-             ? i.fail(DIGITOR_RESULT_RESOURCE_IN_USE, "decoder cancelled")
-             : i.fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                      "decoder frame acquisition timeout");
+  if (i.cancelled.load())
+    return i.fail(DIGITOR_RESULT_RESOURCE_IN_USE, "decoder cancelled");
+
+  char diagnostic[256]{};
+  std::snprintf(
+      diagnostic, sizeof(diagnostic),
+      "decoder frame acquisition timeout: submitted=%llu rendered=%llu "
+      "acquired=%llu lastAcquire=%d inputEos=%d outputEos=%d",
+      static_cast<unsigned long long>(i.stats.submitted_samples),
+      static_cast<unsigned long long>(i.stats.rendered_outputs),
+      static_cast<unsigned long long>(i.stats.acquired_images),
+      static_cast<int>(last_acquire_status), i.input_eos ? 1 : 0,
+      i.output_eos ? 1 : 0);
+  return i.fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE, diagnostic);
 #endif
 }
 

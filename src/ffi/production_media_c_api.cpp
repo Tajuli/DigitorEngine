@@ -22,6 +22,7 @@ struct DigitorProductionMediaSource {
   std::unique_ptr<digitor::VideoDecoder> decoder;
   std::shared_ptr<digitor::VideoFrame> current_frame;
   int64_t duration_us{};
+  char last_error[512]{};
 };
 
 namespace {
@@ -78,6 +79,16 @@ void copy_string(char* output, size_t capacity, const std::string& value) noexce
   const auto count = std::min(capacity - 1, value.size());
   std::memcpy(output, value.data(), count);
   output[count] = '\0';
+}
+
+void set_last_error(DigitorProductionMediaSource* source,
+                    const char* value) noexcept {
+  if (!source) return;
+  if (!value) value = "";
+  const auto count =
+      std::min(sizeof(source->last_error) - 1, std::strlen(value));
+  if (count) std::memcpy(source->last_error, value, count);
+  source->last_error[count] = '\0';
 }
 
 int64_t probe_duration_us(const char* path) noexcept {
@@ -228,6 +239,7 @@ int32_t digitor_production_media_seek(
   return guard([&]() -> DigitorResult {
     source->current_frame.reset();
     source->decoder->seek(pts_us);
+    set_last_error(source, "");
     return DIGITOR_RESULT_OK;
   });
 }
@@ -240,9 +252,12 @@ int32_t digitor_production_media_decode(
       !valid_frame_output(out_frame)) {
     return DIGITOR_RESULT_INVALID_ARGUMENT;
   }
-  return guard([&]() -> DigitorResult {
+
+  set_last_error(source, "");
+  try {
     auto frame = source->decoder->decode(frame_number);
     if (!frame) {
+      set_last_error(source, "production decoder returned no frame");
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }
     source->current_frame = frame;
@@ -260,7 +275,22 @@ int32_t digitor_production_media_decode(
     out_frame->gpu_resident = frame->gpu_resident() ? 1u : 0u;
     out_frame->cpu_resident = frame->cpu_resident() ? 1u : 0u;
     return DIGITOR_RESULT_OK;
-  });
+  } catch (const std::bad_alloc&) {
+    set_last_error(source, "out of memory decoding production media frame");
+    return DIGITOR_RESULT_OUT_OF_MEMORY;
+  } catch (const std::invalid_argument& error) {
+    set_last_error(source, error.what());
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  } catch (const std::out_of_range& error) {
+    set_last_error(source, error.what());
+    return DIGITOR_RESULT_INVALID_ARGUMENT;
+  } catch (const std::exception& error) {
+    set_last_error(source, error.what());
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  } catch (...) {
+    set_last_error(source, "unknown production media decode failure");
+    return DIGITOR_RESULT_INTERNAL_ERROR;
+  }
 }
 
 int32_t digitor_production_media_get_native_surface(
@@ -306,6 +336,11 @@ int32_t digitor_production_media_get_native_surface(
     out_surface->chroma_location = descriptor.color.chroma_location;
     return DIGITOR_RESULT_OK;
   });
+}
+
+const char* digitor_production_media_get_last_error(
+    const DigitorProductionMediaSource* source) {
+  return source ? source->last_error : "";
 }
 
 void digitor_production_media_close(DigitorProductionMediaSource* source) {
