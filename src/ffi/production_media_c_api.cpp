@@ -11,6 +11,14 @@
 #include <stdexcept>
 #include <string>
 
+#if defined(__ANDROID__)
+#include <fcntl.h>
+#include <media/NdkMediaExtractor.h>
+#include <media/NdkMediaFormat.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #ifdef DIGITOR_HAS_FFMPEG
 extern "C" {
 #include <libavformat/avformat.h>
@@ -92,7 +100,50 @@ void set_last_error(DigitorProductionMediaSource* source,
 }
 
 int64_t probe_duration_us(const char* path) noexcept {
-#ifdef DIGITOR_HAS_FFMPEG
+#if defined(__ANDROID__)
+  if (!path || !path[0]) return 0;
+  const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return 0;
+
+  struct stat source_stat {};
+  if (::fstat(fd, &source_stat) != 0 || source_stat.st_size <= 0) {
+    ::close(fd);
+    return 0;
+  }
+
+  AMediaExtractor* extractor = AMediaExtractor_new();
+  if (!extractor) {
+    ::close(fd);
+    return 0;
+  }
+  const auto source_status = AMediaExtractor_setDataSourceFd(
+      extractor, fd, 0, static_cast<off64_t>(source_stat.st_size));
+  ::close(fd);
+  if (source_status != AMEDIA_OK) {
+    AMediaExtractor_delete(extractor);
+    return 0;
+  }
+
+  int64_t duration_us = 0;
+  const auto tracks = AMediaExtractor_getTrackCount(extractor);
+  for (size_t index = 0; index < tracks; ++index) {
+    AMediaFormat* format = AMediaExtractor_getTrackFormat(extractor, index);
+    if (!format) continue;
+    const char* mime = nullptr;
+    if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime) && mime &&
+        std::strncmp(mime, "video/", 6) == 0) {
+      int64_t track_duration_us = 0;
+      if (AMediaFormat_getInt64(format, AMEDIAFORMAT_KEY_DURATION,
+                                &track_duration_us) &&
+          track_duration_us > duration_us) {
+        duration_us = track_duration_us;
+      }
+    }
+    AMediaFormat_delete(format);
+  }
+  AMediaExtractor_delete(extractor);
+  return std::max<int64_t>(0, duration_us);
+#elif defined(DIGITOR_HAS_FFMPEG)
   AVFormatContext* format = nullptr;
   if (avformat_open_input(&format, path, nullptr, nullptr) < 0) {
     return 0;

@@ -340,6 +340,19 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
       return result;
     }
 
+    // Frozen production export V2 is explicitly CFR. Decoder PTS/duration are
+    // source-timeline metadata and may be zero, repeated, VFR, or otherwise
+    // unsuitable for a strict hardware encoder. Build output timestamps from
+    // the frozen export FPS instead. The rational remainder keeps cadence
+    // exact at microsecond precision (for example 30000/1001) without letting
+    // rounding create zero or non-monotonic durations.
+    const auto cadence_numerator =
+        1'000'000LL * static_cast<std::int64_t>(config.profile.fps_den);
+    const auto cadence_denominator =
+        static_cast<std::int64_t>(config.profile.fps_num);
+    std::int64_t output_pts_us = 0;
+    std::int64_t cadence_remainder = 0;
+
     const auto total = static_cast<std::uint64_t>(frame_numbers.size());
     if (progress) progress(0, total);
     std::uint64_t completed = 0;
@@ -366,10 +379,20 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
         clear_active();
         return result;
       }
+
+      std::int64_t output_duration_us =
+          cadence_numerator / cadence_denominator;
+      cadence_remainder += cadence_numerator % cadence_denominator;
+      if (cadence_remainder >= cadence_denominator) {
+        output_duration_us += cadence_remainder / cadence_denominator;
+        cadence_remainder %= cadence_denominator;
+      }
+      if (output_duration_us <= 0) output_duration_us = 1;
+
       HardwareEncodeFrame encode_frame;
       encode_frame.frame = std::move(rendered.frame);
-      encode_frame.pts_us = rendered.pts_us;
-      encode_frame.duration_us = rendered.duration_us;
+      encode_frame.pts_us = output_pts_us;
+      encode_frame.duration_us = output_duration_us;
       result = encoder.submit(std::move(encode_frame), &encode_diagnostic);
       if (result != DIGITOR_RESULT_OK) {
         encoder.cancel();
@@ -378,6 +401,7 @@ DigitorResult ProductionMediaGraphRuntime::export_frames_with_encoder(
             ? "production GPU frame submission failed" : std::move(encode_diagnostic));
         return result;
       }
+      output_pts_us += output_duration_us;
       {
         std::lock_guard lock(mutex_);
         ++telemetry_.export_frames;

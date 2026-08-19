@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'engine.dart';
 import 'node_graph.dart';
 import 'platform_host.dart';
@@ -54,33 +56,48 @@ final class DigitorEditorWorkspace {
     int sampleRate = 48000,
     int channels = 2,
   }) async {
-    final engine = DigitorEngine.initialize(
-      preferredBackend: preferredBackend,
-      allowCpuFallback: allowCpuFallback,
-    );
+    final platformHost = DigitorFlutterPlatformHost();
+    DigitorFlutterHostCapabilities? capabilities;
+    try {
+      capabilities = await platformHost.capabilities();
+    } catch (_) {
+      capabilities = null;
+    }
+
+    // Android Flutter currently presents through SurfaceProducer/ANativeWindow.
+    // The production-qualified render-target presenter is GLES; Vulkan remains
+    // the engine's first general Android backend, but it has no SurfaceProducer
+    // swapchain/presenter yet. Resolve AUTO before engine initialization so the
+    // backend is locked once for the session and never silently switches after
+    // rendering begins. Explicit Vulkan requests remain strict.
+    final resolvedBackend =
+        preferredBackend == DigitorBackend.automatic &&
+            Platform.isAndroid &&
+            capabilities?.platform == 'android' &&
+            capabilities?.renderTargetPresentation == true
+        ? DigitorBackend.openGles
+        : preferredBackend;
+
+    DigitorEngine? engine;
     DigitorNodeGraph? graph;
     DigitorProductionMediaPipeline? mediaPipeline;
-    DigitorFlutterPlatformHost? platformHost;
     DigitorTimelineSession? timeline;
     try {
+      engine = DigitorEngine.initialize(
+        preferredBackend: resolvedBackend,
+        allowCpuFallback: allowCpuFallback,
+      );
       final renderer = engine.rendererInfo;
       graph = DigitorNodeGraph.create();
       final endpoints = graph.endpoints;
       final selected = graph.addSerialAfter(endpoints.input, name: 'Grade 01');
       graph.select(selected);
       mediaPipeline = DigitorProductionMediaPipeline(renderer: renderer);
-      platformHost = DigitorFlutterPlatformHost();
       timeline = DigitorTimelineSession.create(
         sampleRate: sampleRate,
         channels: channels,
         durationUs: 0,
       );
-      DigitorFlutterHostCapabilities? capabilities;
-      try {
-        capabilities = await platformHost.capabilities();
-      } catch (_) {
-        capabilities = null;
-      }
       return DigitorEditorWorkspace._(
         engine,
         graph,
@@ -95,8 +112,8 @@ final class DigitorEditorWorkspace {
       timeline?.dispose();
       mediaPipeline?.close();
       graph?.dispose();
-      if (platformHost != null) await platformHost.close();
-      await engine.close();
+      await platformHost.close();
+      if (engine != null) await engine.close();
       rethrow;
     }
   }
@@ -138,20 +155,39 @@ final class DigitorEditorWorkspace {
     final snapshot = _mediaPipeline.open(path);
     _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
+      if (Platform.isAndroid) {
+        // The auxiliary media facade is used only to obtain immutable metadata
+        // (dimensions, duration and source frame timing). Keeping it open while
+        // the registered production session starts would hold a second Android
+        // MediaCodec decoder for the same source. Some devices expose only one
+        // usable hardware AVC decoder instance, causing createRegistered to fail
+        // with BACKEND_UNAVAILABLE. Release the auxiliary decoder before opening
+        // the strict production path and retain only metadata safe after close.
+        _media = DigitorProductionMediaSnapshot(
+          path: snapshot.path,
+          decoder: snapshot.decoder,
+          firstFrame: snapshot.firstFrame,
+          duration: snapshot.duration,
+          nativeSurface: null,
+          strictGpuPath: snapshot.strictGpuPath,
+        );
+        _mediaPipeline.clear();
+      }
       _productionSession = DigitorRegisteredProductionSession.open(
         mediaPath: path,
         nodeGraph: _graph,
       );
     }
+    final media = _media!;
     _timeline.attachMedia(path);
     _timelineRevision += 1;
     _timeline.publish(
       revision: _timelineRevision,
-      durationUs: snapshot.duration.inMicroseconds,
+      durationUs: media.duration.inMicroseconds,
       videoTrackCount: 1,
       audioTrackCount: 1,
     );
-    return snapshot;
+    return media;
   }
 
   /// Opens editor media through the platform-registered production provider.

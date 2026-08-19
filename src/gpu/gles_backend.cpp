@@ -213,7 +213,8 @@ class GlBackend final : public IRenderBackend, public NativeNodeMaskBackend {
         "#version 300 es\n"
         "#extension GL_OES_EGL_image_external_essl3 : require\n"
         "precision highp float;in vec2 uv;uniform samplerExternalOES decoded_frame;"
-        "out vec4 color;void main(){color=texture(decoded_frame,uv);}";
+        "uniform vec2 decoded_scale;"
+        "out vec4 color;void main(){color=texture(decoded_frame,uv*decoded_scale);}";
     NativePipelineCacheKey key{
         DIGITOR_RENDERER_OPENGL_ES,
         reinterpret_cast<std::uintptr_t>(context),
@@ -411,7 +412,7 @@ static_assert(sizeof(GlCorrectionConstants) == 48);
     auto* ahb = reinterpret_cast<AHardwareBuffer*>(descriptor.native_handle);
     AHardwareBuffer_Desc ahb_desc{};
     describe(ahb, &ahb_desc);
-    if (ahb_desc.width != descriptor.width || ahb_desc.height != descriptor.height ||
+    if (ahb_desc.width < descriptor.width || ahb_desc.height < descriptor.height ||
         ahb_desc.layers != 1 ||
         (ahb_desc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE) == 0)
       return DIGITOR_RESULT_INVALID_ARGUMENT;
@@ -489,6 +490,15 @@ static_assert(sizeof(GlCorrectionConstants) == 48);
         glGetUniformLocation(pipeline->program, "decoded_frame");
     if (source_location < 0) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
     glUniform1i(source_location, 0);
+    const GLint scale_location =
+        glGetUniformLocation(pipeline->program, "decoded_scale");
+    if (scale_location < 0 || !ahb_desc.width || !ahb_desc.height)
+      return DIGITOR_RESULT_BACKEND_UNAVAILABLE;
+    glUniform2f(scale_location,
+                static_cast<GLfloat>(descriptor.width) /
+                    static_cast<GLfloat>(ahb_desc.width),
+                static_cast<GLfloat>(descriptor.height) /
+                    static_cast<GLfloat>(ahb_desc.height));
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glFlush();
     if (glGetError() != GL_NO_ERROR) return DIGITOR_RESULT_BACKEND_UNAVAILABLE;

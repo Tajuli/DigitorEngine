@@ -138,6 +138,7 @@ if(WIN32)
     target_compile_definitions(digitor_engine PRIVATE DIGITOR_WINDOWS_D3D12_ZERO_COPY=1)
 elseif(ANDROID)
     target_sources(digitor_engine PRIVATE
+        src/platform/android/android_native_provider.cpp
         src/media/android_mediacodec_decoder.cpp
         src/media/android_zero_copy_pipeline.cpp
         src/media/android_zero_copy_qualification.cpp
