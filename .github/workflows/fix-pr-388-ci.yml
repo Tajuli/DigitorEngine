@@ -1,11 +1,13 @@
 name: Fix PR 388 qualification failures
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/android-source-preview-fallback
+      - agent/fix-android-native-assets-ninja-20260818
     paths:
       - .github/workflows/fix-pr-388-ci.yml
+      - CMakeLists.txt
+      - dart/digitor_engine_ffi/lib/src/registered_production_session.dart
 
 permissions:
   contents: write
