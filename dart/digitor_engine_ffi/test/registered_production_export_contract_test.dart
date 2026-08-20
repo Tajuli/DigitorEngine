@@ -41,4 +41,38 @@ void main() {
     expect(d3d.colorMetadata, 'linear-rgba');
     expect(gles.colorMetadata, 'linear-rgba');
   });
+
+  test('D3D12 RGBA8 preview texture keeps RGBA32F export working format', () {
+    final contract = digitorPreviewExportFrameContract(
+      rendererBackend: DigitorBackend.direct3D12.nativeValue,
+      presentationFormat: DigitorPixelFormat.rgba8Unorm,
+    );
+
+    expect(contract.workingFormat, DigitorPixelFormat.rgba32Float.nativeValue);
+    expect(contract.colorMetadata, 'linear-rgba');
+  });
+
+  test('D3D12 BGRA8 preview texture keeps RGBA32F export working format', () {
+    final contract = digitorPreviewExportFrameContract(
+      rendererBackend: DigitorBackend.direct3D12.nativeValue,
+      presentationFormat: DigitorPixelFormat.bgra8Unorm,
+    );
+
+    expect(contract.workingFormat, DigitorPixelFormat.rgba32Float.nativeValue);
+    expect(contract.colorMetadata, 'linear-rgba');
+  });
+
+  test('float preview descriptors preserve their exact working precision', () {
+    final rgba32 = digitorPreviewExportFrameContract(
+      rendererBackend: DigitorBackend.direct3D12.nativeValue,
+      presentationFormat: DigitorPixelFormat.rgba32Float,
+    );
+    final rgba16 = digitorPreviewExportFrameContract(
+      rendererBackend: DigitorBackend.vulkan.nativeValue,
+      presentationFormat: DigitorPixelFormat.rgba16Float,
+    );
+
+    expect(rgba32.workingFormat, DigitorPixelFormat.rgba32Float.nativeValue);
+    expect(rgba16.workingFormat, DigitorPixelFormat.rgba16Float.nativeValue);
+  });
 }
