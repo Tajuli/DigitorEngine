@@ -440,6 +440,17 @@ struct FlutterProductionHostAdapter::Impl {
         data.variable_frame_rate = false;
         data.hdr = request->hdr != 0;
         data.color_metadata = request->utf8_color_metadata;
+        data.source_media_path = p->media_path;
+        if (request->first_frame > 0) {
+          const auto first_frame = static_cast<std::int64_t>(request->first_frame);
+          if (first_frame >
+              std::numeric_limits<std::int64_t>::max() / scale) {
+            write_diagnostic(diagnostic, diagnostic_capacity,
+                "frozen export source start timestamp overflows");
+            return DIGITOR_RESULT_INVALID_ARGUMENT;
+          }
+          data.source_start_us = first_frame * scale / request->fps_num;
+        }
         data.output_path = request->utf8_output_path;
         data.profile.codec = export_codec(request->codec);
         data.profile.width = static_cast<std::int32_t>(request->width);

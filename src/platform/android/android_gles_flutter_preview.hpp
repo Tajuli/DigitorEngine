@@ -7,6 +7,8 @@
 #include "gpu/backend_production_capability.hpp"
 #include "gpu/gpu_backend.hpp"
 #include "android_gles_mediacodec_encoder.hpp"
+#include "android_gles_encoder_orientation.hpp"
+#include "android_source_audio_mux.hpp"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -344,8 +346,45 @@ make_android_gles_flutter_preview_build(
   preview.selected_mode = DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
 
   build.encoder_factory =
-      android_gles_mediacodec_detail::make_android_gles_mediacodec_encoder_factory(
-          egl_display, egl_context, renderer, backend.frame_context_identity);
+      [egl_display, egl_context, renderer,
+       frame_context_identity = backend.frame_context_identity](
+          std::shared_ptr<const ExportRenderSnapshot> snapshot) mutable {
+        using android_gles_export_detail::EncoderOrientationRenderer;
+        auto orientation =
+            std::make_shared<EncoderOrientationRenderer>(renderer);
+        auto host =
+            android_gles_mediacodec_detail::make_android_gles_mediacodec_host(
+                egl_display, egl_context, orientation.get(),
+                frame_context_identity);
+
+        // Release the export-only blit resources while MediaCodec's EGL
+        // surface still exists. Keeping the shared renderer in every callback
+        // also guarantees that the raw pointer owned by the encoder remains
+        // valid for the complete session.
+        auto inner_finalize = host.finalize_mp4_atomic;
+        host.finalize_mp4_atomic =
+            [orientation, inner_finalize](std::string& local) mutable {
+              orientation->release_resources();
+              return inner_finalize(local);
+            };
+        auto inner_cancel = host.cancel;
+        host.cancel = [orientation, inner_cancel]() mutable {
+          orientation->release_resources();
+          inner_cancel();
+        };
+        auto keep_orientation = orientation;
+        auto inner_qualification = host.qualification;
+        host.qualification =
+            [keep_orientation, inner_qualification]() mutable {
+              return inner_qualification();
+            };
+
+        host = android_source_audio_mux_detail::wrap_source_audio_mux(
+            std::move(host), snapshot);
+        return create_production_encoder(
+            ProductionPlatform::android, std::move(snapshot), {},
+            std::move(host), {}, {});
+      };
   build.encoder_backend = EncoderBackend::media_codec;
   build.required_device_identity = static_cast<std::uint64_t>(
       reinterpret_cast<std::uintptr_t>(backend.frame_context_identity));

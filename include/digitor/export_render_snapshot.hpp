@@ -39,6 +39,10 @@ struct ExportRenderSnapshotData final {
   bool variable_frame_rate{};
   bool hdr{};
   std::string color_metadata;
+  // Source media identity/timing is frozen with the export so platform muxers
+  // can preserve source audio without consulting mutable UI/session state.
+  std::string source_media_path;
+  std::int64_t source_start_us{};
   std::string output_path;
   ExportProfile profile;
   ExportExecutionPolicy policy{ExportExecutionPolicy::unsupported};

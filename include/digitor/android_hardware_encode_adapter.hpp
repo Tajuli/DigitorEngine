@@ -54,12 +54,21 @@ struct AndroidHardwareEncodeQualification final {
   bool ahardwarebuffer_or_surface_bound{};
   bool bitstream_produced{};
   bool mp4_finalized{};
+  bool source_audio_present{};
+  bool audio_track_muxed{};
+  std::uint64_t audio_samples_muxed{};
   bool no_cpu_readback{true};
   bool no_cpu_staging{true};
   std::uint64_t submitted_frames{};
   std::uint64_t encoded_frames{};
   std::string diagnostic;
 };
+
+[[nodiscard]] inline bool android_source_audio_mux_qualified(
+    const AndroidHardwareEncodeQualification& value) noexcept {
+  return !value.source_audio_present ||
+         (value.audio_track_muxed && value.audio_samples_muxed > 0);
+}
 
 struct AndroidHardwareEncoderHost final {
   std::function<DigitorResult(const HardwareEncodeConfig&,
@@ -253,7 +262,7 @@ create_android_hardware_encode_adapter(
     if (result != DIGITOR_RESULT_OK) return result;
     const auto q = state->host.qualification();
     if (!q.bitstream_produced || !q.mp4_finalized || !q.no_cpu_readback ||
-        !q.no_cpu_staging) {
+        !q.no_cpu_staging || !android_source_audio_mux_qualified(q)) {
       diagnostic = "Android MediaCodec final qualification failed";
       return DIGITOR_RESULT_INTERNAL_ERROR;
     }

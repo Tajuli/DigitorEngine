@@ -58,6 +58,8 @@ ExportRenderSnapshotData hardware_snapshot_data() {
   value.fps_den = 1;
   value.duration_us = 100000;
   value.color_metadata = "linear-rgba";
+  value.source_media_path = "source.mp4";
+  value.source_start_us = 33333;
   value.output_path = "output.mp4";
   value.profile.width = 1920;
   value.profile.height = 1080;
@@ -76,8 +78,18 @@ int main() {
   static_assert(!std::is_copy_assignable_v<ExportRenderSnapshot>);
   static_assert(!std::is_move_assignable_v<ExportRenderSnapshot>);
 
+  AndroidHardwareEncodeQualification silent_source{};
+  assert(android_source_audio_mux_qualified(silent_source));
+  silent_source.source_audio_present = true;
+  assert(!android_source_audio_mux_qualified(silent_source));
+  silent_source.audio_track_muxed = true;
+  silent_source.audio_samples_muxed = 1;
+  assert(android_source_audio_mux_qualified(silent_source));
+
   const ExportRenderSnapshot frozen(hardware_snapshot_data());
   assert(frozen.identity() == 1001);
+  assert(frozen.data().source_media_path == "source.mp4");
+  assert(frozen.data().source_start_us == 33333);
   assert(export_policy_uses_gpu(frozen.policy()));
   assert(validate_export_snapshot(frozen));
   assert(validate_frame_against_snapshot(frozen, *make_frame(0)));

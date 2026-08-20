@@ -236,12 +236,13 @@ struct ProductionPlatformAssembly final {
       out.zero_copy_qualified =
           [qualification = std::move(adapter.qualification)] {
             const auto q = qualification();
+            const bool audio_ok = android_source_audio_mux_qualified(q);
             return q.codec_opened && q.input_surface_created &&
                    q.gpu_frame_submitted && q.acquire_sync_waited &&
                    q.release_sync_published &&
                    q.ahardwarebuffer_or_surface_bound &&
                    q.bitstream_produced && q.mp4_finalized &&
-                   q.no_cpu_readback && q.no_cpu_staging;
+                   q.no_cpu_readback && q.no_cpu_staging && audio_ok;
           };
       break;
     }
