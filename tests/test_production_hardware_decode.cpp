@@ -107,6 +107,37 @@ private:
     std::shared_ptr<VideoFrame> cached_timestamp_frame_;
 };
 
+class BackwardSequentialFakeDecoder final : public VideoDecoder {
+public:
+    std::shared_ptr<VideoFrame> decode(FrameNumber number) override {
+        const auto pts = number == 0 ? 20'000 : 10'000;
+        auto result = std::make_shared<VideoFrame>();
+        result->number = number;
+        result->pts = pts;
+        result->duration = 10'000;
+        result->width = 1920;
+        result->height = 1080;
+        NativeMediaSurfaceDescriptor descriptor{};
+        descriptor.struct_size = sizeof(descriptor);
+        descriptor.api_version = 1;
+        descriptor.platform = NativeMediaPlatform::windows;
+        descriptor.handle_type = NativeMediaHandleType::d3d11_texture2d;
+        descriptor.pixel_format = NativeMediaPixelFormat::nv12;
+        descriptor.width = result->width;
+        descriptor.height = result->height;
+        descriptor.native_handle = static_cast<std::uintptr_t>(number + 1);
+        descriptor.timestamp_us = pts;
+        result->native_surface = std::make_shared<NativeMediaSurface>(
+            descriptor, std::static_pointer_cast<void>(std::make_shared<int>(1)));
+        return result;
+    }
+    void seek(std::int64_t) override {}
+    DecoderInfo info() const override {
+        return {HardwareDecode::dxva, true, "backward sequential fake D3D11VA",
+                true, NativeMediaHandleType::d3d11_texture2d};
+    }
+};
+
 ProcessedGpuFramePtr make_gpu_frame(std::int64_t timestamp) {
     GpuFrameMetadata metadata{};
     metadata.width = 1920;
@@ -200,9 +231,23 @@ int main() {
     assert(!finite.end_of_stream());
     assert(finite.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
 
+    // Sequential decode remains strict: an actual in-epoch timestamp regression
+    // must still fail even though random-access timestamp decode resets its epoch.
+    options.require_monotonic_timestamps = true;
+    ProductionHardwareDecodeSession backward_sequential(
+        std::make_unique<BackwardSequentialFakeDecoder>(),
+        [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
+            output = make_gpu_frame(request.surface->descriptor().timestamp_us);
+            return DIGITOR_RESULT_OK;
+        }, options);
+    assert(backward_sequential.decode(0, frame, &diagnostic) == DIGITOR_RESULT_OK);
+    assert(backward_sequential.decode(1, frame, &diagnostic) ==
+           DIGITOR_RESULT_INTERNAL_ERROR);
+    assert(diagnostic == "decoded timestamps moved backwards without a seek");
+
     auto random_decoder = std::make_unique<RandomAccessFakeDecoder>();
     auto* random_observer = random_decoder.get();
-    options.require_monotonic_timestamps = false;
+    options.require_monotonic_timestamps = true;
     ProductionHardwareDecodeSession random_access(
         std::move(random_decoder),
         [](const ZeroCopyImportRequest& request, ProcessedGpuFramePtr& output) {
