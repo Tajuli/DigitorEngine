@@ -33,7 +33,9 @@ void main() {
   test(
     'workspace releases auxiliary decoder before Android or Windows production open',
     () {
-      final workspace = File('lib/src/editor_workspace.dart').readAsStringSync();
+      final workspace = File(
+        'lib/src/editor_workspace.dart',
+      ).readAsStringSync();
       final methodStart = workspace.indexOf(
         'DigitorProductionMediaSnapshot openMedia(String path)',
       );

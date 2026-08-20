@@ -41,5 +41,4 @@ void main() {
     expect(d3d.colorMetadata, 'linear-rgba');
     expect(gles.colorMetadata, 'linear-rgba');
   });
-
 }
