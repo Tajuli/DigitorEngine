@@ -10,7 +10,7 @@ void main() {
     );
 
     expect(contract.workingFormat, DigitorPixelFormat.rgba32Float.nativeValue);
-    expect(contract.colorMetadata, 'linear-rgba32f');
+    expect(contract.colorMetadata, 'linear-rgba');
   });
 
   test('non-D3D12 export defaults preserve the existing contract', () {
@@ -27,4 +27,19 @@ void main() {
       expect(contract.colorMetadata, 'linear-rgba');
     }
   });
+
+  test('export color identity is independent of float working precision', () {
+    final d3d = digitorDefaultExportFrameContract(
+      DigitorBackend.direct3D12.nativeValue,
+    );
+    final gles = digitorDefaultExportFrameContract(
+      DigitorBackend.openGles.nativeValue,
+    );
+
+    expect(d3d.workingFormat, DigitorPixelFormat.rgba32Float.nativeValue);
+    expect(gles.workingFormat, DigitorPixelFormat.rgba16Float.nativeValue);
+    expect(d3d.colorMetadata, 'linear-rgba');
+    expect(gles.colorMetadata, 'linear-rgba');
+  });
+
 }
