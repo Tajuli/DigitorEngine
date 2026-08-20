@@ -29,4 +29,37 @@ void main() {
       contains('_productionSession = DigitorRegisteredProductionSession.open('),
     );
   });
+
+  test(
+    'workspace releases auxiliary decoder before Android or Windows production open',
+    () {
+      final workspace = File(
+        'lib/src/editor_workspace.dart',
+      ).readAsStringSync();
+      final methodStart = workspace.indexOf(
+        'DigitorProductionMediaSnapshot openMedia(String path)',
+      );
+      expect(methodStart, greaterThanOrEqualTo(0));
+      final nextMember = workspace.indexOf(
+        'void openRegisteredMedia(String path)',
+        methodStart,
+      );
+      expect(nextMember, greaterThan(methodStart));
+
+      final openMedia = workspace.substring(methodStart, nextMember);
+      expect(
+        openMedia,
+        contains('if (Platform.isAndroid || Platform.isWindows)'),
+      );
+      expect(openMedia, contains('_mediaPipeline.clear();'));
+      expect(
+        openMedia.indexOf('_mediaPipeline.clear();'),
+        lessThan(
+          openMedia.indexOf(
+            '_productionSession = DigitorRegisteredProductionSession.open(',
+          ),
+        ),
+      );
+    },
+  );
 }

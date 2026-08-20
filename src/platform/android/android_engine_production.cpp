@@ -1,5 +1,6 @@
 #include "platform/android/android_engine_production.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <mutex>
@@ -80,12 +81,30 @@ bool capability_resources_complete(const BackendProductionCapability& backend,
   return false;
 }
 
+// AImageReader acquired-image ownership is shared by the decoder cache and
+// the native Flutter preview queue. NativePreviewPresentationSession can retain
+// two processed frames (current + pending), and each processed GLES/Vulkan frame
+// keeps its imported decoder surface alive. Reserve those two slots plus one
+// slot for the next decoder acquisition so sequential export cannot deadlock the
+// AImageReader pool while preview is still displaying the last frame.
+constexpr std::uint32_t kAndroidDecoderMaxAcquiredImages = 6;
+constexpr std::size_t kAndroidPreviewRetainedFrames = 2;
+constexpr std::size_t kAndroidDecoderAcquireHeadroom = 1;
+constexpr std::size_t kAndroidDecoderFrameCacheCapacity =
+    kAndroidDecoderMaxAcquiredImages - kAndroidPreviewRetainedFrames -
+    kAndroidDecoderAcquireHeadroom;
+static_assert(kAndroidDecoderFrameCacheCapacity >= 1);
+static_assert(kAndroidDecoderFrameCacheCapacity +
+                  kAndroidPreviewRetainedFrames +
+                  kAndroidDecoderAcquireHeadroom <=
+              kAndroidDecoderMaxAcquiredImages);
+
 #if defined(__ANDROID__)
 
 AndroidMediaCodecSessionConfig decoder_config(const std::string& media_path) {
   AndroidMediaCodecSessionConfig config{};
   config.media_path = media_path;
-  config.max_acquired_images = 6;
+  config.max_acquired_images = kAndroidDecoderMaxAcquiredImages;
   config.dequeue_timeout_us = 10'000;
   config.scheduling = AndroidDecodeScheduling::frame_accurate;
   config.strict_zero_copy = true;
@@ -107,7 +126,8 @@ PixelFormat media_pixel_format(NativeMediaPixelFormat value) {
 class AndroidProductionVideoDecoder final : public VideoDecoder {
  public:
   explicit AndroidProductionVideoDecoder(const std::string& media_path)
-      : decoder_(decoder_config(media_path)), cache_(8) {
+      : decoder_(decoder_config(media_path)),
+        cache_(kAndroidDecoderFrameCacheCapacity) {
     if (media_path.empty())
       throw std::invalid_argument("Android production media path is required");
     const auto result = decoder_.initialize();

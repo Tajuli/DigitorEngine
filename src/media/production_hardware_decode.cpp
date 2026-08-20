@@ -142,6 +142,14 @@ DigitorResult ProductionHardwareDecodeSession::decode_at_timestamp(
   };
 
   try {
+    // VideoDecoder::decode_at_timestamp is a random-access operation whose
+    // contract starts a decoder-local frame-number epoch after a seek. Reset the
+    // session-level monotonic baseline as well, otherwise a valid preview rewind
+    // after export (or any other later timestamp) is misclassified as an
+    // in-epoch timestamp regression. Sequential decode() keeps the strict
+    // monotonic check unchanged.
+    have_timestamp_ = false;
+    last_timestamp_ = 0;
     auto frame = decoder_->decode_at_timestamp(pts_us);
     if (!frame) {
       end_of_stream_ = true;
