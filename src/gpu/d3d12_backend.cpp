@@ -695,7 +695,7 @@ public:
                           metadata.height = surface.height;
                           metadata.format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
                           metadata.timestamp = surface.timestamp_us;
-                          metadata.color_metadata = "linear-rgba32f";
+                          metadata.color_metadata = "linear-rgba";
                           auto output_frame =
                               std::make_shared<ProcessedGpuFrame>(
                                   backend, DIGITOR_RENDERER_D3D12,
