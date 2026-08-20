@@ -20,18 +20,19 @@ final class DigitorDefaultExportFrameContract {
 
 /// Resolves the default frozen frame contract for a renderer.
 ///
-/// D3D12 production media is decoded/processed as canonical RGBA32F and
-/// carries the `linear-rgba32f` color identity. Other renderers keep their
-/// conservative defaults when no current production-preview contract exists.
-/// Once a preview is rendered, export freezes that exact processed GPU format
-/// so strict preview/export parity does not depend on a backend-wide guess.
+/// D3D12 production media is decoded/processed as canonical RGBA32F while
+/// the color-space identity remains the backend-independent `linear-rgba`.
+/// Pixel precision belongs to [workingFormat], not to the color metadata
+/// string. Once a preview is rendered, export freezes that exact processed GPU
+/// format so strict preview/export parity does not depend on a backend-wide
+/// format guess.
 DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   int rendererBackend,
 ) {
   if (rendererBackend == DigitorBackend.direct3D12.nativeValue) {
     return DigitorDefaultExportFrameContract(
       workingFormat: DigitorPixelFormat.rgba32Float.nativeValue,
-      colorMetadata: 'linear-rgba32f',
+      colorMetadata: 'linear-rgba',
     );
   }
   return DigitorDefaultExportFrameContract(
@@ -46,7 +47,7 @@ DigitorDefaultExportFrameContract _previewFrameContract(
   if (format == DigitorPixelFormat.rgba32Float) {
     return DigitorDefaultExportFrameContract(
       workingFormat: format.nativeValue,
-      colorMetadata: 'linear-rgba32f',
+      colorMetadata: 'linear-rgba',
     );
   }
   if (format == DigitorPixelFormat.rgba16Float) {
