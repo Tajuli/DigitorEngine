@@ -155,14 +155,14 @@ final class DigitorEditorWorkspace {
     final snapshot = _mediaPipeline.open(path);
     _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid || Platform.isWindows) {
         // The auxiliary media facade is used only to obtain immutable metadata
         // (dimensions, duration and source frame timing). Keeping it open while
-        // the registered production session starts would hold a second Android
-        // MediaCodec decoder for the same source. Some devices expose only one
-        // usable hardware AVC decoder instance, causing createRegistered to fail
-        // with BACKEND_UNAVAILABLE. Release the auxiliary decoder before opening
-        // the strict production path and retain only metadata safe after close.
+        // the registered production session starts would hold a second platform
+        // decoder for the same source. Android MediaCodec and Windows D3D11VA
+        // production paths both require exclusive/finite decoder GPU resources;
+        // release the auxiliary decoder before opening the strict production
+        // path and retain only metadata safe after close.
         _media = DigitorProductionMediaSnapshot(
           path: snapshot.path,
           decoder: snapshot.decoder,
