@@ -1,4 +1,6 @@
 #include "digitor/production_export.hpp"
+#include "digitor/export_render_snapshot.hpp"
+#include "digitor/gpu_frame.hpp"
 #include "digitor/production_export_c_api.h"
 
 #include <cassert>
@@ -8,6 +10,45 @@
 int main() {
   namespace fs = std::filesystem;
   using namespace digitor;
+
+  // Regression: float precision is frozen separately from the canonical
+  // linear-RGBA color identity. Android GLES color passes produce RGBA32F
+  // frames tagged "linear-rgba"; that must validate for production export.
+  ExportRenderSnapshotData contract_data{};
+  contract_data.snapshot_identity = 1;
+  contract_data.timeline_revision = 1;
+  contract_data.render_revision = 1;
+  contract_data.node_graph_revision = 1;
+  contract_data.color_pipeline_revision = 1;
+  contract_data.audio_revision = 1;
+  contract_data.width = 1920;
+  contract_data.height = 1080;
+  contract_data.working_format = DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT;
+  contract_data.fps_num = 30;
+  contract_data.fps_den = 1;
+  contract_data.duration_us = 1'000'000;
+  contract_data.color_metadata = "linear-rgba";
+  contract_data.output_path = "contract.mp4";
+  contract_data.profile.codec = ExportCodec::h264;
+  contract_data.profile.width = 1920;
+  contract_data.profile.height = 1080;
+  contract_data.profile.fps_num = 30;
+  contract_data.profile.fps_den = 1;
+  contract_data.profile.video_bitrate = 12'000'000;
+  contract_data.profile.prefer_hardware = true;
+  contract_data.profile.allow_software_fallback = false;
+  contract_data.policy = ExportExecutionPolicy::hardware_required;
+  contract_data.renderer_backend = DIGITOR_RENDERER_OPENGL_ES;
+  contract_data.encoder_backend = EncoderBackend::media_codec;
+  const ExportRenderSnapshot contract_snapshot(contract_data);
+  const auto owner = std::make_shared<int>(1);
+  const auto ready = std::make_shared<std::atomic_bool>(true);
+  const auto contract_frame = std::make_shared<ProcessedGpuFrame>(
+      reinterpret_cast<void*>(0x1), DIGITOR_RENDERER_OPENGL_ES,
+      GpuFrameMetadata{1920, 1080, DIGITOR_PIXEL_FORMAT_RGBA32_FLOAT,
+                       GpuFrameAlpha::straight, 0, "linear-rgba"},
+      1, owner, ready, true);
+  assert(validate_frame_against_snapshot(contract_snapshot, *contract_frame));
 
   const ExportProfile profile{.codec = ExportCodec::hevc,
                               .width = 3840,
