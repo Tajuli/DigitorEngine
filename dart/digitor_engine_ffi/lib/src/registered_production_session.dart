@@ -23,9 +23,7 @@ final class DigitorDefaultExportFrameContract {
 /// D3D12 production media is decoded/processed as canonical RGBA32F while
 /// the color-space identity remains the backend-independent `linear-rgba`.
 /// Pixel precision belongs to [workingFormat], not to the color metadata
-/// string. Once a preview is rendered, export freezes that exact processed GPU
-/// format so strict preview/export parity does not depend on a backend-wide
-/// format guess.
+/// string.
 DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   int rendererBackend,
 ) {
@@ -41,24 +39,29 @@ DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   );
 }
 
-DigitorDefaultExportFrameContract _previewFrameContract(
-  DigitorPixelFormat format,
-) {
-  if (format == DigitorPixelFormat.rgba32Float) {
-    return DigitorDefaultExportFrameContract(
-      workingFormat: format.nativeValue,
-      colorMetadata: 'linear-rgba',
-    );
+/// Resolves the export working contract represented by a production preview.
+///
+/// Native preview descriptors describe the texture Flutter presents, not
+/// necessarily the engine's scene-linear processing surface. Windows D3D12,
+/// for example, processes the production frame as RGBA32F and applies the
+/// display transform into an RGBA8/BGRA8 shared presentation texture. Treating
+/// that presentation texture as the export working format breaks the first
+/// Windows preview even though the production render itself succeeded.
+DigitorDefaultExportFrameContract digitorPreviewExportFrameContract({
+  required int rendererBackend,
+  required DigitorPixelFormat presentationFormat,
+}) {
+  switch (presentationFormat) {
+    case DigitorPixelFormat.rgba32Float:
+    case DigitorPixelFormat.rgba16Float:
+      return DigitorDefaultExportFrameContract(
+        workingFormat: presentationFormat.nativeValue,
+        colorMetadata: 'linear-rgba',
+      );
+    case DigitorPixelFormat.rgba8Unorm:
+    case DigitorPixelFormat.bgra8Unorm:
+      return digitorDefaultExportFrameContract(rendererBackend);
   }
-  if (format == DigitorPixelFormat.rgba16Float) {
-    return DigitorDefaultExportFrameContract(
-      workingFormat: format.nativeValue,
-      colorMetadata: 'linear-rgba',
-    );
-  }
-  throw StateError(
-    'Production preview returned an unsupported export working format: ${format.name}.',
-  );
 }
 
 int digitorCurrentRendererBackendForExport() {
@@ -225,6 +228,7 @@ final class DigitorRegisteredProductionSession {
         'Consume the current preview before requesting another.',
       );
     }
+    final rendererBackend = digitorCurrentRendererBackendForExport();
     bindNodeGraph();
     final native = calloc<DigitorNativeGpuTextureDescriptorNative>();
     try {
@@ -267,10 +271,13 @@ final class DigitorRegisteredProductionSession {
         protectedContent: value.protectedContent != 0,
         readiness: DigitorNativeTextureReadiness.fromNative(value.readiness),
       );
-      _lastPreviewFrameContract = _previewFrameContract(frame.pixelFormat);
+      _outstandingPreviewGeneration = frame.generation;
+      _lastPreviewFrameContract = digitorPreviewExportFrameContract(
+        rendererBackend: rendererBackend,
+        presentationFormat: frame.pixelFormat,
+      );
       _lastPreviewGraphRevision = _graph.graphRevision;
       _lastPreviewParameterRevision = _graph.parameterRevision;
-      _outstandingPreviewGeneration = frame.generation;
       return frame;
     } finally {
       calloc.free(native);
