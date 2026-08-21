@@ -106,6 +106,68 @@ final class DigitorProductionTimelineSession {
     _lastPreviewParameterRevision = null;
   }
 
+  DigitorPreviewCapabilities get previewCapabilities {
+    _ensureOpen();
+    final native = calloc<DigitorNativePreviewCapabilitiesNative>();
+    try {
+      native.ref.structSize = sizeOf<DigitorNativePreviewCapabilitiesNative>();
+      _check(
+        'timelineQueryPreview',
+        digitorFlutterProductionTimelineQueryPreview(native),
+      );
+      final value = native.ref;
+      final strictMode =
+          value.selectedMode == DigitorPreviewMode.nativeGpuStrict.nativeValue;
+      return DigitorPreviewCapabilities(
+        nativeGpuPreviewAvailable: value.nativeGpuPreviewAvailable != 0,
+        trueSharedResourceZeroCopy: value.trueSharedResourceZeroCopy != 0,
+        gpuToGpuCopy: value.gpuToGpuCopy != 0,
+        cpuFallbackOnly: value.cpuFallbackOnly != 0,
+        sdrSupported: value.sdrSupported != 0,
+        hdrSupported: value.hdrSupported != 0,
+        protectedContentSupported: value.protectedContentSupported != 0,
+        resizeSupported: value.resizeSupported != 0,
+        backend: DigitorNativeTextureBackend.fromNative(value.backend),
+        handleType: DigitorNativeTextureHandleType.fromNative(value.handleType),
+        supportedPixelFormats: value.supportedPixelFormats,
+        selectedMode: strictMode
+            ? DigitorPreviewMode.nativeGpuStrict
+            : DigitorPreviewMode.compatibility,
+        reasonUnavailable: _readInt8Array(value.reasonUnavailable, 192),
+      );
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  void setPreviewTarget({
+    required int nativeTargetHandle,
+    required int width,
+    required int height,
+    required DigitorNativeTextureHandleType handleType,
+  }) {
+    _ensureOpen();
+    if (nativeTargetHandle == 0 || width <= 0 || height <= 0) {
+      throw ArgumentError('A live native timeline preview target is required.');
+    }
+    final target = calloc<DigitorFlutterPreviewTargetNative>();
+    try {
+      target.ref
+        ..structSize = sizeOf<DigitorFlutterPreviewTargetNative>()
+        ..apiVersion = 1
+        ..nativeTargetHandle = nativeTargetHandle
+        ..width = width
+        ..height = height
+        ..handleType = handleType.nativeValue;
+      _check(
+        'timelineSetPreviewTarget',
+        digitorFlutterProductionTimelineSetPreviewTarget(target),
+      );
+    } finally {
+      calloc.free(target);
+    }
+  }
+
   DigitorNativeGpuTextureFrame preview({
     required int timestampUs,
     required int width,
@@ -386,5 +448,15 @@ final class DigitorProductionTimelineSession {
     if (result != 0) {
       throw DigitorProductionException(operation, result, lastError);
     }
+  }
+
+  static String _readInt8Array(Array<Int8> value, int length) {
+    final bytes = <int>[];
+    for (var index = 0; index < length; index++) {
+      final byte = value[index];
+      if (byte == 0) break;
+      bytes.add(byte & 0xff);
+    }
+    return String.fromCharCodes(bytes);
   }
 }
