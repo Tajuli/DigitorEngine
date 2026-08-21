@@ -289,6 +289,14 @@ DIGITOR_API DigitorResult digitor_flutter_production_timeline_configure(
 DIGITOR_API int32_t digitor_flutter_production_timeline_configured(void);
 DIGITOR_API DigitorResult digitor_flutter_production_timeline_clear(void);
 
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_query_preview(
+    DigitorNativePreviewCapabilities* out_capabilities
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_set_preview_target(
+    const DigitorFlutterPreviewTarget* target
+);
+
 DIGITOR_API DigitorResult digitor_flutter_production_timeline_preview(
     DigitorNodeGraph* graph,
     uint64_t graph_revision,
