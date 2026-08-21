@@ -150,6 +150,51 @@ int main() {
           "C ABI serialize failed");
   digitor_timeline_completion_destroy(handle);
 
+  auto* editing = digitor_timeline_completion_create();
+  require(editing != nullptr, "editing C ABI create failed");
+  require(digitor_timeline_completion_add_track(
+              editing, "V1", "Video 1", DIGITOR_TIMELINE_TRACK_VIDEO) == 1,
+          "editing video track add failed");
+  require(digitor_timeline_completion_add_track(
+              editing, "A1", "Audio 1", DIGITOR_TIMELINE_TRACK_AUDIO) == 1,
+          "editing audio track add failed");
+  require(digitor_timeline_completion_add_clip(
+              editing, "V1", "video-new", DIGITOR_TIMELINE_CLIP_VIDEO,
+              0, 8'000'000, 0, 8'000'000, "media-1", "av-1", 1) == 1,
+          "editing video clip add failed");
+  require(digitor_timeline_completion_add_clip(
+              editing, "A1", "audio-new", DIGITOR_TIMELINE_CLIP_AUDIO,
+              0, 8'000'000, 0, 8'000'000, "media-1", "av-1", 0) == 1,
+          "editing audio clip add failed");
+
+  DigitorTimelineProjectInfo info{};
+  info.struct_size = sizeof(info);
+  require(digitor_timeline_completion_project_info(editing, &info) == 1,
+          "editing project info failed");
+  require(info.valid == 1 && info.clip_count == 2U && info.duration_us == 8'000'000,
+          "editing initial project info mismatch");
+  const auto revision_before_split = info.revision;
+
+  require(digitor_timeline_completion_split_clip(
+              editing, "video-new", 4'000'000, "video-second", 1) == 1,
+          "editing linked split failed");
+  require(digitor_timeline_completion_project_info(editing, &info) == 1,
+          "editing project info after split failed");
+  require(info.valid == 1 && info.clip_count == 4U &&
+              info.revision > revision_before_split,
+          "editing split project info mismatch");
+
+  require(digitor_timeline_completion_remove_clip(
+              editing, "video-second", 1) == 1,
+          "editing linked delete failed");
+  require(digitor_timeline_completion_project_info(editing, &info) == 1,
+          "editing project info after delete failed");
+  require(info.valid == 1 && info.clip_count == 2U && info.duration_us == 4'000'000,
+          "editing delete project info mismatch");
+  require(digitor_timeline_completion_validate(editing) == 1,
+          "editing C ABI validation failed");
+  digitor_timeline_completion_destroy(editing);
+
   auto corrupted = archive;
   corrupted.replace(0, 8, "BROKEN!!");
   require(!digitor::TimelineCompletionEngine::deserialize(corrupted).has_value(),

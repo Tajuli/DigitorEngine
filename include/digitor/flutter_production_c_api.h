@@ -3,6 +3,7 @@
 
 #include "digitor/digitor.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -14,6 +15,7 @@ extern "C" {
 #define DIGITOR_FLUTTER_EXPORT_REQUEST_VERSION 1u
 #define DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION 2u
 #define DIGITOR_FLUTTER_PRODUCTION_HOST_V2_VERSION 1u
+#define DIGITOR_FLUTTER_TIMELINE_SOURCE_VERSION 1u
 
 typedef struct DigitorFlutterProductionSession DigitorFlutterProductionSession;
 
@@ -42,7 +44,6 @@ typedef struct DigitorFlutterExportRequest {
     uint32_t width;
     uint32_t height;
 } DigitorFlutterExportRequest;
-
 
 /* V2 is a strict superset used by the lazy export path. The request freezes
  * every revision and render property needed to prove that export matches the
@@ -77,6 +78,16 @@ typedef struct DigitorFlutterExportRequestV2 {
     const char* utf8_graph_recipe_identity;
 } DigitorFlutterExportRequestV2;
 
+/* Source registry entry for the native project-timeline production path.
+ * source_media_group_id is the stable identity stored on TimelineClipModel;
+ * utf8_path is resolved only by the engine-side decoder factory. */
+typedef struct DigitorFlutterTimelineSource {
+    uint32_t struct_size;
+    uint32_t api_version;
+    const char* source_media_group_id;
+    const char* utf8_path;
+} DigitorFlutterTimelineSource;
+
 typedef DigitorResult (*DigitorFlutterOpenMediaCallback)(
     void* user_data,
     const char* utf8_path,
@@ -109,7 +120,6 @@ typedef DigitorResult (*DigitorFlutterExportMediaCallback)(
     char* diagnostic,
     uint32_t diagnostic_capacity
 );
-
 
 typedef DigitorResult (*DigitorFlutterExportMediaV2Callback)(
     void* user_data,
@@ -157,7 +167,6 @@ typedef struct DigitorFlutterProductionHost {
     DigitorFlutterCloseMediaCallback close_media;
     DigitorFlutterReleaseTextureCallback release_texture;
 } DigitorFlutterProductionHost;
-
 
 /* Separate superset host contract. The base host layout/version is unchanged;
  * V2 adds only the frozen-snapshot export callback. */
@@ -260,6 +269,60 @@ DIGITOR_API DigitorResult digitor_flutter_production_cancel(
 
 DIGITOR_API DigitorResult digitor_flutter_production_get_last_error(
     DigitorFlutterProductionSession* session,
+    char* buffer,
+    uint32_t* inout_size
+);
+
+/* Project-timeline production path. This path is process-wide because the
+ * registered Flutter production host is process-wide. It resolves each global
+ * timeline timestamp to the active native clip/source, performs strict GPU
+ * decode, executes the same immutable node/color graph used by preview, and
+ * feeds that exact GPU result either to Flutter presentation or to the frozen
+ * hardware export encoder. No Flutter pixel compositor or CPU fallback exists. */
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_configure(
+    const char* serialized_project,
+    size_t serialized_size,
+    const DigitorFlutterTimelineSource* sources,
+    uint32_t source_count
+);
+
+DIGITOR_API int32_t digitor_flutter_production_timeline_configured(void);
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_clear(void);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_query_preview(
+    DigitorNativePreviewCapabilities* out_capabilities
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_set_preview_target(
+    const DigitorFlutterPreviewTarget* target
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_preview(
+    DigitorNodeGraph* graph,
+    uint64_t graph_revision,
+    uint64_t parameter_revision,
+    int64_t timeline_timestamp_us,
+    uint32_t width,
+    uint32_t height,
+    DigitorNativeGpuTextureDescriptor* out_texture
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_preview_consumed(
+    uint64_t generation
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_export_v2(
+    DigitorNodeGraph* graph,
+    uint64_t graph_revision,
+    uint64_t parameter_revision,
+    const DigitorFlutterExportRequestV2* request,
+    DigitorExportProgressCallback progress,
+    void* progress_user_data
+);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_cancel(void);
+
+DIGITOR_API DigitorResult digitor_flutter_production_timeline_get_last_error(
     char* buffer,
     uint32_t* inout_size
 );

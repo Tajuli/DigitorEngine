@@ -4,13 +4,10 @@ import 'engine.dart';
 import 'node_graph.dart';
 import 'platform_host.dart';
 import 'production_media_pipeline.dart';
+import 'production_timeline_session.dart';
 import 'registered_production_session.dart';
 import 'session.dart';
 
-/// UI-safe preview state returned by [DigitorEditorWorkspace].
-///
-/// Native GPU handles remain private to DigitorEngine. Flutter UI receives only
-/// the registered Flutter texture id plus generation/timing/dimension metadata.
 final class DigitorWorkspacePreviewState {
   const DigitorWorkspacePreviewState({
     required this.generation,
@@ -26,18 +23,10 @@ final class DigitorWorkspacePreviewState {
   final int width;
   final int height;
   final DigitorNativeTextureBackend backend;
-
-  /// Flutter texture registry id when the frame has been presented through the
-  /// registered platform host. Null for metadata-only [renderPreview] calls.
   final int? textureId;
 }
 
 /// High-level Digitor editor workspace owned entirely by DigitorEngine.
-///
-/// Applications may keep UI state around this object, but they must not own
-/// decoder, renderer, graph-processing, preview-host, timeline-processing, or
-/// export-processing implementations. Those responsibilities stay behind this
-/// facade.
 final class DigitorEditorWorkspace {
   DigitorEditorWorkspace._(
     this._engine,
@@ -64,12 +53,6 @@ final class DigitorEditorWorkspace {
       capabilities = null;
     }
 
-    // Android Flutter currently presents through SurfaceProducer/ANativeWindow.
-    // The production-qualified render-target presenter is GLES; Vulkan remains
-    // the engine's first general Android backend, but it has no SurfaceProducer
-    // swapchain/presenter yet. Resolve AUTO before engine initialization so the
-    // backend is locked once for the session and never silently switches after
-    // rendering begins. Explicit Vulkan requests remain strict.
     final resolvedBackend =
         preferredBackend == DigitorBackend.automatic &&
             Platform.isAndroid &&
@@ -128,10 +111,14 @@ final class DigitorEditorWorkspace {
   int? _selectedNode;
   DigitorProductionMediaSnapshot? _media;
   DigitorRegisteredProductionSession? _productionSession;
+  DigitorProductionTimelineSession? _productionTimeline;
   DigitorFlutterTextureTarget? _previewTexture;
   int _previewWidth = 0;
   int _previewHeight = 0;
   int _timelineRevision = 0;
+  int _productionTimelineRevision = 0;
+  int _projectFpsNum = 30;
+  int _projectFpsDen = 1;
   int _audioRevision = 1;
   int _exportSnapshotIdentity = 0;
   bool _closed = false;
@@ -146,23 +133,20 @@ final class DigitorEditorWorkspace {
   int get parameterRevision => _graph.parameterRevision;
   bool get productionHostRegistered =>
       DigitorRegisteredProductionSession.hostRegistered;
-  bool get productionReady => _productionSession != null;
+  bool get productionTimelineConfigured =>
+      _productionTimeline?.configured ?? false;
+  bool get productionReady =>
+      _productionSession != null || productionTimelineConfigured;
 
   DigitorProductionMediaSnapshot openMedia(String path) {
     _ensureOpen();
+    clearProductionTimeline();
     _productionSession?.dispose();
     _productionSession = null;
     final snapshot = _mediaPipeline.open(path);
     _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
       if (Platform.isAndroid || Platform.isWindows) {
-        // The auxiliary media facade is used only to obtain immutable metadata
-        // (dimensions, duration and source frame timing). Keeping it open while
-        // the registered production session starts would hold a second platform
-        // decoder for the same source. Android MediaCodec and Windows D3D11VA
-        // production paths both require exclusive/finite decoder GPU resources;
-        // release the auxiliary decoder before opening the strict production
-        // path and retain only metadata safe after close.
         _media = DigitorProductionMediaSnapshot(
           path: snapshot.path,
           decoder: snapshot.decoder,
@@ -177,6 +161,7 @@ final class DigitorEditorWorkspace {
         mediaPath: path,
         nodeGraph: _graph,
       );
+      _productionTimeline ??= DigitorProductionTimelineSession(_graph);
     }
     final media = _media!;
     _timeline.attachMedia(path);
@@ -190,13 +175,6 @@ final class DigitorEditorWorkspace {
     return media;
   }
 
-  /// Opens editor media through the platform-registered production provider.
-  ///
-  /// The Flutter editor already requires a registered native production host,
-  /// so it must not pre-open the auxiliary FFmpeg media facade before that
-  /// provider gets a chance to create its platform decoder. The legacy
-  /// [openMedia] API remains available for callers that explicitly need its
-  /// FFmpeg-backed [DigitorProductionMediaSnapshot].
   void openRegisteredMedia(String path) {
     _ensureOpen();
     if (path.isEmpty) {
@@ -208,6 +186,7 @@ final class DigitorEditorWorkspace {
       );
     }
 
+    clearProductionTimeline();
     _productionSession?.dispose();
     _productionSession = null;
     _mediaPipeline.clear();
@@ -216,6 +195,7 @@ final class DigitorEditorWorkspace {
       mediaPath: path,
       nodeGraph: _graph,
     );
+    _productionTimeline ??= DigitorProductionTimelineSession(_graph);
     _timeline.attachMedia(path);
     _timelineRevision += 1;
     _timeline.publish(
@@ -226,27 +206,90 @@ final class DigitorEditorWorkspace {
     );
   }
 
+  /// Publishes the authoritative native edit model to the native production
+  /// renderer. After this succeeds, preview/export use project time and the
+  /// legacy single-source decoder session is released so there is no duplicate
+  /// hardware decoder competing with the project source registry.
+  void configureProductionTimeline({
+    required String serializedProject,
+    required List<DigitorTimelineMediaSource> sources,
+    required int revision,
+    required int durationUs,
+    required int videoTrackCount,
+    required int audioTrackCount,
+    int fpsNum = 30,
+    int fpsDen = 1,
+  }) {
+    _ensureOpen();
+    if (!DigitorRegisteredProductionSession.hostRegistered) {
+      throw StateError('Native production host is not registered.');
+    }
+    if (serializedProject.isEmpty || sources.isEmpty || revision <= 0 ||
+        durationUs <= 0 || videoTrackCount <= 0 || audioTrackCount < 0 ||
+        fpsNum <= 0 || fpsDen <= 0) {
+      throw ArgumentError('Invalid native production timeline publication.');
+    }
+    final timeline = _productionTimeline ??=
+        DigitorProductionTimelineSession(_graph);
+    timeline.configure(
+      serializedProject: serializedProject,
+      sources: sources,
+    );
+    _productionTimelineRevision = revision;
+    _projectFpsNum = fpsNum;
+    _projectFpsDen = fpsDen;
+
+    // The project service owns per-source hardware decoders now. Keep only the
+    // process-wide registered host, not a second open single-source decoder.
+    _productionSession?.dispose();
+    _productionSession = null;
+
+    _timeline.detachMedia();
+    _timelineRevision += 1;
+    _timeline.publish(
+      revision: _timelineRevision,
+      durationUs: durationUs,
+      videoTrackCount: videoTrackCount,
+      audioTrackCount: audioTrackCount,
+    );
+  }
+
+  void clearProductionTimeline() {
+    if (_closed) return;
+    final timeline = _productionTimeline;
+    if (timeline != null && timeline.configured) {
+      timeline.clear();
+    }
+    _productionTimelineRevision = 0;
+    _projectFpsNum = 30;
+    _projectFpsDen = 1;
+  }
+
   DigitorPreviewCapabilities productionPreviewCapabilities() {
     _ensureProductionReady();
+    if (productionTimelineConfigured) {
+      return _productionTimeline!.previewCapabilities;
+    }
     return _productionSession!.previewCapabilities;
   }
 
-  /// Renders a production frame and returns descriptor metadata only.
-  ///
-  /// Callers using this low-level method must call [previewConsumed]. Flutter
-  /// applications should use [presentPreview] so texture ownership and release
-  /// ordering stay inside DigitorEngine.
   DigitorWorkspacePreviewState renderPreview({
     required int timestampUs,
     required int width,
     required int height,
   }) {
     _ensureProductionReady();
-    final frame = _productionSession!.preview(
-      timestampUs: timestampUs,
-      width: width,
-      height: height,
-    );
+    final frame = productionTimelineConfigured
+        ? _productionTimeline!.preview(
+            timestampUs: timestampUs,
+            width: width,
+            height: height,
+          )
+        : _productionSession!.preview(
+            timestampUs: timestampUs,
+            width: width,
+            height: height,
+          );
     return DigitorWorkspacePreviewState(
       generation: frame.generation,
       timestampUs: frame.timestampUs,
@@ -256,13 +299,6 @@ final class DigitorEditorWorkspace {
     );
   }
 
-  /// Renders and publishes one production GPU frame to Flutter's texture
-  /// registry. The exact frame used here is produced by the same native graph
-  /// and revision contract used by production export.
-  ///
-  /// Descriptor-driven hosts (currently Windows) import the selected GPU frame
-  /// directly. Render-target hosts remain engine-owned and must expose their
-  /// renderer before this method is used; no CPU-copy fallback is attempted.
   Future<DigitorWorkspacePreviewState> presentPreview({
     required int timestampUs,
     required int width,
@@ -273,7 +309,7 @@ final class DigitorEditorWorkspace {
     if (capabilities == null) {
       throw StateError('Flutter platform texture host is unavailable.');
     }
-    final previewCapabilities = _productionSession!.previewCapabilities;
+    final previewCapabilities = productionPreviewCapabilities();
     if (capabilities.renderTargetPresentation) {
       final handleType = previewCapabilities.handleType;
       if (!capabilities.supports(handleType)) {
@@ -304,17 +340,32 @@ final class DigitorEditorWorkspace {
       if (target.nativeTargetHandle == 0) {
         throw StateError('Flutter render target is not currently available.');
       }
-      _productionSession!.setPreviewTarget(
-        nativeTargetHandle: target.nativeTargetHandle,
-        width: width,
-        height: height,
-        handleType: handleType,
-      );
-      final frame = _productionSession!.preview(
-        timestampUs: timestampUs,
-        width: width,
-        height: height,
-      );
+      if (productionTimelineConfigured) {
+        _productionTimeline!.setPreviewTarget(
+          nativeTargetHandle: target.nativeTargetHandle,
+          width: width,
+          height: height,
+          handleType: handleType,
+        );
+      } else {
+        _productionSession!.setPreviewTarget(
+          nativeTargetHandle: target.nativeTargetHandle,
+          width: width,
+          height: height,
+          handleType: handleType,
+        );
+      }
+      final frame = productionTimelineConfigured
+          ? _productionTimeline!.preview(
+              timestampUs: timestampUs,
+              width: width,
+              height: height,
+            )
+          : _productionSession!.preview(
+              timestampUs: timestampUs,
+              width: width,
+              height: height,
+            );
       try {
         await _platformHost.markFrameAvailable(
           target,
@@ -329,20 +380,28 @@ final class DigitorEditorWorkspace {
           textureId: target.textureId,
         );
       } finally {
-        _productionSession!.previewConsumed(frame.generation);
+        if (productionTimelineConfigured) {
+          _productionTimeline!.previewConsumed(frame.generation);
+        } else {
+          _productionSession!.previewConsumed(frame.generation);
+        }
       }
     }
 
     if (!capabilities.directDescriptorPresentation) {
-      throw UnsupportedError(
-        'Flutter platform exposes no production preview path.',
-      );
+      throw UnsupportedError('Flutter platform exposes no production preview path.');
     }
-    final frame = _productionSession!.preview(
-      timestampUs: timestampUs,
-      width: width,
-      height: height,
-    );
+    final frame = productionTimelineConfigured
+        ? _productionTimeline!.preview(
+            timestampUs: timestampUs,
+            width: width,
+            height: height,
+          )
+        : _productionSession!.preview(
+            timestampUs: timestampUs,
+            width: width,
+            height: height,
+          );
     try {
       if (!capabilities.supports(frame.handleType)) {
         throw StateError(
@@ -376,13 +435,21 @@ final class DigitorEditorWorkspace {
         textureId: target.textureId,
       );
     } finally {
-      _productionSession!.previewConsumed(frame.generation);
+      if (productionTimelineConfigured) {
+        _productionTimeline!.previewConsumed(frame.generation);
+      } else {
+        _productionSession!.previewConsumed(frame.generation);
+      }
     }
   }
 
   void previewConsumed([int? generation]) {
     _ensureProductionReady();
-    _productionSession!.previewConsumed(generation);
+    if (productionTimelineConfigured) {
+      _productionTimeline!.previewConsumed(generation);
+    } else {
+      _productionSession!.previewConsumed(generation);
+    }
   }
 
   void exportMedia({
@@ -397,6 +464,32 @@ final class DigitorEditorWorkspace {
   }) {
     _ensureProductionReady();
     final snapshotIdentity = ++_exportSnapshotIdentity;
+    if (productionTimelineConfigured) {
+      if (_productionTimelineRevision <= 0) {
+        throw StateError('Native production timeline revision is unavailable.');
+      }
+      _productionTimeline!.export(
+        path: path,
+        firstFrame: firstFrame,
+        lastFrame: lastFrame,
+        width: width,
+        height: height,
+        snapshotIdentity: snapshotIdentity,
+        timelineRevision: _productionTimelineRevision,
+        renderRevision: _graph.graphRevision,
+        nodeGraphRevision: _graph.graphRevision,
+        colorPipelineRevision: _graph.parameterRevision,
+        audioRevision: _audioRevision,
+        graphRecipeIdentity: _graph.recipeIdentity,
+        fpsNum: _projectFpsNum,
+        fpsDen: _projectFpsDen,
+        format: format,
+        codec: codec,
+        onProgress: onProgress,
+      );
+      return;
+    }
+
     final sourceFrameDurationUs =
         _media?.firstFrame.duration.inMicroseconds ?? 0;
     final fpsNum = sourceFrameDurationUs > 0 ? 1000000 : 30;
@@ -424,7 +517,11 @@ final class DigitorEditorWorkspace {
 
   void cancelExport() {
     _ensureProductionReady();
-    _productionSession!.cancel();
+    if (productionTimelineConfigured) {
+      _productionTimeline!.cancel();
+    } else {
+      _productionSession!.cancel();
+    }
   }
 
   DigitorTimelineStatus timelineStatus() {
@@ -599,9 +696,9 @@ final class DigitorEditorWorkspace {
 
   void _ensureProductionReady() {
     _ensureOpen();
-    if (_productionSession == null) {
+    if (!productionReady) {
       throw StateError(
-        'The native production host is not registered or no media is open.',
+        'The native production host is not registered or no media/timeline is open.',
       );
     }
   }
@@ -620,6 +717,10 @@ final class DigitorEditorWorkspace {
   Future<void> releaseProductionSession() async {
     if (_closed) return;
     _timeline.detachMedia();
+    final productionTimeline = _productionTimeline;
+    _productionTimeline = null;
+    productionTimeline?.close();
+    _productionTimelineRevision = 0;
     _productionSession?.dispose();
     _productionSession = null;
     final previewTexture = _previewTexture;
