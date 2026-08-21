@@ -1,5 +1,8 @@
 #include "digitor/flutter_production_plugin_bootstrap.hpp"
 #include "digitor/flutter_production_provider_builder.hpp"
+#if defined(__ANDROID__)
+#include "digitor/android_flutter_host_bridge.h"
+#endif
 
 #include <array>
 #include <memory>
@@ -377,6 +380,38 @@ DigitorResult install_flutter_production_provider_builder(
           out.video_bitrate = build->video_bitrate;
           out.required_device_identity = build->required_device_identity;
           out.required_context_identity = build->required_context_identity;
+#if defined(__ANDROID__)
+          if (platform == DIGITOR_FLUTTER_PRODUCTION_PLUGIN_ANDROID &&
+              attachment.flutter_texture_registrar != nullptr) {
+            const auto* bridge =
+                static_cast<const DigitorAndroidFlutterHostBridge*>(
+                    attachment.flutter_texture_registrar);
+            if (bridge->struct_size >= sizeof(DigitorAndroidFlutterHostBridge) &&
+                bridge->api_version ==
+                    DIGITOR_ANDROID_FLUTTER_HOST_BRIDGE_API_VERSION &&
+                bridge->magic == DIGITOR_ANDROID_FLUTTER_HOST_BRIDGE_MAGIC) {
+              if (bridge->export_progress_begin != nullptr) {
+                out.export_progress_ui_begin = [bridge]() {
+                  bridge->export_progress_begin(bridge->user_data);
+                };
+              }
+              if (bridge->export_progress_update != nullptr) {
+                out.export_progress_ui_update =
+                    [bridge](double fraction, std::int64_t completed,
+                             std::int64_t total) {
+                      bridge->export_progress_update(
+                          bridge->user_data, fraction, completed, total);
+                    };
+              }
+              if (bridge->export_progress_end != nullptr) {
+                out.export_progress_ui_end = [bridge](DigitorResult result) {
+                  bridge->export_progress_end(
+                      bridge->user_data, static_cast<std::int32_t>(result));
+                };
+              }
+            }
+          }
+#endif
           local.clear();
           return out;
         },

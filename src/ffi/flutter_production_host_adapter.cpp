@@ -94,6 +94,33 @@ struct FlutterProductionHostAdapter::Impl {
            native_preview_capabilities_valid(inputs.preview_capabilities);
   }
 
+  void begin_export_progress_ui() noexcept {
+    try {
+      if (inputs.export_progress_ui_begin) inputs.export_progress_ui_begin();
+    } catch (...) {
+      // Native progress UI is best-effort and must never affect export.
+    }
+  }
+
+  void update_export_progress_ui(double fraction, std::int64_t completed,
+                                 std::int64_t total) noexcept {
+    try {
+      if (inputs.export_progress_ui_update) {
+        inputs.export_progress_ui_update(fraction, completed, total);
+      }
+    } catch (...) {
+      // Native progress UI is best-effort and must never affect export.
+    }
+  }
+
+  void end_export_progress_ui(DigitorResult result) noexcept {
+    try {
+      if (inputs.export_progress_ui_end) inputs.export_progress_ui_end(result);
+    } catch (...) {
+      // Native progress UI is best-effort and must never affect export.
+    }
+  }
+
   DigitorResult make_decoder(
       std::unique_ptr<ProductionHardwareDecodeSession>& output,
       std::string& diagnostic) {
@@ -283,6 +310,7 @@ struct FlutterProductionHostAdapter::Impl {
     std::string message;
     ProductionMediaGraphRuntime* runtime = nullptr;
     HardwareEncodeConfig config{};
+    bool progress_ui_started = false;
     try {
       {
         std::lock_guard lock(p->mutex);
@@ -317,24 +345,38 @@ struct FlutterProductionHostAdapter::Impl {
       config.require_monotonic_timestamps = true;
       config.require_atomic_finalize = true;
 
-      auto progress_bridge = [progress, progress_user_data](
+      p->begin_export_progress_ui();
+      progress_ui_started = true;
+      auto progress_bridge = [p, progress, progress_user_data](
           std::uint64_t completed, std::uint64_t total) {
-        if (!progress) return;
         const auto fraction = total == 0 ? 0.0
             : static_cast<double>(completed) / static_cast<double>(total);
-        progress(fraction, static_cast<std::int64_t>(completed),
-                 static_cast<std::int64_t>(total), progress_user_data);
+        p->update_export_progress_ui(
+            fraction, static_cast<std::int64_t>(completed),
+            static_cast<std::int64_t>(total));
+        if (progress) {
+          progress(fraction, static_cast<std::int64_t>(completed),
+                   static_cast<std::int64_t>(total), progress_user_data);
+        }
       };
       const auto result = runtime->export_frames(
           frames, std::move(config), &message, std::move(progress_bridge));
+      p->end_export_progress_ui(result);
+      progress_ui_started = false;
       if (result != DIGITOR_RESULT_OK)
         write_diagnostic(diagnostic, diagnostic_capacity, message);
       return result;
     } catch (const std::bad_alloc&) {
+      if (progress_ui_started) {
+        p->end_export_progress_ui(DIGITOR_RESULT_OUT_OF_MEMORY);
+      }
       write_diagnostic(diagnostic, diagnostic_capacity,
                        "out of memory preparing production export");
       return DIGITOR_RESULT_OUT_OF_MEMORY;
     } catch (...) {
+      if (progress_ui_started) {
+        p->end_export_progress_ui(DIGITOR_RESULT_INTERNAL_ERROR);
+      }
       write_diagnostic(diagnostic, diagnostic_capacity,
                        "unexpected production export adapter failure");
       return DIGITOR_RESULT_INTERNAL_ERROR;
@@ -380,6 +422,7 @@ struct FlutterProductionHostAdapter::Impl {
     std::shared_ptr<const ExportRenderSnapshot> snapshot;
     ProductionEncoderFactoryResult encoder;
     HardwareEncodeConfig config{};
+    bool progress_ui_started = false;
     try {
       {
         std::lock_guard lock(p->mutex);
@@ -499,33 +542,51 @@ struct FlutterProductionHostAdapter::Impl {
       for (auto frame = request->first_frame; frame <= request->last_frame; ++frame)
         frames.push_back(frame);
 
-      auto progress_bridge = [progress, progress_user_data](
+      p->begin_export_progress_ui();
+      progress_ui_started = true;
+      auto progress_bridge = [p, progress, progress_user_data](
           std::uint64_t completed, std::uint64_t total) {
-        if (!progress) return;
         const auto fraction = total == 0 ? 0.0
             : static_cast<double>(completed) / static_cast<double>(total);
-        progress(fraction, static_cast<std::int64_t>(completed),
-                 static_cast<std::int64_t>(total), progress_user_data);
+        p->update_export_progress_ui(
+            fraction, static_cast<std::int64_t>(completed),
+            static_cast<std::int64_t>(total));
+        if (progress) {
+          progress(fraction, static_cast<std::int64_t>(completed),
+                   static_cast<std::int64_t>(total), progress_user_data);
+        }
       };
 
       const auto result = runtime->export_frames_with_encoder(
           frames, std::move(config), std::move(encoder.callbacks), &message,
           std::move(progress_bridge));
       if (result != DIGITOR_RESULT_OK) {
+        p->end_export_progress_ui(result);
+        progress_ui_started = false;
         write_diagnostic(diagnostic, diagnostic_capacity, message);
         return result;
       }
       if (!encoder.zero_copy_qualified || !encoder.zero_copy_qualified()) {
+        p->end_export_progress_ui(DIGITOR_RESULT_INTERNAL_ERROR);
+        progress_ui_started = false;
         write_diagnostic(diagnostic, diagnostic_capacity,
             "hardware export completed without final zero-copy qualification");
         return DIGITOR_RESULT_INTERNAL_ERROR;
       }
+      p->end_export_progress_ui(DIGITOR_RESULT_OK);
+      progress_ui_started = false;
       return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
+      if (progress_ui_started) {
+        p->end_export_progress_ui(DIGITOR_RESULT_OUT_OF_MEMORY);
+      }
       write_diagnostic(diagnostic, diagnostic_capacity,
                        "out of memory preparing frozen production export");
       return DIGITOR_RESULT_OUT_OF_MEMORY;
     } catch (...) {
+      if (progress_ui_started) {
+        p->end_export_progress_ui(DIGITOR_RESULT_INTERNAL_ERROR);
+      }
       write_diagnostic(diagnostic, diagnostic_capacity,
                        "unexpected frozen production export adapter failure");
       return DIGITOR_RESULT_INTERNAL_ERROR;

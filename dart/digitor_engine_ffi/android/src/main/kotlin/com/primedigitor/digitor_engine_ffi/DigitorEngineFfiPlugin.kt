@@ -58,11 +58,16 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Long, HostTexture>()
 
+    @Volatile
+    private var exportProgressOverlay: ExportProgressSurfaceOverlay? = null
+
     private external fun nativeAcquireWindow(surface: Surface): Long
 
     private external fun nativeReleaseWindow(handle: Long)
 
     private external fun nativeProductionRegistrarToken(): Long
+
+    private external fun nativeReleaseProductionRegistrarToken()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -73,6 +78,9 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        exportProgressOverlay?.dismiss()
+        exportProgressOverlay = null
+        nativeReleaseProductionRegistrarToken()
         hosts.keys.toList().forEach(::disposeTexture)
         pendingImportResult?.error(
             "media_import_detached",
@@ -85,11 +93,15 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
+        exportProgressOverlay?.dismiss()
+        exportProgressOverlay = ExportProgressSurfaceOverlay(binding.activity)
         binding.addActivityResultListener(this)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
         activityBinding?.removeActivityResultListener(this)
+        exportProgressOverlay?.dismiss()
+        exportProgressOverlay = null
         activityBinding = null
     }
 
@@ -99,6 +111,8 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onDetachedFromActivity() {
         activityBinding?.removeActivityResultListener(this)
+        exportProgressOverlay?.dismiss()
+        exportProgressOverlay = null
         activityBinding = null
         pendingImportResult?.error(
             "media_import_activity_detached",
@@ -152,6 +166,26 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
                 }
             }
             else -> result.notImplemented()
+        }
+    }
+
+    @Suppress("unused")
+    fun showExportProgressFromNative() {
+        exportProgressOverlay?.show()
+    }
+
+    @Suppress("unused")
+    fun updateExportProgressFromNative(fraction: Double, completed: Long, total: Long) {
+        exportProgressOverlay?.update(fraction, completed, total)
+    }
+
+    @Suppress("unused")
+    fun hideExportProgressFromNative(resultCode: Int) {
+        val overlay = exportProgressOverlay ?: return
+        if (resultCode == 0) {
+            overlay.complete()
+        } else {
+            overlay.dismiss()
         }
     }
 
@@ -266,7 +300,6 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
             throw IllegalStateException("Android selected media copy is empty.")
         }
 
-        // Keep only the current import plus files that may still be in use very recently.
         val cutoff = System.currentTimeMillis() - 6L * 60L * 60L * 1000L
         destination.parentFile?.listFiles()?.forEach { candidate ->
             if (candidate != destination && candidate.isFile && candidate.lastModified() < cutoff) {
@@ -309,15 +342,25 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
             val staging = File(exportStagingDirectory(), displayName)
             if (staging.exists()) staging.delete()
             File("${staging.absolutePath}.digitor-partial").delete()
-            result.success(
-                mapOf(
-                    "stagingPath" to staging.absolutePath,
-                    "displayName" to displayName,
-                    "collection" to "Movies/Digitor",
-                ),
+
+            val payload = mapOf(
+                "stagingPath" to staging.absolutePath,
+                "displayName" to displayName,
+                "collection" to "Movies/Digitor",
             )
+            val overlay = exportProgressOverlay
+            if (overlay == null) {
+                result.success(payload)
+            } else {
+                overlay.prepare { result.success(payload) }
+            }
         } catch (error: Throwable) {
-            result.error("export_staging_failed", error.message ?: "Could not prepare export staging.", null)
+            exportProgressOverlay?.dismiss()
+            result.error(
+                "export_staging_failed",
+                error.message ?: "Could not prepare export staging.",
+                null,
+            )
         }
     }
 
@@ -357,6 +400,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
                 }
                 resolver.update(insertedUri, publishValues, null, null)
                 if (!staging.delete()) staging.deleteOnExit()
+                exportProgressOverlay?.dismiss()
                 result.success(
                     mapOf(
                         "uri" to insertedUri.toString(),
@@ -378,6 +422,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
                 FileOutputStream(destination, false).use { output -> input.copyTo(output, 1024 * 1024) }
             }
             if (!staging.delete()) staging.deleteOnExit()
+            exportProgressOverlay?.dismiss()
             result.success(
                 mapOf(
                     "uri" to destination.toURI().toString(),
@@ -387,6 +432,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
             )
         } catch (error: Throwable) {
             insertedUri?.let { runCatching { context.contentResolver.delete(it, null, null) } }
+            exportProgressOverlay?.dismiss()
             result.error("export_publish_failed", error.message ?: "Could not publish Android export.", null)
         }
     }
@@ -402,8 +448,10 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
                     File("${file.absolutePath}.digitor-partial").delete()
                 }
             }
+            exportProgressOverlay?.dismiss()
             result.success(null)
         } catch (error: Throwable) {
+            exportProgressOverlay?.dismiss()
             result.error("export_discard_failed", error.message ?: "Could not discard Android export staging.", null)
         }
     }

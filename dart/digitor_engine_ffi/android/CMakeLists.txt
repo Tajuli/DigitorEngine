@@ -10,6 +10,10 @@ set_target_properties(digitor_engine_ffi_platform_host PROPERTIES
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS OFF)
 
+target_include_directories(digitor_engine_ffi_platform_host PRIVATE
+  ../../../include
+)
+
 find_library(ANDROID_LIBRARY android REQUIRED)
 target_link_libraries(digitor_engine_ffi_platform_host PRIVATE ${ANDROID_LIBRARY})
 
