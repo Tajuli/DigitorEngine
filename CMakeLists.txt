@@ -63,6 +63,7 @@ target_sources(digitor_engine PRIVATE
     src/ffi/production_media_c_api.cpp
     src/ffi/flutter_production_c_api.cpp
     src/ffi/flutter_production_host_adapter.cpp
+    src/ffi/flutter_production_timeline_service.cpp
     src/ffi/flutter_production_plugin_bootstrap.cpp
     src/audio/audio_latency_probe.cpp
     src/audio/audio_sync_compensation.cpp
