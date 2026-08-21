@@ -131,23 +131,25 @@ typedef _ProjectInfoDart = int Function(
 /// processing, preview presentation and export remain in DigitorEngine's
 /// production pipeline; Flutter never performs per-pixel processing here.
 final class DigitorTimelineEditingSession {
-  DigitorTimelineEditingSession._(this._library, this._handle)
-      : _destroy = _library.lookupFunction<_DestroyNative, _DestroyDart>(
+  DigitorTimelineEditingSession._(
+    DynamicLibrary library,
+    this._handle,
+  ) : _destroy = library.lookupFunction<_DestroyNative, _DestroyDart>(
           'digitor_timeline_completion_destroy',
         ),
-        _addTrack = _library.lookupFunction<_AddTrackNative, _AddTrackDart>(
+        _addTrack = library.lookupFunction<_AddTrackNative, _AddTrackDart>(
           'digitor_timeline_completion_add_track',
         ),
-        _addClip = _library.lookupFunction<_AddClipNative, _AddClipDart>(
+        _addClip = library.lookupFunction<_AddClipNative, _AddClipDart>(
           'digitor_timeline_completion_add_clip',
         ),
-        _splitClip = _library.lookupFunction<_SplitClipNative, _SplitClipDart>(
+        _splitClip = library.lookupFunction<_SplitClipNative, _SplitClipDart>(
           'digitor_timeline_completion_split_clip',
         ),
-        _removeClip = _library.lookupFunction<_RemoveClipNative, _RemoveClipDart>(
+        _removeClip = library.lookupFunction<_RemoveClipNative, _RemoveClipDart>(
           'digitor_timeline_completion_remove_clip',
         ),
-        _projectInfo = _library.lookupFunction<_ProjectInfoNative, _ProjectInfoDart>(
+        _projectInfo = library.lookupFunction<_ProjectInfoNative, _ProjectInfoDart>(
           'digitor_timeline_completion_project_info',
         );
 
@@ -163,7 +165,6 @@ final class DigitorTimelineEditingSession {
     return DigitorTimelineEditingSession._(library, handle);
   }
 
-  final DynamicLibrary _library;
   Pointer<DigitorTimelineCompletionHandleNative> _handle;
   final _DestroyDart _destroy;
   final _AddTrackDart _addTrack;
