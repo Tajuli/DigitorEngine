@@ -79,6 +79,7 @@ class Service final {
         preview_session_(inputs.preview_session),
         encoder_factory_(inputs.encoder_factory),
         texture_descriptor_builder_(inputs.texture_descriptor_builder),
+        preview_target_binder_(inputs.preview_target_binder),
         preview_capabilities_(inputs.preview_capabilities),
         encoder_backend_(inputs.encoder_backend),
         default_video_bitrate_(inputs.video_bitrate),
@@ -91,6 +92,7 @@ class Service final {
   [[nodiscard]] bool valid() const noexcept {
     return static_cast<bool>(decoder_factory_) && preview_session_ &&
            static_cast<bool>(texture_descriptor_builder_) &&
+           static_cast<bool>(preview_target_binder_) &&
            preview_capabilities_.native_gpu_preview_available != 0 &&
            preview_capabilities_.cpu_fallback_only == 0;
   }
@@ -148,13 +150,9 @@ class Service final {
       }
 
       std::scoped_lock lock(mutex_);
-      if (export_running_) {
+      if (export_running_ || operation_running_ || preview_generation_ != 0) {
         return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                           "cannot replace timeline while export is running");
-      }
-      if (preview_generation_ != 0) {
-        return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                           "consume the current preview before replacing timeline");
+                           "production timeline is busy; consume preview/export before replacing it");
       }
       project_ = std::move(*decoded);
       source_paths_ = std::move(next_sources);
@@ -182,9 +180,9 @@ class Service final {
       std::uint64_t generation = 0;
       {
         std::scoped_lock lock(mutex_);
-        if (export_running_) {
+        if (export_running_ || operation_running_) {
           return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                             "cannot clear timeline while export is running");
+                             "cannot clear production timeline while rendering/exporting");
         }
         generation = preview_generation_;
         preview_generation_ = 0;
@@ -195,11 +193,59 @@ class Service final {
         cancelled_.store(false, std::memory_order_release);
         last_error_.clear();
       }
-      if (generation != 0 && preview_session_) preview_session_->consumed(generation);
+      if (generation != 0) preview_session_->consumed(generation);
       return DIGITOR_RESULT_OK;
     } catch (...) {
       return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                   "unexpected production timeline clear failure");
+    }
+  }
+
+  DigitorResult query_preview(DigitorNativePreviewCapabilities* output) noexcept {
+    if (!output) return DIGITOR_RESULT_INVALID_ARGUMENT;
+    try {
+      auto value = preview_capabilities_;
+      value.struct_size = sizeof(value);
+      value.api_version = DIGITOR_NATIVE_PREVIEW_CAPABILITIES_VERSION;
+      value.selected_mode = DIGITOR_PREVIEW_MODE_NATIVE_GPU_STRICT;
+      value.native_gpu_preview_available = 1;
+      value.cpu_fallback_only = 0;
+      *output = value;
+      return DIGITOR_RESULT_OK;
+    } catch (...) {
+      return DIGITOR_RESULT_INTERNAL_ERROR;
+    }
+  }
+
+  DigitorResult set_preview_target(const DigitorFlutterPreviewTarget* target) noexcept {
+    if (!target || target->struct_size < sizeof(DigitorFlutterPreviewTarget) ||
+        target->api_version != DIGITOR_FLUTTER_PREVIEW_TARGET_VERSION ||
+        target->native_target_handle == 0 || target->width == 0 ||
+        target->height == 0 ||
+        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_NONE ||
+        target->handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER) {
+      return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
+                  "invalid production timeline preview target");
+    }
+    try {
+      std::string diagnostic;
+      const auto result = preview_target_binder_(
+          target->native_target_handle, target->width, target->height,
+          target->handle_type, diagnostic);
+      if (result != DIGITOR_RESULT_OK) {
+        return fail(result, diagnostic.empty()
+                                ? "production timeline preview target binding failed"
+                                : std::move(diagnostic));
+      }
+      std::scoped_lock lock(mutex_);
+      last_error_.clear();
+      return DIGITOR_RESULT_OK;
+    } catch (const std::bad_alloc&) {
+      return fail(DIGITOR_RESULT_OUT_OF_MEMORY,
+                  "out of memory binding production timeline preview target");
+    } catch (...) {
+      return fail(DIGITOR_RESULT_INTERNAL_ERROR,
+                  "unexpected production timeline preview target failure");
     }
   }
 
@@ -223,20 +269,20 @@ class Service final {
           return fail_locked(DIGITOR_RESULT_NOT_INITIALIZED,
                              "production timeline is not configured");
         }
-        if (export_running_) {
+        if (export_running_ || operation_running_ || preview_generation_ != 0) {
           return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                             "production export is already running");
+                             "production timeline already has an active operation/frame");
         }
-        if (preview_generation_ != 0) {
-          return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                             "consume the current production timeline preview first");
-        }
+        operation_running_ = true;
       }
 
       ProcessedGpuFramePtr frame;
       std::string diagnostic;
       auto result = process_frame(graph, timeline_us, width, height, frame, diagnostic);
-      if (result != DIGITOR_RESULT_OK) return fail(result, std::move(diagnostic));
+      if (result != DIGITOR_RESULT_OK) {
+        finish_operation();
+        return fail(result, std::move(diagnostic));
+      }
 
       std::uint64_t generation = 0;
       {
@@ -246,6 +292,7 @@ class Service final {
       }
       const auto submitted = preview_session_->submit(frame, generation);
       if (!submitted) {
+        finish_operation();
         return fail(submitted.result,
                     submitted.diagnostic.empty()
                         ? "native timeline GPU preview presentation failed"
@@ -258,6 +305,7 @@ class Service final {
       result = texture_descriptor_builder_(frame, generation, descriptor, diagnostic);
       if (result != DIGITOR_RESULT_OK) {
         preview_session_->consumed(generation);
+        finish_operation();
         return fail(result, diagnostic.empty()
                                 ? "failed to build native timeline preview descriptor"
                                 : std::move(diagnostic));
@@ -269,18 +317,21 @@ class Service final {
           descriptor.handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_NONE ||
           descriptor.handle_type == DIGITOR_NATIVE_TEXTURE_HANDLE_CPU_POINTER) {
         preview_session_->consumed(generation);
+        finish_operation();
         return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                     "native timeline preview descriptor is not GPU production-ready");
       }
       if (required_device_identity_ != 0 &&
           descriptor.device_identity != required_device_identity_) {
         preview_session_->consumed(generation);
+        finish_operation();
         return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                     "timeline preview device identity differs from registered production host");
       }
       if (required_context_identity_ != 0 &&
           descriptor.context_identity != required_context_identity_) {
         preview_session_->consumed(generation);
+        finish_operation();
         return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
                     "timeline preview context identity differs from registered production host");
       }
@@ -290,14 +341,17 @@ class Service final {
       {
         std::scoped_lock lock(mutex_);
         preview_generation_ = generation;
+        operation_running_ = false;
         last_error_.clear();
       }
       *output = descriptor;
       return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
+      finish_operation();
       return fail(DIGITOR_RESULT_OUT_OF_MEMORY,
                   "out of memory rendering production timeline preview");
     } catch (...) {
+      finish_operation();
       return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                   "unexpected production timeline preview failure");
     }
@@ -329,21 +383,7 @@ class Service final {
                           const DigitorFlutterExportRequestV2* request,
                           DigitorExportProgressCallback progress,
                           void* progress_user_data) noexcept {
-    if (!graph || graph_revision == 0 || parameter_revision == 0 || !request ||
-        request->struct_size < sizeof(DigitorFlutterExportRequestV2) ||
-        request->api_version != DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION ||
-        !request->utf8_output_path || !request->utf8_output_path[0] ||
-        !request->utf8_color_metadata || !request->utf8_color_metadata[0] ||
-        !request->utf8_graph_recipe_identity ||
-        !request->utf8_graph_recipe_identity[0] ||
-        request->first_frame < 0 || request->last_frame < request->first_frame ||
-        request->width == 0 || request->height == 0 ||
-        request->snapshot_identity == 0 || request->timeline_revision == 0 ||
-        request->render_revision == 0 || request->node_graph_revision == 0 ||
-        request->color_pipeline_revision == 0 || request->audio_revision == 0 ||
-        request->fps_num <= 0 || request->fps_den <= 0 ||
-        request->duration_us <= 0 || request->video_bitrate <= 0 ||
-        request->variable_frame_rate || !supported_working_format(request->working_format)) {
+    if (!valid_export_request(graph, graph_revision, parameter_revision, request)) {
       return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
                   "invalid frozen production timeline export request");
     }
@@ -351,7 +391,6 @@ class Service final {
       return fail(DIGITOR_RESULT_NOT_INITIALIZED,
                   "native timeline export encoder factory is unavailable");
     }
-
     const auto renderer = renderer_backend(preview_capabilities_.backend);
     const auto alpha = alpha_policy(request->alpha_policy);
     if (!renderer || !alpha) {
@@ -359,34 +398,34 @@ class Service final {
                   "production timeline export backend or alpha policy is unsupported");
     }
 
+    bool progress_ui_started = false;
     try {
-      std::uint64_t configured_revision = 0;
       {
         std::scoped_lock lock(mutex_);
         if (!configured_) {
           return fail_locked(DIGITOR_RESULT_NOT_INITIALIZED,
                              "production timeline is not configured");
         }
-        if (preview_generation_ != 0) {
+        if (preview_generation_ != 0 || operation_running_ || export_running_) {
           return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                             "consume production timeline preview before export");
+                             "production timeline is busy; consume preview before export");
         }
-        if (export_running_) {
-          return fail_locked(DIGITOR_RESULT_RESOURCE_IN_USE,
-                             "a production timeline export is already running");
+        if (request->timeline_revision != project_.revision) {
+          return fail_locked(DIGITOR_RESULT_INVALID_ARGUMENT,
+                             "frozen export timeline revision differs from configured native timeline");
         }
-        configured_revision = project_.revision;
+        export_running_ = true;
+        cancelled_.store(false, std::memory_order_release);
       }
-      if (request->timeline_revision != configured_revision) {
-        return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
-                    "frozen export timeline revision differs from configured native timeline");
-      }
+
       if (graph_revision != request->node_graph_revision ||
           parameter_revision != request->color_pipeline_revision) {
+        clear_export_state();
         return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
                     "frozen export graph/color revision differs from bound node graph");
       }
       if (graph->impl.recipe_identity() != request->utf8_graph_recipe_identity) {
+        clear_export_state();
         return fail(DIGITOR_RESULT_INVALID_ARGUMENT,
                     "frozen export graph recipe identity differs from bound node graph");
       }
@@ -408,9 +447,9 @@ class Service final {
       data.variable_frame_rate = false;
       data.hdr = request->hdr != 0;
       data.color_metadata = request->utf8_color_metadata;
-      // Multi-source audio must not silently reuse the last-opened media path.
-      // The current timeline service exports the exact native video pipeline;
-      // project audio mixing is intentionally left unbound rather than wrong.
+      // Do not mux the last imported source's audio into a multi-source export.
+      // Project audio mixing will be bound independently; wrong audio is never
+      // accepted as a fallback for correct video.
       data.source_media_path.clear();
       data.source_start_us = 0;
       data.output_path = request->utf8_output_path;
@@ -432,14 +471,16 @@ class Service final {
       auto snapshot = std::make_shared<const ExportRenderSnapshot>(std::move(data));
       const auto snapshot_validation = validate_export_snapshot(*snapshot);
       if (!snapshot_validation) {
+        clear_export_state();
         return fail(snapshot_validation.result, snapshot_validation.diagnostic);
       }
-      auto encoder_factory_result = encoder_factory_(snapshot);
-      if (!encoder_factory_result) {
+      auto encoder_result = encoder_factory_(snapshot);
+      if (!encoder_result) {
+        clear_export_state();
         return fail(DIGITOR_RESULT_BACKEND_UNAVAILABLE,
-                    encoder_factory_result.diagnostic.empty()
+                    encoder_result.diagnostic.empty()
                         ? "failed to create native timeline hardware encoder"
-                        : encoder_factory_result.diagnostic);
+                        : encoder_result.diagnostic);
       }
 
       HardwareEncodeConfig config{};
@@ -453,22 +494,11 @@ class Service final {
       config.require_atomic_finalize = true;
 
       ProductionHardwareEncodeSession encoder(
-          config, std::move(encoder_factory_result.callbacks));
+          config, std::move(encoder_result.callbacks));
       {
         std::scoped_lock lock(mutex_);
-        export_running_ = true;
         active_encoder_ = &encoder;
-        cancelled_.store(false, std::memory_order_release);
-        last_error_.clear();
       }
-
-      bool progress_ui_started = false;
-      auto finish_state = [this]() noexcept {
-        std::scoped_lock lock(mutex_);
-        active_encoder_ = nullptr;
-        export_running_ = false;
-      };
-
       if (export_progress_ui_begin_) {
         try { export_progress_ui_begin_(); } catch (...) {}
       }
@@ -477,10 +507,8 @@ class Service final {
       std::string diagnostic;
       auto result = encoder.start(&diagnostic);
       if (result != DIGITOR_RESULT_OK) {
-        finish_state();
-        if (progress_ui_started && export_progress_ui_end_) {
-          try { export_progress_ui_end_(result); } catch (...) {}
-        }
+        finish_export_ui(result, progress_ui_started);
+        clear_export_state();
         return fail(result, diagnostic.empty()
                                 ? "failed to start native timeline hardware encoder"
                                 : std::move(diagnostic));
@@ -500,10 +528,8 @@ class Service final {
            frame_index <= request->last_frame; ++frame_index) {
         if (cancelled_.load(std::memory_order_acquire)) {
           encoder.cancel();
-          finish_state();
-          if (progress_ui_started && export_progress_ui_end_) {
-            try { export_progress_ui_end_(DIGITOR_RESULT_RESOURCE_IN_USE); } catch (...) {}
-          }
+          finish_export_ui(DIGITOR_RESULT_RESOURCE_IN_USE, progress_ui_started);
+          clear_export_state();
           return fail(DIGITOR_RESULT_RESOURCE_IN_USE,
                       "production timeline export cancelled");
         }
@@ -518,10 +544,8 @@ class Service final {
                                request->height, rendered, diagnostic);
         if (result != DIGITOR_RESULT_OK) {
           encoder.cancel();
-          finish_state();
-          if (progress_ui_started && export_progress_ui_end_) {
-            try { export_progress_ui_end_(result); } catch (...) {}
-          }
+          finish_export_ui(result, progress_ui_started);
+          clear_export_state();
           return fail(result, diagnostic.empty()
                                   ? "native timeline frame render failed during export"
                                   : std::move(diagnostic));
@@ -530,10 +554,8 @@ class Service final {
             *snapshot, *rendered);
         if (!frame_validation) {
           encoder.cancel();
-          finish_state();
-          if (progress_ui_started && export_progress_ui_end_) {
-            try { export_progress_ui_end_(frame_validation.result); } catch (...) {}
-          }
+          finish_export_ui(frame_validation.result, progress_ui_started);
+          clear_export_state();
           return fail(frame_validation.result, frame_validation.diagnostic);
         }
 
@@ -552,10 +574,8 @@ class Service final {
         result = encoder.submit(std::move(encode_frame), &diagnostic);
         if (result != DIGITOR_RESULT_OK) {
           encoder.cancel();
-          finish_state();
-          if (progress_ui_started && export_progress_ui_end_) {
-            try { export_progress_ui_end_(result); } catch (...) {}
-          }
+          finish_export_ui(result, progress_ui_started);
+          clear_export_state();
           return fail(result, diagnostic.empty()
                                   ? "native timeline GPU frame submission failed"
                                   : std::move(diagnostic));
@@ -578,38 +598,38 @@ class Service final {
       }
 
       result = encoder.finish(&diagnostic);
-      finish_state();
       if (result != DIGITOR_RESULT_OK) {
-        if (progress_ui_started && export_progress_ui_end_) {
-          try { export_progress_ui_end_(result); } catch (...) {}
-        }
+        finish_export_ui(result, progress_ui_started);
+        clear_export_state();
         return fail(result, diagnostic.empty()
                                 ? "failed to finalize native timeline export"
                                 : std::move(diagnostic));
       }
-      if (!encoder_factory_result.zero_copy_qualified ||
-          !encoder_factory_result.zero_copy_qualified()) {
-        if (progress_ui_started && export_progress_ui_end_) {
-          try { export_progress_ui_end_(DIGITOR_RESULT_INTERNAL_ERROR); } catch (...) {}
-        }
+      if (!encoder_result.zero_copy_qualified ||
+          !encoder_result.zero_copy_qualified()) {
+        finish_export_ui(DIGITOR_RESULT_INTERNAL_ERROR, progress_ui_started);
+        clear_export_state();
         return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                     "native timeline export completed without zero-copy qualification");
       }
-      if (progress_ui_started && export_progress_ui_end_) {
-        try { export_progress_ui_end_(DIGITOR_RESULT_OK); } catch (...) {}
+      finish_export_ui(DIGITOR_RESULT_OK, progress_ui_started);
+      clear_export_state();
+      if (progress) {
+        progress(1.0, static_cast<std::int64_t>(total),
+                 static_cast<std::int64_t>(total), progress_user_data);
       }
-      if (progress) progress(1.0, static_cast<std::int64_t>(total),
-                             static_cast<std::int64_t>(total), progress_user_data);
       {
         std::scoped_lock lock(mutex_);
         last_error_.clear();
       }
       return DIGITOR_RESULT_OK;
     } catch (const std::bad_alloc&) {
+      finish_export_ui(DIGITOR_RESULT_OUT_OF_MEMORY, progress_ui_started);
       clear_export_state();
       return fail(DIGITOR_RESULT_OUT_OF_MEMORY,
                   "out of memory exporting native production timeline");
     } catch (...) {
+      finish_export_ui(DIGITOR_RESULT_INTERNAL_ERROR, progress_ui_started);
       clear_export_state();
       return fail(DIGITOR_RESULT_INTERNAL_ERROR,
                   "unexpected native production timeline export failure");
@@ -633,6 +653,27 @@ class Service final {
   }
 
  private:
+  bool valid_export_request(DigitorNodeGraph* graph,
+                            std::uint64_t graph_revision,
+                            std::uint64_t parameter_revision,
+                            const DigitorFlutterExportRequestV2* request) const noexcept {
+    return graph && graph_revision != 0 && parameter_revision != 0 && request &&
+           request->struct_size >= sizeof(DigitorFlutterExportRequestV2) &&
+           request->api_version == DIGITOR_FLUTTER_EXPORT_REQUEST_V2_VERSION &&
+           request->utf8_output_path && request->utf8_output_path[0] &&
+           request->utf8_color_metadata && request->utf8_color_metadata[0] &&
+           request->utf8_graph_recipe_identity && request->utf8_graph_recipe_identity[0] &&
+           request->first_frame >= 0 && request->last_frame >= request->first_frame &&
+           request->width != 0 && request->height != 0 &&
+           request->snapshot_identity != 0 && request->timeline_revision != 0 &&
+           request->render_revision != 0 && request->node_graph_revision != 0 &&
+           request->color_pipeline_revision != 0 && request->audio_revision != 0 &&
+           request->fps_num > 0 && request->fps_den > 0 &&
+           request->duration_us > 0 && request->video_bitrate > 0 &&
+           request->variable_frame_rate == 0 &&
+           supported_working_format(request->working_format);
+  }
+
   DigitorResult process_frame(DigitorNodeGraph* graph,
                               std::int64_t timeline_us,
                               std::uint32_t width,
@@ -721,7 +762,7 @@ class Service final {
       const auto& metadata = rendered.frame->metadata();
       if (metadata.width != width || metadata.height != height) {
         diagnostic =
-            "timeline source dimensions differ from the project output; native scale/composite path is required";
+            "timeline source dimensions differ from project output; native scale/composite path is required";
         return DIGITOR_RESULT_UNSUPPORTED;
       }
       output = std::move(rendered.frame);
@@ -746,12 +787,10 @@ class Service final {
         if (clip.type != TimelineClipType::video || !clip.visible || clip.muted)
           continue;
         if (timeline_us < clip.start_us ||
-            timeline_us >= clip.start_us + clip.duration_us) {
-          continue;
-        }
+            timeline_us >= clip.start_us + clip.duration_us) continue;
         if (active != nullptr) {
           diagnostic =
-              "overlapping video layers require the native timeline GPU compositor; refusing to render only one layer";
+              "overlapping video layers require native timeline GPU compositing; refusing to render only one layer";
           return std::nullopt;
         }
         active = &clip;
@@ -781,16 +820,27 @@ class Service final {
     return result;
   }
 
+  void finish_operation() noexcept {
+    std::scoped_lock lock(mutex_);
+    operation_running_ = false;
+  }
+
   void clear_export_state() noexcept {
     std::scoped_lock lock(mutex_);
     active_encoder_ = nullptr;
     export_running_ = false;
   }
 
+  void finish_export_ui(DigitorResult result, bool started) noexcept {
+    if (!started || !export_progress_ui_end_) return;
+    try { export_progress_ui_end_(result); } catch (...) {}
+  }
+
   ProductionDecoderFactory decoder_factory_;
   std::shared_ptr<NativePreviewPresentationSession> preview_session_;
   ProductionEncoderFactory encoder_factory_;
   ProductionTextureDescriptorBuilder texture_descriptor_builder_;
+  ProductionPreviewTargetBinder preview_target_binder_;
   DigitorNativePreviewCapabilities preview_capabilities_{};
   EncoderBackend encoder_backend_{EncoderBackend::software};
   std::int64_t default_video_bitrate_{12'000'000};
@@ -809,6 +859,7 @@ class Service final {
   std::uint64_t generation_clock_{};
   std::uint64_t preview_generation_{};
   bool configured_{};
+  bool operation_running_{};
   bool export_running_{};
   std::atomic_bool cancelled_{false};
   std::string last_error_;
@@ -896,6 +947,20 @@ DigitorResult digitor_flutter_production_timeline_clear(void) {
   auto service = digitor::flutter_timeline_service_detail::active_service();
   if (!service) return DIGITOR_RESULT_NOT_INITIALIZED;
   return service->clear();
+}
+
+DigitorResult digitor_flutter_production_timeline_query_preview(
+    DigitorNativePreviewCapabilities* out_capabilities) {
+  auto service = digitor::flutter_timeline_service_detail::active_service();
+  if (!service) return DIGITOR_RESULT_NOT_INITIALIZED;
+  return service->query_preview(out_capabilities);
+}
+
+DigitorResult digitor_flutter_production_timeline_set_preview_target(
+    const DigitorFlutterPreviewTarget* target) {
+  auto service = digitor::flutter_timeline_service_detail::active_service();
+  if (!service) return DIGITOR_RESULT_NOT_INITIALIZED;
+  return service->set_preview_target(target);
 }
 
 DigitorResult digitor_flutter_production_timeline_preview(
