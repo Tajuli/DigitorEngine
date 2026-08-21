@@ -122,6 +122,14 @@ int _runRegisteredExportV2(Map<String, Object> values) {
   }
 }
 
+final class _RegisteredExportTask {
+  const _RegisteredExportTask(this.values);
+
+  final Map<String, Object> values;
+
+  int call() => _runRegisteredExportV2(values);
+}
+
 final class DigitorRegisteredProductionSession {
   DigitorRegisteredProductionSession._(this._handle, this._graph);
 
@@ -465,7 +473,7 @@ final class DigitorRegisteredProductionSession {
       };
 
       final result = await Isolate.run<int>(
-        () => _runRegisteredExportV2(values),
+        _RegisteredExportTask(values).call,
       );
       _check('exportV2', result);
     } finally {
