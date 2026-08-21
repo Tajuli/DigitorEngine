@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
@@ -18,12 +19,6 @@ final class DigitorDefaultExportFrameContract {
   final String colorMetadata;
 }
 
-/// Resolves the default frozen frame contract for a renderer.
-///
-/// D3D12 production media is decoded/processed as canonical RGBA32F while
-/// the color-space identity remains the backend-independent `linear-rgba`.
-/// Pixel precision belongs to [workingFormat], not to the color metadata
-/// string.
 DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   int rendererBackend,
 ) {
@@ -39,14 +34,6 @@ DigitorDefaultExportFrameContract digitorDefaultExportFrameContract(
   );
 }
 
-/// Resolves the export working contract represented by a production preview.
-///
-/// Native preview descriptors describe the texture Flutter presents, not
-/// necessarily the engine's scene-linear processing surface. Windows D3D12,
-/// for example, processes the production frame as RGBA32F and applies the
-/// display transform into an RGBA8/BGRA8 shared presentation texture. Treating
-/// that presentation texture as the export working format breaks the first
-/// Windows preview even though the production render itself succeeded.
 DigitorDefaultExportFrameContract digitorPreviewExportFrameContract({
   required int rendererBackend,
   required DigitorPixelFormat presentationFormat,
@@ -77,8 +64,64 @@ int digitorCurrentRendererBackendForExport() {
   }
 }
 
-/// Package-internal production session that resolves the native host installed
-/// by the Flutter platform plugin. Applications never provide callback pointers.
+int _runRegisteredExportV2(Map<String, Object> values) {
+  final nativePath = (values['path']! as String).toNativeUtf8();
+  final nativeColorMetadata =
+      (values['colorMetadata']! as String).toNativeUtf8();
+  final nativeGraphIdentity =
+      (values['graphRecipeIdentity']! as String).toNativeUtf8();
+  final request = calloc<DigitorFlutterExportRequestV2Native>();
+  try {
+    request.ref
+      ..structSize = sizeOf<DigitorFlutterExportRequestV2Native>()
+      ..apiVersion = 2
+      ..outputPath = nativePath
+      ..format = values['format']! as int
+      ..codec = values['codec']! as int
+      ..firstFrame = values['firstFrame']! as int
+      ..lastFrame = values['lastFrame']! as int
+      ..width = values['width']! as int
+      ..height = values['height']! as int
+      ..snapshotIdentity = values['snapshotIdentity']! as int
+      ..timelineRevision = values['timelineRevision']! as int
+      ..renderRevision = values['renderRevision']! as int
+      ..nodeGraphRevision = values['nodeGraphRevision']! as int
+      ..colorPipelineRevision = values['colorPipelineRevision']! as int
+      ..audioRevision = values['audioRevision']! as int
+      ..workingFormat = values['workingFormat']! as int
+      ..alphaPolicy = 1
+      ..fpsNum = values['fpsNum']! as int
+      ..fpsDen = values['fpsDen']! as int
+      ..durationUs = values['durationUs']! as int
+      ..videoBitrate = values['videoBitrate']! as int
+      ..variableFrameRate = 0
+      ..hdr = values['hdr']! as int
+      ..tenBit = values['tenBit']! as int
+      ..reserved0 = 0
+      ..colorMetadata = nativeColorMetadata
+      ..graphRecipeIdentity = nativeGraphIdentity;
+
+    final callbackAddress = values['callbackAddress']! as int;
+    final progressCallback =
+        Pointer<NativeFunction<DigitorProgressNative>>.fromAddress(
+      callbackAddress,
+    );
+    return digitorFlutterProductionExportV2(
+      Pointer<DigitorFlutterProductionSessionNative>.fromAddress(
+        values['sessionAddress']! as int,
+      ),
+      request,
+      progressCallback,
+      nullptr,
+    );
+  } finally {
+    calloc.free(request);
+    calloc.free(nativeGraphIdentity);
+    calloc.free(nativeColorMetadata);
+    calloc.free(nativePath);
+  }
+}
+
 final class DigitorRegisteredProductionSession {
   DigitorRegisteredProductionSession._(this._handle, this._graph);
 
@@ -299,7 +342,7 @@ final class DigitorRegisteredProductionSession {
     _outstandingPreviewGeneration = null;
   }
 
-  void export({
+  Future<void> export({
     required String path,
     required int firstFrame,
     required int lastFrame,
@@ -322,7 +365,7 @@ final class DigitorRegisteredProductionSession {
     DigitorExportFormat format = DigitorExportFormat.mp4,
     DigitorVideoCodec codec = DigitorVideoCodec.h264,
     void Function(DigitorExportProgress progress)? onProgress,
-  }) {
+  }) async {
     _ensureAlive();
 
     final previewContractIsCurrent =
@@ -375,40 +418,8 @@ final class DigitorRegisteredProductionSession {
       throw ArgumentError('Frozen export duration must be positive.');
     }
 
-    final nativePath = path.toNativeUtf8();
-    final nativeColorMetadata = resolvedColorMetadata.toNativeUtf8();
-    final nativeGraphIdentity = graphRecipeIdentity.toNativeUtf8();
-    final request = calloc<DigitorFlutterExportRequestV2Native>();
     NativeCallable<DigitorProgressNative>? callback;
     try {
-      request.ref
-        ..structSize = sizeOf<DigitorFlutterExportRequestV2Native>()
-        ..apiVersion = 2
-        ..outputPath = nativePath
-        ..format = format.index
-        ..codec = codec.index
-        ..firstFrame = firstFrame
-        ..lastFrame = lastFrame
-        ..width = width
-        ..height = height
-        ..snapshotIdentity = snapshotIdentity
-        ..timelineRevision = timelineRevision
-        ..renderRevision = renderRevision
-        ..nodeGraphRevision = nodeGraphRevision
-        ..colorPipelineRevision = colorPipelineRevision
-        ..audioRevision = audioRevision
-        ..workingFormat = resolvedWorkingFormat
-        ..alphaPolicy = 1
-        ..fpsNum = fpsNum
-        ..fpsDen = fpsDen
-        ..durationUs = durationUs
-        ..videoBitrate = videoBitrate
-        ..variableFrameRate = 0
-        ..hdr = hdr ? 1 : 0
-        ..tenBit = tenBit ? 1 : 0
-        ..reserved0 = 0
-        ..colorMetadata = nativeColorMetadata
-        ..graphRecipeIdentity = nativeGraphIdentity;
       if (onProgress != null) {
         callback = NativeCallable<DigitorProgressNative>.listener((
           double fraction,
@@ -425,21 +436,40 @@ final class DigitorRegisteredProductionSession {
           );
         });
       }
-      _check(
-        'exportV2',
-        digitorFlutterProductionExportV2(
-          _handle,
-          request,
-          callback?.nativeFunction ?? nullptr,
-          nullptr,
-        ),
+
+      final values = <String, Object>{
+        'sessionAddress': _handle.address,
+        'callbackAddress': callback?.nativeFunction.address ?? 0,
+        'path': path,
+        'format': format.index,
+        'codec': codec.index,
+        'firstFrame': firstFrame,
+        'lastFrame': lastFrame,
+        'width': width,
+        'height': height,
+        'snapshotIdentity': snapshotIdentity,
+        'timelineRevision': timelineRevision,
+        'renderRevision': renderRevision,
+        'nodeGraphRevision': nodeGraphRevision,
+        'colorPipelineRevision': colorPipelineRevision,
+        'audioRevision': audioRevision,
+        'workingFormat': resolvedWorkingFormat,
+        'fpsNum': fpsNum,
+        'fpsDen': fpsDen,
+        'durationUs': durationUs,
+        'videoBitrate': videoBitrate,
+        'hdr': hdr ? 1 : 0,
+        'tenBit': tenBit ? 1 : 0,
+        'colorMetadata': resolvedColorMetadata,
+        'graphRecipeIdentity': graphRecipeIdentity,
+      };
+
+      final result = await Isolate.run<int>(
+        () => _runRegisteredExportV2(values),
       );
+      _check('exportV2', result);
     } finally {
       callback?.close();
-      calloc.free(request);
-      calloc.free(nativeGraphIdentity);
-      calloc.free(nativeColorMetadata);
-      calloc.free(nativePath);
     }
   }
 
