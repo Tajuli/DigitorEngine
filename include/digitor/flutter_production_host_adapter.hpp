@@ -56,6 +56,15 @@ struct FlutterProductionHostAdapterInputs {
 void install_windows_default_export_factory(
     FlutterProductionHostAdapterInputs& inputs) noexcept;
 
+/* Installs the process-wide native project-timeline renderer paired with the
+ * same engine-owned decoder, preview presenter and hardware encoder factories
+ * as the registered single-source host. The service is intentionally fail-
+ * closed for overlapping video layers until the native compositor path is
+ * selected; sequential clips on one track never fall back to Flutter/CPU. */
+DigitorResult install_flutter_production_timeline_service(
+    const FlutterProductionHostAdapterInputs& inputs) noexcept;
+void uninstall_flutter_production_timeline_service() noexcept;
+
 class FlutterProductionHostAdapter final {
  public:
   explicit FlutterProductionHostAdapter(FlutterProductionHostAdapterInputs inputs);
@@ -96,6 +105,7 @@ class RegisteredFlutterProductionHost final {
 
 inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
     FlutterProductionHostAdapterInputs inputs) {
+  bool timeline_service_installed = false;
   try {
 #if defined(_WIN32)
     auto media_source =
@@ -127,17 +137,34 @@ inline RegisteredFlutterProductionHost::RegisteredFlutterProductionHost(
 
     install_windows_default_export_factory(inputs);
 #endif
+    const auto timeline_result =
+        install_flutter_production_timeline_service(inputs);
+    if (timeline_result != DIGITOR_RESULT_OK) {
+      result_ = timeline_result;
+      return;
+    }
+    timeline_service_installed = true;
+
     adapter_ = std::make_unique<FlutterProductionHostAdapter>(std::move(inputs));
     if (!adapter_ || !adapter_->valid()) {
+      uninstall_flutter_production_timeline_service();
+      timeline_service_installed = false;
       result_ = DIGITOR_RESULT_NOT_INITIALIZED;
       return;
     }
     auto host = adapter_->host_v2();
     result_ = digitor_flutter_production_register_host_v2(&host);
-    if (result_ == DIGITOR_RESULT_OK) registered_user_data_ = host.base.user_data;
+    if (result_ == DIGITOR_RESULT_OK) {
+      registered_user_data_ = host.base.user_data;
+    } else {
+      uninstall_flutter_production_timeline_service();
+      timeline_service_installed = false;
+    }
   } catch (const std::bad_alloc&) {
+    if (timeline_service_installed) uninstall_flutter_production_timeline_service();
     result_ = DIGITOR_RESULT_OUT_OF_MEMORY;
   } catch (...) {
+    if (timeline_service_installed) uninstall_flutter_production_timeline_service();
     result_ = DIGITOR_RESULT_INTERNAL_ERROR;
   }
 }
@@ -151,6 +178,7 @@ inline DigitorResult RegisteredFlutterProductionHost::unregister() noexcept {
   const auto result =
       digitor_flutter_production_unregister_host(registered_user_data_);
   if (result == DIGITOR_RESULT_OK) {
+    uninstall_flutter_production_timeline_service();
     registered_user_data_ = nullptr;
     result_ = DIGITOR_RESULT_NOT_INITIALIZED;
   }
