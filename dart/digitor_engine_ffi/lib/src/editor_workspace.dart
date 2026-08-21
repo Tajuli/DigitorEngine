@@ -8,10 +8,6 @@ import 'production_timeline_session.dart';
 import 'registered_production_session.dart';
 import 'session.dart';
 
-/// UI-safe preview state returned by [DigitorEditorWorkspace].
-///
-/// Native GPU handles remain private to DigitorEngine. Flutter UI receives only
-/// the registered Flutter texture id plus generation/timing/dimension metadata.
 final class DigitorWorkspacePreviewState {
   const DigitorWorkspacePreviewState({
     required this.generation,
@@ -27,18 +23,10 @@ final class DigitorWorkspacePreviewState {
   final int width;
   final int height;
   final DigitorNativeTextureBackend backend;
-
-  /// Flutter texture registry id when the frame has been presented through the
-  /// registered platform host. Null for metadata-only [renderPreview] calls.
   final int? textureId;
 }
 
 /// High-level Digitor editor workspace owned entirely by DigitorEngine.
-///
-/// Applications may keep UI state around this object, but they must not own
-/// decoder, renderer, graph-processing, preview-host, timeline-processing, or
-/// export-processing implementations. Those responsibilities stay behind this
-/// facade.
 final class DigitorEditorWorkspace {
   DigitorEditorWorkspace._(
     this._engine,
@@ -65,12 +53,6 @@ final class DigitorEditorWorkspace {
       capabilities = null;
     }
 
-    // Android Flutter currently presents through SurfaceProducer/ANativeWindow.
-    // The production-qualified render-target presenter is GLES; Vulkan remains
-    // the engine's first general Android backend, but it has no SurfaceProducer
-    // swapchain/presenter yet. Resolve AUTO before engine initialization so the
-    // backend is locked once for the session and never silently switches after
-    // rendering begins. Explicit Vulkan requests remain strict.
     final resolvedBackend =
         preferredBackend == DigitorBackend.automatic &&
             Platform.isAndroid &&
@@ -151,9 +133,10 @@ final class DigitorEditorWorkspace {
   int get parameterRevision => _graph.parameterRevision;
   bool get productionHostRegistered =>
       DigitorRegisteredProductionSession.hostRegistered;
-  bool get productionReady => _productionSession != null;
   bool get productionTimelineConfigured =>
       _productionTimeline?.configured ?? false;
+  bool get productionReady =>
+      _productionSession != null || productionTimelineConfigured;
 
   DigitorProductionMediaSnapshot openMedia(String path) {
     _ensureOpen();
@@ -164,13 +147,6 @@ final class DigitorEditorWorkspace {
     _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
       if (Platform.isAndroid || Platform.isWindows) {
-        // The auxiliary media facade is used only to obtain immutable metadata
-        // (dimensions, duration and source frame timing). Keeping it open while
-        // the registered production session starts would hold a second platform
-        // decoder for the same source. Android MediaCodec and Windows D3D11VA
-        // production paths both require exclusive/finite decoder GPU resources;
-        // release the auxiliary decoder before opening the strict production
-        // path and retain only metadata safe after close.
         _media = DigitorProductionMediaSnapshot(
           path: snapshot.path,
           decoder: snapshot.decoder,
@@ -199,13 +175,6 @@ final class DigitorEditorWorkspace {
     return media;
   }
 
-  /// Opens editor media through the platform-registered production provider.
-  ///
-  /// The Flutter editor already requires a registered native production host,
-  /// so it must not pre-open the auxiliary FFmpeg media facade before that
-  /// provider gets a chance to create its platform decoder. The legacy
-  /// [openMedia] API remains available for callers that explicitly need its
-  /// FFmpeg-backed [DigitorProductionMediaSnapshot].
   void openRegisteredMedia(String path) {
     _ensureOpen();
     if (path.isEmpty) {
@@ -238,8 +207,9 @@ final class DigitorEditorWorkspace {
   }
 
   /// Publishes the authoritative native edit model to the native production
-  /// renderer. After this succeeds, all preview/export timestamps are project
-  /// timeline timestamps rather than timestamps into the last-opened source.
+  /// renderer. After this succeeds, preview/export use project time and the
+  /// legacy single-source decoder session is released so there is no duplicate
+  /// hardware decoder competing with the project source registry.
   void configureProductionTimeline({
     required String serializedProject,
     required List<DigitorTimelineMediaSource> sources,
@@ -250,7 +220,10 @@ final class DigitorEditorWorkspace {
     int fpsNum = 30,
     int fpsDen = 1,
   }) {
-    _ensureProductionReady();
+    _ensureOpen();
+    if (!DigitorRegisteredProductionSession.hostRegistered) {
+      throw StateError('Native production host is not registered.');
+    }
     if (serializedProject.isEmpty || sources.isEmpty || revision <= 0 ||
         durationUs <= 0 || videoTrackCount <= 0 || audioTrackCount < 0 ||
         fpsNum <= 0 || fpsDen <= 0) {
@@ -266,9 +239,11 @@ final class DigitorEditorWorkspace {
     _projectFpsNum = fpsNum;
     _projectFpsDen = fpsDen;
 
-    // Do not keep playing audio from whichever source happened to be imported
-    // last. Project audio mixing remains native/fail-closed until that binding
-    // is published alongside the video timeline.
+    // The project service owns per-source hardware decoders now. Keep only the
+    // process-wide registered host, not a second open single-source decoder.
+    _productionSession?.dispose();
+    _productionSession = null;
+
     _timeline.detachMedia();
     _timelineRevision += 1;
     _timeline.publish(
@@ -292,6 +267,9 @@ final class DigitorEditorWorkspace {
 
   DigitorPreviewCapabilities productionPreviewCapabilities() {
     _ensureProductionReady();
+    if (productionTimelineConfigured) {
+      return _productionTimeline!.previewCapabilities;
+    }
     return _productionSession!.previewCapabilities;
   }
 
@@ -321,9 +299,6 @@ final class DigitorEditorWorkspace {
     );
   }
 
-  /// Renders and publishes one production GPU frame to Flutter's texture
-  /// registry. The exact frame used here is produced by the same native graph
-  /// and revision contract used by production export.
   Future<DigitorWorkspacePreviewState> presentPreview({
     required int timestampUs,
     required int width,
@@ -334,7 +309,7 @@ final class DigitorEditorWorkspace {
     if (capabilities == null) {
       throw StateError('Flutter platform texture host is unavailable.');
     }
-    final previewCapabilities = _productionSession!.previewCapabilities;
+    final previewCapabilities = productionPreviewCapabilities();
     if (capabilities.renderTargetPresentation) {
       final handleType = previewCapabilities.handleType;
       if (!capabilities.supports(handleType)) {
@@ -365,15 +340,21 @@ final class DigitorEditorWorkspace {
       if (target.nativeTargetHandle == 0) {
         throw StateError('Flutter render target is not currently available.');
       }
-      // The platform target binder belongs to the registered native host and
-      // is shared with the project-timeline service. Pixel rendering remains in
-      // DigitorEngine; this only publishes the platform target handle.
-      _productionSession!.setPreviewTarget(
-        nativeTargetHandle: target.nativeTargetHandle,
-        width: width,
-        height: height,
-        handleType: handleType,
-      );
+      if (productionTimelineConfigured) {
+        _productionTimeline!.setPreviewTarget(
+          nativeTargetHandle: target.nativeTargetHandle,
+          width: width,
+          height: height,
+          handleType: handleType,
+        );
+      } else {
+        _productionSession!.setPreviewTarget(
+          nativeTargetHandle: target.nativeTargetHandle,
+          width: width,
+          height: height,
+          handleType: handleType,
+        );
+      }
       final frame = productionTimelineConfigured
           ? _productionTimeline!.preview(
               timestampUs: timestampUs,
@@ -408,9 +389,7 @@ final class DigitorEditorWorkspace {
     }
 
     if (!capabilities.directDescriptorPresentation) {
-      throw UnsupportedError(
-        'Flutter platform exposes no production preview path.',
-      );
+      throw UnsupportedError('Flutter platform exposes no production preview path.');
     }
     final frame = productionTimelineConfigured
         ? _productionTimeline!.preview(
@@ -717,9 +696,9 @@ final class DigitorEditorWorkspace {
 
   void _ensureProductionReady() {
     _ensureOpen();
-    if (_productionSession == null) {
+    if (!productionReady) {
       throw StateError(
-        'The native production host is not registered or no media is open.',
+        'The native production host is not registered or no media/timeline is open.',
       );
     }
   }
