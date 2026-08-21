@@ -124,6 +124,22 @@ typedef _ProjectInfoDart = int Function(
   Pointer<DigitorTimelineCompletionHandleNative>,
   Pointer<DigitorTimelineProjectInfoNative>,
 );
+typedef _SerializeSizeNative = IntPtr Function(
+  Pointer<DigitorTimelineCompletionHandleNative>,
+);
+typedef _SerializeSizeDart = int Function(
+  Pointer<DigitorTimelineCompletionHandleNative>,
+);
+typedef _SerializeNative = Int32 Function(
+  Pointer<DigitorTimelineCompletionHandleNative>,
+  Pointer<Uint8>,
+  IntPtr,
+);
+typedef _SerializeDart = int Function(
+  Pointer<DigitorTimelineCompletionHandleNative>,
+  Pointer<Uint8>,
+  int,
+);
 
 /// Native, revisioned multi-clip timeline edit session.
 ///
@@ -151,6 +167,12 @@ final class DigitorTimelineEditingSession {
         ),
         _projectInfo = library.lookupFunction<_ProjectInfoNative, _ProjectInfoDart>(
           'digitor_timeline_completion_project_info',
+        ),
+        _serializeSize = library.lookupFunction<_SerializeSizeNative, _SerializeSizeDart>(
+          'digitor_timeline_completion_serialize_size',
+        ),
+        _serialize = library.lookupFunction<_SerializeNative, _SerializeDart>(
+          'digitor_timeline_completion_serialize',
         );
 
   factory DigitorTimelineEditingSession.create({String? libraryPath}) {
@@ -172,6 +194,8 @@ final class DigitorTimelineEditingSession {
   final _SplitClipDart _splitClip;
   final _RemoveClipDart _removeClip;
   final _ProjectInfoDart _projectInfo;
+  final _SerializeSizeDart _serializeSize;
+  final _SerializeDart _serialize;
 
   bool get disposed => _handle == nullptr;
 
@@ -288,6 +312,21 @@ final class DigitorTimelineEditingSession {
       );
     } finally {
       calloc.free(native);
+    }
+  }
+
+  String serialize() {
+    _ensureAlive();
+    final required = _serializeSize(_handle);
+    if (required <= 1) {
+      throw StateError('DigitorEngine timeline serialization is unavailable.');
+    }
+    final buffer = calloc<Uint8>(required);
+    try {
+      _check('serialize', _serialize(_handle, buffer, required));
+      return buffer.cast<Utf8>().toDartString();
+    } finally {
+      calloc.free(buffer);
     }
   }
 
