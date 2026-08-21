@@ -43,6 +43,20 @@ external int digitorFlutterProductionTimelineConfigured();
 external int digitorFlutterProductionTimelineClear();
 
 @Native<
+  Int32 Function(Pointer<DigitorNativePreviewCapabilitiesNative>)
+>(symbol: 'digitor_flutter_production_timeline_query_preview')
+external int digitorFlutterProductionTimelineQueryPreview(
+  Pointer<DigitorNativePreviewCapabilitiesNative> capabilities,
+);
+
+@Native<Int32 Function(Pointer<DigitorFlutterPreviewTargetNative>)>(
+  symbol: 'digitor_flutter_production_timeline_set_preview_target',
+)
+external int digitorFlutterProductionTimelineSetPreviewTarget(
+  Pointer<DigitorFlutterPreviewTargetNative> target,
+);
+
+@Native<
   Int32 Function(
     Pointer<DigitorNodeGraphNative>,
     Uint64,
