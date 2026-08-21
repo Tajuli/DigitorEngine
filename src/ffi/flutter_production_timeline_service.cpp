@@ -1,4 +1,6 @@
-// Compile the project-timeline production service as a normal DigitorEngine
-// translation unit. The implementation lives in the .inc file so its C ABI
-// and engine-owned service remain colocated without exposing private types.
-#include "flutter_production_timeline_service.inc"
+// Intentionally empty.
+//
+// The project-timeline production service implementation is included exactly
+// once from timeline_completion_c_api.cpp. Keep this placeholder translation
+// unit so existing build-system source lists remain stable without compiling
+// the service implementation a second time.
