@@ -1,6 +1,7 @@
 package com.primedigitor.digitor_engine_ffi
 
 import android.app.Activity
+import android.app.ProgressDialog
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -25,6 +26,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.UUID
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 class DigitorEngineFfiPlugin : FlutterPlugin,
     MethodChannel.MethodCallHandler,
@@ -57,12 +59,16 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
     private val importExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hosts = mutableMapOf<Long, HostTexture>()
+    @Suppress("DEPRECATION")
+    private var exportProgressDialog: ProgressDialog? = null
 
     private external fun nativeAcquireWindow(surface: Surface): Long
 
     private external fun nativeReleaseWindow(handle: Long)
 
     private external fun nativeProductionRegistrarToken(): Long
+
+    private external fun nativeReleaseProductionRegistrarToken()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -73,6 +79,8 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        dismissExportProgressDialog()
+        nativeReleaseProductionRegistrarToken()
         hosts.keys.toList().forEach(::disposeTexture)
         pendingImportResult?.error(
             "media_import_detached",
@@ -90,6 +98,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onDetachedFromActivityForConfigChanges() {
         activityBinding?.removeActivityResultListener(this)
+        dismissExportProgressDialog()
         activityBinding = null
     }
 
@@ -99,6 +108,7 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
 
     override fun onDetachedFromActivity() {
         activityBinding?.removeActivityResultListener(this)
+        dismissExportProgressDialog()
         activityBinding = null
         pendingImportResult?.error(
             "media_import_activity_detached",
@@ -152,6 +162,88 @@ class DigitorEngineFfiPlugin : FlutterPlugin,
                 }
             }
             else -> result.notImplemented()
+        }
+    }
+
+    @Suppress("unused", "DEPRECATION")
+    fun showExportProgressFromNative() {
+        mainHandler.post {
+            val dialog = ensureExportProgressDialog() ?: return@post
+            dialog.max = 100
+            dialog.progress = 0
+            dialog.setTitle("Exporting video — 0%")
+            dialog.setMessage("Preparing export…")
+        }
+    }
+
+    @Suppress("unused", "DEPRECATION")
+    fun updateExportProgressFromNative(fraction: Double, completed: Long, total: Long) {
+        mainHandler.post {
+            val dialog = ensureExportProgressDialog() ?: return@post
+            val safeFraction = if (fraction.isFinite()) fraction.coerceIn(0.0, 1.0) else 0.0
+            val percent = (safeFraction * 100.0).roundToInt().coerceIn(0, 100)
+            dialog.progress = percent
+            dialog.setTitle("Exporting video — $percent%")
+            dialog.setMessage(
+                if (total > 0L) {
+                    "${completed.coerceIn(0L, total)} / $total frames"
+                } else {
+                    "Encoding video…"
+                },
+            )
+        }
+    }
+
+    @Suppress("unused", "DEPRECATION")
+    fun hideExportProgressFromNative(resultCode: Int) {
+        mainHandler.post {
+            val dialog = exportProgressDialog ?: return@post
+            if (resultCode == 0) {
+                dialog.progress = 100
+                dialog.setTitle("Exporting video — 100%")
+                dialog.setMessage("Finalizing export…")
+                mainHandler.postDelayed({ dismissExportProgressDialog() }, 400L)
+            } else {
+                dismissExportProgressDialog()
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun ensureExportProgressDialog(): ProgressDialog? {
+        val existing = exportProgressDialog
+        if (existing?.isShowing == true) return existing
+
+        val activity = activityBinding?.activity ?: return null
+        if (activity.isFinishing ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed)
+        ) {
+            return null
+        }
+
+        val dialog = ProgressDialog(activity).apply {
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            max = 100
+            progress = 0
+            isIndeterminate = false
+            setTitle("Exporting video — 0%")
+            setMessage("Preparing export…")
+            setCancelable(false)
+            setCanceledOnTouchOutside(false)
+            show()
+        }
+        exportProgressDialog = dialog
+        return dialog
+    }
+
+    @Suppress("DEPRECATION")
+    private fun dismissExportProgressDialog() {
+        val dialog = exportProgressDialog
+        exportProgressDialog = null
+        if (dialog != null) {
+            runCatching {
+                if (dialog.isShowing) dialog.dismiss()
+            }
         }
     }
 
