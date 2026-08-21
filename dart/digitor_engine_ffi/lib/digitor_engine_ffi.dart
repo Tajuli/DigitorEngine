@@ -13,6 +13,7 @@ export 'src/platform_host.dart';
 export 'src/production.dart';
 export 'src/production_media.dart';
 export 'src/production_media_pipeline.dart';
+export 'src/production_timeline_session.dart';
 export 'src/sdk_callbacks.dart';
 export 'src/sdk_worker.dart';
 export 'src/session.dart';
