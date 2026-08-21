@@ -16,3 +16,4 @@ export 'src/production_media_pipeline.dart';
 export 'src/sdk_callbacks.dart';
 export 'src/sdk_worker.dart';
 export 'src/session.dart';
+export 'src/timeline_editing_session.dart';
