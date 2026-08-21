@@ -27,6 +27,11 @@ using ProductionPreviewTargetBinder = std::function<DigitorResult(
 using ProductionTextureDescriptorBuilder = std::function<DigitorResult(
     const ProcessedGpuFramePtr& frame, std::uint64_t generation,
     DigitorNativeGpuTextureDescriptor& descriptor, std::string& diagnostic)>;
+using ProductionExportProgressUiBegin = std::function<void()>;
+using ProductionExportProgressUiUpdate =
+    std::function<void(double fraction, std::int64_t completed,
+                       std::int64_t total)>;
+using ProductionExportProgressUiEnd = std::function<void(DigitorResult result)>;
 
 struct FlutterProductionHostAdapterInputs {
   ProductionDecoderFactory decoder_factory;
@@ -43,6 +48,9 @@ struct FlutterProductionHostAdapterInputs {
   std::int64_t video_bitrate{12'000'000};
   std::uint64_t required_device_identity{};
   std::uint64_t required_context_identity{};
+  ProductionExportProgressUiBegin export_progress_ui_begin;
+  ProductionExportProgressUiUpdate export_progress_ui_update;
+  ProductionExportProgressUiEnd export_progress_ui_end;
 };
 
 void install_windows_default_export_factory(
