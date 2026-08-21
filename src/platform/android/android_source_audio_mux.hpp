@@ -239,9 +239,20 @@ struct AudioMuxState final {
 
 inline DigitorResult probe_source_audio(AudioMuxState& state,
                                         std::string& diagnostic) noexcept {
+  const auto& source_path = state.snapshot->data().source_media_path;
+  // A project-timeline snapshot intentionally has no single source media path.
+  // Its frames have already been resolved/decoded per clip by the native
+  // timeline service. Treat that contract as a video-only project export until
+  // native multi-source audio mixing is available; never remux one arbitrary
+  // clip's audio into the whole project.
+  if (source_path.empty()) {
+    state.source_audio_present = false;
+    diagnostic.clear();
+    return DIGITOR_RESULT_OK;
+  }
+
   Extractor source;
-  const auto result = open_extractor(state.snapshot->data().source_media_path,
-                                     source, diagnostic);
+  const auto result = open_extractor(source_path, source, diagnostic);
   if (result != DIGITOR_RESULT_OK) return result;
   Track audio;
   if (!find_track(source.value, "audio/", audio)) {
