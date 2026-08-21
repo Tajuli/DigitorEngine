@@ -7,10 +7,6 @@ import 'production_media_pipeline.dart';
 import 'registered_production_session.dart';
 import 'session.dart';
 
-/// UI-safe preview state returned by [DigitorEditorWorkspace].
-///
-/// Native GPU handles remain private to DigitorEngine. Flutter UI receives only
-/// the registered Flutter texture id plus generation/timing/dimension metadata.
 final class DigitorWorkspacePreviewState {
   const DigitorWorkspacePreviewState({
     required this.generation,
@@ -26,18 +22,9 @@ final class DigitorWorkspacePreviewState {
   final int width;
   final int height;
   final DigitorNativeTextureBackend backend;
-
-  /// Flutter texture registry id when the frame has been presented through the
-  /// registered platform host. Null for metadata-only [renderPreview] calls.
   final int? textureId;
 }
 
-/// High-level Digitor editor workspace owned entirely by DigitorEngine.
-///
-/// Applications may keep UI state around this object, but they must not own
-/// decoder, renderer, graph-processing, preview-host, timeline-processing, or
-/// export-processing implementations. Those responsibilities stay behind this
-/// facade.
 final class DigitorEditorWorkspace {
   DigitorEditorWorkspace._(
     this._engine,
@@ -64,12 +51,6 @@ final class DigitorEditorWorkspace {
       capabilities = null;
     }
 
-    // Android Flutter currently presents through SurfaceProducer/ANativeWindow.
-    // The production-qualified render-target presenter is GLES; Vulkan remains
-    // the engine's first general Android backend, but it has no SurfaceProducer
-    // swapchain/presenter yet. Resolve AUTO before engine initialization so the
-    // backend is locked once for the session and never silently switches after
-    // rendering begins. Explicit Vulkan requests remain strict.
     final resolvedBackend =
         preferredBackend == DigitorBackend.automatic &&
             Platform.isAndroid &&
@@ -156,13 +137,6 @@ final class DigitorEditorWorkspace {
     _media = snapshot;
     if (DigitorRegisteredProductionSession.hostRegistered) {
       if (Platform.isAndroid || Platform.isWindows) {
-        // The auxiliary media facade is used only to obtain immutable metadata
-        // (dimensions, duration and source frame timing). Keeping it open while
-        // the registered production session starts would hold a second platform
-        // decoder for the same source. Android MediaCodec and Windows D3D11VA
-        // production paths both require exclusive/finite decoder GPU resources;
-        // release the auxiliary decoder before opening the strict production
-        // path and retain only metadata safe after close.
         _media = DigitorProductionMediaSnapshot(
           path: snapshot.path,
           decoder: snapshot.decoder,
@@ -190,13 +164,6 @@ final class DigitorEditorWorkspace {
     return media;
   }
 
-  /// Opens editor media through the platform-registered production provider.
-  ///
-  /// The Flutter editor already requires a registered native production host,
-  /// so it must not pre-open the auxiliary FFmpeg media facade before that
-  /// provider gets a chance to create its platform decoder. The legacy
-  /// [openMedia] API remains available for callers that explicitly need its
-  /// FFmpeg-backed [DigitorProductionMediaSnapshot].
   void openRegisteredMedia(String path) {
     _ensureOpen();
     if (path.isEmpty) {
@@ -231,11 +198,6 @@ final class DigitorEditorWorkspace {
     return _productionSession!.previewCapabilities;
   }
 
-  /// Renders a production frame and returns descriptor metadata only.
-  ///
-  /// Callers using this low-level method must call [previewConsumed]. Flutter
-  /// applications should use [presentPreview] so texture ownership and release
-  /// ordering stay inside DigitorEngine.
   DigitorWorkspacePreviewState renderPreview({
     required int timestampUs,
     required int width,
@@ -256,13 +218,6 @@ final class DigitorEditorWorkspace {
     );
   }
 
-  /// Renders and publishes one production GPU frame to Flutter's texture
-  /// registry. The exact frame used here is produced by the same native graph
-  /// and revision contract used by production export.
-  ///
-  /// Descriptor-driven hosts (currently Windows) import the selected GPU frame
-  /// directly. Render-target hosts remain engine-owned and must expose their
-  /// renderer before this method is used; no CPU-copy fallback is attempted.
   Future<DigitorWorkspacePreviewState> presentPreview({
     required int timestampUs,
     required int width,
@@ -385,7 +340,7 @@ final class DigitorEditorWorkspace {
     _productionSession!.previewConsumed(generation);
   }
 
-  void exportMedia({
+  Future<void> exportMedia({
     required String path,
     required int firstFrame,
     required int lastFrame,
@@ -394,14 +349,14 @@ final class DigitorEditorWorkspace {
     DigitorExportFormat format = DigitorExportFormat.mp4,
     DigitorVideoCodec codec = DigitorVideoCodec.h264,
     void Function(DigitorExportProgress progress)? onProgress,
-  }) {
+  }) async {
     _ensureProductionReady();
     final snapshotIdentity = ++_exportSnapshotIdentity;
     final sourceFrameDurationUs =
         _media?.firstFrame.duration.inMicroseconds ?? 0;
     final fpsNum = sourceFrameDurationUs > 0 ? 1000000 : 30;
     final fpsDen = sourceFrameDurationUs > 0 ? sourceFrameDurationUs : 1;
-    _productionSession!.export(
+    await _productionSession!.export(
       path: path,
       firstFrame: firstFrame,
       lastFrame: lastFrame,
