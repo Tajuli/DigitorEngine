@@ -5,6 +5,7 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 
+import 'native_api.dart';
 import 'native_node_graph_api.dart';
 import 'native_production_api.dart';
 
