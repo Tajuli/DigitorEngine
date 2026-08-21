@@ -335,3 +335,8 @@ int digitor_timeline_completion_serialize(const DigitorTimelineCompletionHandle*
 }
 
 }  // extern "C"
+
+/* Kept in this translation unit so the timeline production bridge ships in the
+ * same native asset on every platform without introducing another build-system
+ * source list. */
+#include "flutter_production_timeline_service.inc"
